@@ -3,5 +3,5 @@
     <Platform Name="x64" />
     <Platform Name="x86" />
   </Configurations>
-  <Project Path="FICture2.vcxproj" />
+  <Project Path="FICture2.vcxproj" Id="7fdf43a8-0746-4e2a-86ab-e3a4a3d18e44" />
 </Solution>

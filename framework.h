@@ -5,10 +5,17 @@
 #pragma once
 
 #include "targetver.h"
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
 #define WIN32_LEAN_AND_MEAN             // 거의 사용되지 않는 내용을 Windows 헤더에서 제외합니다.
 // Windows 헤더 파일
 #include <windows.h>
-// C 런타임 헤더 파일입니다.
+#include <d2d1.h>
+#include <d2d1helper.h>
+#include <dwrite.h>
+#include <wincodec.h>
+#include <wrl/client.h>
 #include <stdlib.h>
 #include <malloc.h>
 #include <memory.h>
