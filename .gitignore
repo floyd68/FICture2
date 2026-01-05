@@ -367,3 +367,6 @@ FodyWeavers.xsd
 
 # Local debug artifact
 _ImageCore_DebugDump.png
+
+# Local assets (not versioned)
+SetDressing/
