@@ -3,9 +3,14 @@
 #include "framework.h"
 #include "FICture2.h"
 #include "FD2D/FD2D.h"
+#include "ImageCore/DecoderRegistry.h"
+#include "ImageCore/ImageCore.h"
 
 #include <memory>
 #include <objbase.h>
+#include <filesystem>
+#include <vector>
+#include <algorithm>
 
 #define MAX_LOADSTRING 100
 
@@ -198,11 +203,63 @@ public:
         bottomOverlay->AddChild(overlayBtn);
         */
 
-        // 이미지 뷰어: Aspect Ratio에 맞게 출력
-        auto image = std::make_shared<FD2D::Image>(L"image");
-        image->SetSourceFile(L"D:/Works/FICture2/SetDressing/FoodVendingMachines/PortADiner01Dirty_d.dds");
-        image->SetImagePurpose(ImageCore::ImagePurpose::FullResolution);
-        AddChild(image);
+        // 메인 이미지 + 하단 썸네일 리스트 (Splitter로 분할)
+        auto rootSplit = std::make_shared<FD2D::SplitPanel>(L"rootSplit", FD2D::SplitterOrientation::Vertical);
+        rootSplit->SetSplitRatio(0.80f); // 위: 메인 이미지, 아래: 썸네일
+        AddChild(rootSplit);
+
+        auto mainImage = std::make_shared<FD2D::Image>(L"mainImage");
+        std::wstring mainPath = L"D:/Works/FICture2/SetDressing/FoodVendingMachines/PortADiner01Dirty_d.dds";
+        mainImage->SetSourceFile(mainPath);
+        mainImage->SetImagePurpose(ImageCore::ImagePurpose::FullResolution);
+        rootSplit->SetFirstChild(mainImage);
+
+        auto thumbs = std::make_shared<FD2D::StackPanel>(L"thumbs", FD2D::Orientation::Horizontal);
+        thumbs->SetSpacing(8.0f);
+        thumbs->SetPadding(8.0f);
+        rootSplit->SetSecondChild(thumbs);
+
+        // 메인 이미지 폴더의 모든 이미지 파일을 썸네일로 표시
+        std::filesystem::path folder = std::filesystem::path(mainPath).parent_path();
+        std::vector<std::filesystem::path> files;
+
+        if (!folder.empty() && std::filesystem::exists(folder))
+        {
+            for (auto& entry : std::filesystem::directory_iterator(folder))
+            {
+                if (!entry.is_regular_file())
+                {
+                    continue;
+                }
+
+                const std::filesystem::path p = entry.path();
+                if (!ImageCore::DecoderRegistry::Instance().IsSupportedPath(p.wstring()))
+                {
+                    continue;
+                }
+
+                files.push_back(p);
+            }
+        }
+
+        std::sort(files.begin(), files.end(), [](const std::filesystem::path& a, const std::filesystem::path& b)
+        {
+            return a.filename().wstring() < b.filename().wstring();
+        });
+
+        constexpr float thumbW = 128.0f;
+        constexpr float thumbH = 128.0f;
+
+        int i = 0;
+        for (const auto& p : files)
+        {
+            std::wstring thumbName = L"thumb_" + std::to_wstring(i++);
+            auto thumb = std::make_shared<FD2D::Image>(thumbName);
+            thumb->SetThumbnailSize({ thumbW, thumbH });
+            thumb->SetImagePurpose(ImageCore::ImagePurpose::Thumbnail);
+            thumb->SetSourceFile(p.wstring());
+            thumbs->AddChild(thumb);
+        }
     }
 
     FD2D::Size Measure(FD2D::Size available) override
@@ -214,18 +271,8 @@ public:
 
     void Arrange(FD2D::Rect finalRect) override
     {
-        FD2D::Rect inset = FD2D::Inset(finalRect, m_margin);
-        FD2D::Rect childArea = FD2D::Inset(inset, m_padding);
-        
-        // 이미지가 윈도우 전체를 채우도록 배치 (Aspect Ratio는 Image::OnRender에서 처리)
-        auto imageIt = Children().find(L"image");
-        if (imageIt != Children().end() && imageIt->second)
-        {
-            imageIt->second->Arrange(childArea);
-        }
-
-        m_bounds = finalRect;
-        m_layoutRect = FD2D::ToD2D(finalRect);
+        // 자식(루트 SplitPanel)에게 전체 영역을 위임
+        Wnd::Arrange(finalRect);
     }
 
     void OnAttached(FD2D::Backplate& backplate) override
@@ -272,6 +319,9 @@ int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
     }
 
     auto& app = FD2D::Application::Instance();
+
+    // Register built-in image decoders before any folder scan or decode request
+    ImageCore::RegisterBuiltInDecoders();
 
     FD2D::InitContext initContext {};
     initContext.instance = hInstance;
