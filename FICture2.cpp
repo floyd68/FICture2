@@ -206,6 +206,8 @@ public:
         // 메인 이미지 + 하단 썸네일 리스트 (Splitter로 분할)
         auto rootSplit = std::make_shared<FD2D::SplitPanel>(L"rootSplit", FD2D::SplitterOrientation::Vertical);
         rootSplit->SetSplitRatio(0.80f); // 위: 메인 이미지, 아래: 썸네일
+        rootSplit->SetSecondPaneMinExtent(96.0f);  // thumbnail strip min height
+        rootSplit->SetSecondPaneMaxExtent(320.0f); // thumbnail strip max height
         AddChild(rootSplit);
 
         auto mainImage = std::make_shared<FD2D::Image>(L"mainImage");
