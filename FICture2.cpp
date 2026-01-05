@@ -1,10 +1,11 @@
-﻿// FICture2.cpp : 애플리케이션 진입점과 FD2D 스켈레톤 예제.
+// FICture2.cpp : 애플리케이션 진입점과 FD2D 스켈레톤 예제.
 
 #include "framework.h"
 #include "FICture2.h"
 #include "FD2D/FD2D.h"
 
 #include <memory>
+#include <objbase.h>
 
 #define MAX_LOADSTRING 100
 
@@ -16,6 +17,8 @@ public:
     explicit DemoWnd(const std::wstring& name) 
         : Wnd(name)
     {
+        // 기존 샘플 코드 주석 처리
+        /*
         // DemoWnd는 수직 StackPanel처럼 동작
         // 제목
         auto title = std::make_shared<FD2D::Text>(L"title");
@@ -193,25 +196,19 @@ public:
             D2D1::ColorF(D2D1::ColorF::Blue),
             D2D1::ColorF(D2D1::ColorF::LightBlue));
         bottomOverlay->AddChild(overlayBtn);
+        */
+
+        // 이미지 뷰어: Aspect Ratio에 맞게 출력
+        auto image = std::make_shared<FD2D::Image>(L"image");
+        image->SetSourceFile(L"D:/Works/FICture2/SetDressing/FoodVendingMachines/PortADiner01Dirty_d.dds");
+        image->SetImagePurpose(ImageCore::ImagePurpose::FullResolution);
+        AddChild(image);
     }
 
     FD2D::Size Measure(FD2D::Size available) override
     {
-        // 수직으로 자식들을 배치
-        float totalHeight = 0.0f;
-        float maxWidth = 0.0f;
-
-        for (auto& pair : Children())
-        {
-            if (pair.second)
-            {
-                FD2D::Size childSize = pair.second->Measure(available);
-                totalHeight += childSize.h;
-                maxWidth = (std::max)(maxWidth, childSize.w);
-            }
-        }
-
-        m_desired = { maxWidth, totalHeight };
+        // 윈도우 전체 크기를 사용
+        m_desired = available;
         return m_desired;
     }
 
@@ -220,49 +217,11 @@ public:
         FD2D::Rect inset = FD2D::Inset(finalRect, m_margin);
         FD2D::Rect childArea = FD2D::Inset(inset, m_padding);
         
-        float yOffset = childArea.y;
-        float remainingHeight = childArea.h;
-
-        // title, status, mainDock, bottomOverlay 순서로 배치
-        std::vector<std::wstring> childOrder = { L"title", L"status", L"mainDock", L"bottomOverlay" };
-
-        for (const auto& childName : childOrder)
+        // 이미지가 윈도우 전체를 채우도록 배치 (Aspect Ratio는 Image::OnRender에서 처리)
+        auto imageIt = Children().find(L"image");
+        if (imageIt != Children().end() && imageIt->second)
         {
-            auto it = Children().find(childName);
-            if (it != Children().end() && it->second)
-            {
-                auto& child = it->second;
-                
-                if (childName == L"mainDock")
-                {
-                    // mainDock은 남은 공간을 모두 차지
-                    float mainDockHeight = remainingHeight;
-                    if (Children().find(L"bottomOverlay") != Children().end())
-                    {
-                        // bottomOverlay가 있으면 그 크기를 빼야 함
-                        auto bottomOverlay = Children().at(L"bottomOverlay");
-                        if (bottomOverlay)
-                        {
-                            FD2D::Size overlaySize = bottomOverlay->Measure({ childArea.w, remainingHeight });
-                            mainDockHeight -= overlaySize.h;
-                        }
-                    }
-                    
-                    FD2D::Rect mainDockRect { childArea.x, yOffset, childArea.w, mainDockHeight };
-                    child->Arrange(mainDockRect);
-                    yOffset += mainDockHeight;
-                    remainingHeight -= mainDockHeight;
-                }
-                else
-                {
-                    // 다른 자식들은 desired size 사용
-                    FD2D::Size desired = child->Measure({ childArea.w, remainingHeight });
-                    FD2D::Rect childRect { childArea.x, yOffset, childArea.w, desired.h };
-                    child->Arrange(childRect);
-                    yOffset += desired.h;
-                    remainingHeight -= desired.h;
-                }
-            }
+            imageIt->second->Arrange(childArea);
         }
 
         m_bounds = finalRect;
@@ -272,49 +231,15 @@ public:
     void OnAttached(FD2D::Backplate& backplate) override
     {
         Wnd::OnAttached(backplate);
-
-        // 버튼 클릭 핸들러 설정 - Children() 맵에서 찾아서 사용
-        auto status = std::dynamic_pointer_cast<FD2D::Text>(Children().at(L"status"));
-        if (status)
-        {
-            // leftStack의 자식인 btn1, btn2 찾기
-            auto mainDock = Children().at(L"mainDock");
-            if (mainDock)
-            {
-                auto leftStack = mainDock->Children().at(L"leftStack");
-                if (leftStack)
-                {
-                    auto btn1 = std::dynamic_pointer_cast<FD2D::Button>(leftStack->Children().at(L"btn1"));
-                    if (btn1)
-                    {
-                        btn1->OnClick([status]()
-                        {
-                            status->SetText(L"Status: Left Stack Button 1 clicked!");
-                            status->SetColor(D2D1::ColorF(D2D1::ColorF::Yellow));
-                            status->Invalidate();
-                        });
-                    }
-
-                    auto btn2 = std::dynamic_pointer_cast<FD2D::Button>(leftStack->Children().at(L"btn2"));
-                    if (btn2)
-                    {
-                        btn2->OnClick([status]()
-                        {
-                            status->SetText(L"Status: Left Stack Button 2 clicked!");
-                            status->SetColor(D2D1::ColorF(D2D1::ColorF::Cyan));
-                            status->Invalidate();
-                        });
-                    }
-                }
-            }
-        }
+        // 기존 샘플 이벤트 핸들러 주석 처리
     }
 
     void OnRender(ID2D1RenderTarget* target) override
     {
         if (target != nullptr)
         {
-            target->Clear(D2D1::ColorF(D2D1::ColorF::DarkSlateGray, 1.0f));
+            // 배경을 검은색으로 설정
+            target->Clear(D2D1::ColorF(D2D1::ColorF::Black, 1.0f));
         }
 
         Wnd::OnRender(target);
@@ -328,6 +253,23 @@ int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
 {
     UNREFERENCED_PARAMETER(hPrevInstance);
     UNREFERENCED_PARAMETER(lpCmdLine);
+
+    // COM lifetime is owned by the application (not FD2D)
+    bool coInitialized = false;
+    HRESULT coHr = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
+    if (SUCCEEDED(coHr))
+    {
+        coInitialized = true;
+    }
+    else if (coHr == RPC_E_CHANGED_MODE)
+    {
+        // Another component initialized COM with a different model; continue without owning lifetime
+        coInitialized = false;
+    }
+    else
+    {
+        return -1;
+    }
 
     auto& app = FD2D::Application::Instance();
 
@@ -343,6 +285,7 @@ int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
     FD2D::WindowOptions opts {};
     opts.title = g_title;
     opts.chrome = FD2D::ChromeStyle::Standard;
+    opts.instance = hInstance;
 
     auto backplate = app.CreateWindowedBackplate(L"main", opts);
     if (!backplate)
@@ -357,5 +300,10 @@ int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
 
     int result = app.RunMessageLoop();
     app.Shutdown();
+
+    if (coInitialized)
+    {
+        CoUninitialize();
+    }
     return result;
 }

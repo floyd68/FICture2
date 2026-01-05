@@ -1,6 +1,28 @@
 # FICture2
 
-FD2D is a lightweight modern C++ UI scaffold that wraps Win32 with Direct2D/DirectWrite. The project ships with a minimal boilerplate so you can drop in custom elements quickly.
+FD2D is a lightweight modern C++ UI library that wraps Win32 with Direct2D/DirectWrite. The project consists of:
+
+- **FD2D Library**: Static/Dynamic linkable UI library
+- **FICture2 Sample**: Sample application demonstrating FD2D features
+
+## Building
+
+### Static Library (Default)
+FD2D is built as a static library by default. Simply build the solution and link against `FD2D.lib`.
+
+### Dynamic Library
+To build FD2D as a dynamic library, set the `FD2D_LINK_TYPE` property to `Dynamic`:
+- In Visual Studio: Project Properties → Configuration Properties → C/C++ → Preprocessor → Preprocessor Definitions → Add `FD2D_LINK_TYPE=Dynamic`
+- Or modify `FD2D.vcxproj` to set `FD2D_LINK_TYPE` property
+
+When using as a dynamic library:
+- Define `FD2D_EXPORTS` when building the library
+- Do NOT define `FD2D_STATIC` when using the library
+- Link against `FD2D.lib` (import library) and ensure `FD2D.dll` is available at runtime
+
+## Library Structure
+
+FD2D is a lightweight modern C++ UI scaffold that wraps Win32 with Direct2D/DirectWrite.
 
 ## Architecture
 

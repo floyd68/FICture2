@@ -361,3 +361,9 @@ MigrationBackup/
 
 # Fody - auto-generated XML schema
 FodyWeavers.xsd
+
+# Cursor / local workspace metadata
+.cursor/
+
+# Local debug artifact
+_ImageCore_DebugDump.png
