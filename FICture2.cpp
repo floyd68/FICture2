@@ -206,17 +206,23 @@ public:
         // 메인 이미지 + 하단 썸네일 리스트 (Splitter로 분할)
         auto rootSplit = std::make_shared<FD2D::SplitPanel>(L"rootSplit", FD2D::SplitterOrientation::Vertical);
         rootSplit->SetSplitRatio(0.80f); // 위: 메인 이미지, 아래: 썸네일
-        rootSplit->SetSecondPaneMinExtent(96.0f);  // thumbnail strip min height (allow shrinking)
         // Clamp to "thumb height + StackPanel padding*2" to avoid unnecessary vertical slack.
         constexpr float thumbStripPadding = 8.0f;
-        constexpr float thumbStripMaxH = 128.0f + (thumbStripPadding * 2.0f);
+        // Include filename label height under thumbnails.
+        constexpr float thumbLabelPt = 8.0f;
+        constexpr float thumbLabelDip = thumbLabelPt * (96.0f / 72.0f); // DWrite font size is DIP
+        constexpr float thumbLabelLineH = thumbLabelDip * 1.2f;
+        constexpr float thumbItemSpacing = 2.0f;
+        constexpr float thumbStripMaxH = 128.0f + thumbItemSpacing + thumbLabelLineH + (thumbStripPadding * 2.0f);
+        // Ensure the filename label is never clipped by the splitter.
+        rootSplit->SetSecondPaneMinExtent(thumbStripMaxH);
         rootSplit->SetSecondPaneMaxExtent(thumbStripMaxH);
         // Upward constraint는 필요 시에만 켠다. (ScrollView/overflow 케이스에서는 보통 꺼두는 게 자연스럽다)
         rootSplit->SetConstraintPropagation(FD2D::ConstraintPropagation::None);
         AddChild(rootSplit);
 
         auto mainImage = std::make_shared<FD2D::Image>(L"mainImage");
-        std::wstring mainPath = L"C:/landscape/cavebaseground01.dds";
+        std::wstring mainPath = L"D:/Works/FICture2/landscape/cavebaseground01.dds";
         mainImage->SetSourceFile(mainPath);
         mainImage->SetImagePurpose(ImageCore::ImagePurpose::FullResolution);
         {
@@ -300,7 +306,28 @@ public:
             {
                 SelectThumbByIndex(index, MainApplyMode::Immediate);
             });
-            thumbs->AddChild(thumb);
+
+            // Thumbnail item: image + filename label
+            auto item = std::make_shared<FD2D::StackPanel>(thumbName + L"_item", FD2D::Orientation::Vertical);
+            item->SetSpacing(thumbItemSpacing);
+            item->SetPadding(0.0f);
+
+            auto label = std::make_shared<FD2D::Text>(thumbName + L"_label");
+            label->SetText(p.filename().wstring());
+            label->SetFont(L"Segoe UI", thumbLabelDip);
+            label->SetFixedWidth(thumbW);
+            label->SetColor(D2D1::ColorF(0.20f, 0.20f, 0.20f, 1.0f));
+            label->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
+            label->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_NEAR);
+            label->SetEllipsisTrimmingEnabled(true);
+            label->SetOnClick([this, index]()
+            {
+                SelectThumbByIndex(index, MainApplyMode::Immediate);
+            });
+
+            item->AddChild(thumb);
+            item->AddChild(label);
+            thumbs->AddChild(item);
         }
 
         // Initial selection should match main image when possible.

@@ -370,3 +370,9 @@ _ImageCore_DebugDump.png
 
 # Local assets (not versioned)
 SetDressing/
+
+# Large local sample textures (not versioned)
+landscape/
+
+# Agent/tool outputs
+agent-tools/
