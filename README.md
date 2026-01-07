@@ -1,75 +1,86 @@
 # FICture2
 
-FD2D is a lightweight modern C++ UI library that wraps Win32 with Direct2D/DirectWrite. The project consists of:
+Windows DDS texture viewer/sample app built on top of:
 
-- **FD2D Library**: Static/Dynamic linkable UI library
-- **FICture2 Sample**: Sample application demonstrating FD2D features
+- **`FD2D/` (submodule)**: lightweight Win32 UI framework using Direct2D/DirectWrite (and optional D3D11 for GPU blits)
+- **`ImageCore/` (submodule)**: async image decode pipeline (WIC + DirectXTex)
+- **`external/DirectXTex/` (submodule)**: DirectXTex library (external dependency)
 
-## Building
+This repository is the “app shell” that wires the UI (`FD2D`) and the decode pipeline (`ImageCore`) together.
 
-### Static Library (Default)
-FD2D is built as a static library by default. Simply build the solution and link against `FD2D.lib`.
+## Features
 
-### Dynamic Library
-To build FD2D as a dynamic library, set the `FD2D_LINK_TYPE` property to `Dynamic`:
-- In Visual Studio: Project Properties → Configuration Properties → C/C++ → Preprocessor → Preprocessor Definitions → Add `FD2D_LINK_TYPE=Dynamic`
-- Or modify `FD2D.vcxproj` to set `FD2D_LINK_TYPE` property
+- Thumbnail strip + main image preview (DDS-heavy workloads)
+- Async decode/resize with prioritization: main image loads don’t get starved by thumbnail work
+- DDS fast path via DirectXTex, including mip selection for thumbnails/previews
+- Optional GPU path for full-resolution DDS (D3D11 SRV upload)
+- Size-first Release configuration options available (see below)
 
-When using as a dynamic library:
-- Define `FD2D_EXPORTS` when building the library
-- Do NOT define `FD2D_STATIC` when using the library
-- Link against `FD2D.lib` (import library) and ensure `FD2D.dll` is available at runtime
+## Repository layout
 
-## Library Structure
+- `FICture2.cpp`: app UI composition (split panel, thumbnail list, selection behavior)
+- `FD2D/`: UI framework (submodule)
+- `ImageCore/`: decode scheduler/dispatcher/cache (submodule)
+- `external/DirectXTex/`: DirectXTex (submodule; **not authored here**)
 
-FD2D is a lightweight modern C++ UI scaffold that wraps Win32 with Direct2D/DirectWrite.
+## Prerequisites
 
-## Architecture
+- Windows 10/11
+- Visual Studio 2022 (C++ workload)
+- Windows SDK installed (VS installer)
+- `git` + GitHub CLI (`gh`) if you want to work with submodules/repo automation
 
-- `FD2D::Core` initializes shared factories (D2D, DWrite, WIC) and keeps the process lifetime tidy.
-- `FD2D::Backplate` owns an `HWND` and its `ID2D1HwndRenderTarget`, driving render invalidation and resize.
-- `FD2D::Wnd` is the base class for visual/input components (Text, Image, Button, Window, Scroller, ...). Wnds receive render and Win32 message callbacks.
+## Clone
 
-## Typical Usage
+This repo uses **git submodules**. Clone with:
 
-1) Call `FD2D::Application::Instance().Initialize` once at startup.  
-2) Create a backplate:
-   - Either hand an existing `HWND` to `Backplate::Attach`, or
-   - Ask FD2D to create one with `Application::CreateWindowedBackplate` using `WindowOptions`.  
-3) Add `Wnd`-derived controls to the backplate (constructors accept names; use `SetName` only when renaming).  
-4) Run the message loop via `Application::RunMessageLoop` (or your own loop if you attached to an external `HWND`).
-
-### Minimal Sketch
-
-```cpp
-FD2D::InitContext ctx {};
-ctx.instance = hInstance;
-FD2D::Application::Instance().Initialize(ctx);
-
-FD2D::Backplate backplate;
-auto backplate = FD2D::Application::Instance().CreateWindowedBackplate(L"main", opts);
-backplate->AddWnd(L"content", std::make_shared<MyWnd>());
-
-ShowWindow(backplate->Window(), nCmdShow);
-UpdateWindow(backplate->Window());
-return FD2D::Application::Instance().RunMessageLoop();
+```bash
+git clone --recurse-submodules https://github.com/floyd68/FICture2.git
 ```
 
-## Layout Principles (Modern model)
-- Measure/Arrange split: `Measure(available)` asks “how much do you need?”, `Arrange(finalRect)` places it. Render is side-effect-free and uses computed bounds.
-- Containers: StackPanel (vertical/horizontal), Panel (placeholder), future Grid/Dock/Overlay fit the same pattern.
-- Intrinsic size: elements report desired size from content (text, image aspect, padding).
-- Spacing semantics: margin (outside), padding (inside), spacing (between children) kept distinct.
-- Alignment & stretch are first-class (start/center/end/stretch) rather than manual coordinates.
-- Dirty layout: window resize/content/DPI changes must invalidate layout, recompute Measure/Arrange, then Render.
-- DPI-aware: coordinates are logical; rendering scales via Direct2D.
-- Declarative mindset: describe relationships (stack, grid, flex/star) instead of manual positioning; internally resolved via Measure/Arrange.
-### Window creation modes
+If you already cloned without submodules:
 
-- **Standard chrome**: `ChromeStyle::Standard` (title bar with min/max/close).  
-- **Borderless**: `ChromeStyle::Borderless` (no chrome, ideal for custom-drawn windows).  
-`WindowOptions` also exposes `style` and `exStyle` so you can override defaults later.
+```bash
+git submodule update --init --recursive
+```
 
-## Status
+## Build (Visual Studio)
 
-This is a skeleton only. Rendering and input pipelines are stubbed but ready for specialized controls.
+1. Open `FICture2.vcxproj` (or open the folder in VS).
+2. Select configuration:
+   - **Debug|x64** for development
+   - **Release|x64** for distribution/perf/size tuning
+3. Build + run `FICture2`.
+
+## Build (MSBuild CLI)
+
+From a Developer PowerShell:
+
+```powershell
+msbuild .\FICture2.vcxproj -m -p:Configuration=Release -p:Platform=x64
+```
+
+## Release “size-first” notes
+
+This repo can be configured to prioritize output size (even if it costs some runtime speed).
+Typical knobs include:
+
+- `/O1 /Os` (optimize for size)
+- `/Ob1` (limit inlining)
+- `/GS-` (disable buffer security checks; smaller & faster builds, but reduces mitigation)
+- `/Gy /Gw` + `/OPT:REF /OPT:ICF` (dead stripping / folding)
+- `/LTCG` (link-time code generation)
+
+> If you want a speed-first profile again, revert the above to `/O2`, `/Ob2`, `/GS`, and `FavorSizeOrSpeed=Speed`.
+
+## Submodules
+
+- `FD2D`: https://github.com/floyd68/FD2D
+- `ImageCore`: https://github.com/floyd68/ImageCore
+- `DirectXTex` (external): tracked as a submodule under `external/DirectXTex`
+
+## Troubleshooting
+
+- **Submodules are empty / missing files**: run `git submodule update --init --recursive`.
+- **Build fails due to locked exe**: close the running `FICture2.exe` instance.
+- **DDS decode performance**: see `ImageCore/README.md` for pipeline details and tuning points.
