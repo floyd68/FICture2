@@ -249,6 +249,9 @@ public:
         // 썸네일 스트립은 overflow 컨테이너로 감싸서 (가로) 스크롤 가능 + upward constraint 전파 차단
         auto thumbScroll = std::make_shared<FD2D::ScrollView>(L"thumbScroll");
         thumbScroll->SetScrollStep(96.0f);
+        // Pixel-unit smooth scrolling (no selection-centering logic).
+        thumbScroll->SetSmoothScrollEnabled(true);
+        thumbScroll->SetSmoothTimeMs(110);
         thumbScroll->SetVerticalScrollEnabled(false);
         thumbScroll->SetContent(thumbs);
         rootSplit->SetSecondChild(thumbScroll);
@@ -359,7 +362,7 @@ public:
         // First layout: ensure the selected thumb is visible without user interaction.
         if (!m_initialThumbEnsured && m_thumbScroll && m_selectedThumb)
         {
-            m_thumbScroll->EnsureVisible(m_selectedThumb->LayoutRect(), 8.0f);
+            m_thumbScroll->EnsureCentered(m_selectedThumb->LayoutRect());
             m_initialThumbEnsured = true;
         }
     }
@@ -535,7 +538,7 @@ private:
 
         if (m_thumbScroll && m_selectedThumb)
         {
-            m_thumbScroll->EnsureVisible(m_selectedThumb->LayoutRect(), 8.0f);
+            m_thumbScroll->EnsureCentered(m_selectedThumb->LayoutRect());
         }
 
         if (mode == MainApplyMode::Immediate)
