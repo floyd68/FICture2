@@ -2,6 +2,12 @@
 
 Windows DDS texture viewer/sample app built on top of:
 
+## License
+
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+
+Copyright (c) 2024 EunSuk, Lee (이은석, floyd)
+
 - **`FD2D/` (submodule)**: lightweight Win32 UI framework using Direct2D/DirectWrite (and optional D3D11 for GPU blits)
 - **`ImageCore/` (submodule)**: async image decode pipeline (WIC + DirectXTex)
 - **`external/DirectXTex/` (submodule)**: DirectXTex library (external dependency)
