@@ -13,8 +13,12 @@
 #include "ImageCore/ImageCore.h"
 
 #include <algorithm>
+#include <cwctype>
 #include <objbase.h>
 #include <shellapi.h>
+#include <vector>
+#include <knownfolders.h>
+#include <shlobj_core.h>
 
 #define MAX_LOADSTRING 100
 
@@ -60,6 +64,110 @@ namespace
         return initial;
     }
 
+    static std::wstring FindFirstSupportedImageInPictures()
+    {
+        PWSTR pwsz = nullptr;
+        const HRESULT hr = SHGetKnownFolderPath(FOLDERID_Pictures, KF_FLAG_DEFAULT, nullptr, &pwsz);
+        if (FAILED(hr) || pwsz == nullptr)
+        {
+            return L"";
+        }
+
+        std::wstring picturesDir(pwsz);
+        CoTaskMemFree(pwsz);
+        pwsz = nullptr;
+
+        if (picturesDir.empty())
+        {
+            return L"";
+        }
+
+        // Trim trailing slash/backslash
+        while (!picturesDir.empty() && (picturesDir.back() == L'\\' || picturesDir.back() == L'/'))
+        {
+            picturesDir.pop_back();
+        }
+
+        auto toLower = [](std::wstring s)
+        {
+            std::transform(s.begin(), s.end(), s.begin(), [](wchar_t c)
+            {
+                return static_cast<wchar_t>(towlower(c));
+            });
+            return s;
+        };
+
+        auto hasSupportedExt = [&](const std::wstring& fileName) -> bool
+        {
+            const size_t dot = fileName.find_last_of(L'.');
+            if (dot == std::wstring::npos)
+            {
+                return false;
+            }
+            const std::wstring ext = toLower(fileName.substr(dot));
+            return ext == L".png"
+                || ext == L".jpg"
+                || ext == L".jpeg"
+                || ext == L".bmp"
+                || ext == L".tif"
+                || ext == L".tiff"
+                || ext == L".gif"
+                || ext == L".dds"
+                || ext == L".tga"
+                || ext == L".ico";
+        };
+
+        auto fileNameOnly = [](const std::wstring& full) -> std::wstring
+        {
+            size_t pos = full.find_last_of(L"\\/");
+            if (pos == std::wstring::npos)
+            {
+                return full;
+            }
+            return full.substr(pos + 1);
+        };
+
+        std::vector<std::wstring> files;
+        WIN32_FIND_DATAW fd {};
+        const std::wstring pattern = picturesDir + L"\\*";
+        HANDLE hFind = FindFirstFileW(pattern.c_str(), &fd);
+        if (hFind == INVALID_HANDLE_VALUE)
+        {
+            return L"";
+        }
+
+        do
+        {
+            const std::wstring name = fd.cFileName;
+            if (name.empty() || name == L"." || name == L"..")
+            {
+                continue;
+            }
+            if ((fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) != 0)
+            {
+                continue;
+            }
+            if (!hasSupportedExt(name))
+            {
+                continue;
+            }
+            files.push_back(picturesDir + L"\\" + name);
+        } while (FindNextFileW(hFind, &fd));
+        FindClose(hFind);
+
+        if (files.empty())
+        {
+            return L"";
+        }
+
+        std::sort(files.begin(), files.end(), [&](const std::wstring& a, const std::wstring& b)
+        {
+            return toLower(fileNameOnly(a)) < toLower(fileNameOnly(b));
+        });
+
+        return files.front();
+    }
+
     static constexpr wchar_t kSingleInstanceMutex[] = L"Local\\FICture2_SingleInstance";
     static constexpr UINT WM_FIC2_IPC_COMPARE = WM_APP + 0x7A12;
 }
@@ -80,6 +188,14 @@ int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
 
     // Extract initial file path (if any).
     const std::wstring initialFile = GetInitialFileFromCommandLine();
+
+#if defined(_DEBUG)
+    {
+        wchar_t msg[1024] {};
+        swprintf_s(msg, L"[FICture2] Startup initialFile='%s'\n", initialFile.c_str());
+        OutputDebugStringW(msg);
+    }
+#endif
 
     // Single-instance detection (Named Mutex):
     // - If an instance already exists, we use IPC to ask it to start compare mode if filenames match.
@@ -172,8 +288,49 @@ int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
             return FALSE;
         }
 
+        // Persist window placement while the HWND is still valid (before destruction).
+        backplate->SetOnBeforeDestroy([](HWND hwnd)
+        {
+            FICture2App::SaveWindowPlacement(hwnd);
+            ImageBrowser_SaveSessionToIni(FICture2App::GetIniFilePath());
+        });
+
+        // Autosave window placement when the user moves/resizes the window.
+        // Debounced inside Backplate to avoid excessive INI writes.
+        backplate->SetOnWindowPlacementChanged([](HWND hwnd)
+        {
+            FICture2App::SaveWindowPlacement(hwnd);
+        });
+
         // Core viewer: supports 1..4 panes (we start with 1 by default).
         backplate->AddWnd(CreateImageBrowser(L"viewer", 1, initialFile));
+
+        // Restore last window position/size (per-user INI).
+        FICture2App::LoadWindowPlacement(backplate->Window());
+
+        // Restore viewer session only when launched with no file argument.
+        // (If a file is provided, we respect that and ignore saved folders/files.)
+        if (initialFile.empty())
+        {
+            const bool restored = ImageBrowser_TryRestoreSessionFromIni(FICture2App::GetIniFilePath());
+#if defined(_DEBUG)
+            {
+                wchar_t msg[256] {};
+                swprintf_s(msg, L"[FICture2] RestoreSession result=%d\n", restored ? 1 : 0);
+                OutputDebugStringW(msg);
+            }
+#endif
+
+            // First run / no session: open the first supported image from the user's Pictures folder.
+            if (!restored)
+            {
+                const std::wstring firstPicture = FindFirstSupportedImageInPictures();
+                if (!firstPicture.empty())
+                {
+                    ImageBrowser_OpenFileInRoot(firstPicture);
+                }
+            }
+        }
 
         if (!hadExistingInstance)
         {
@@ -228,6 +385,8 @@ int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
         backplate->Show(nCmdShow);
 
         result = app.RunMessageLoop();
+
+        // (Window placement + session are saved in Backplate::SetOnBeforeDestroy callback.)
         // backplate is destroyed here (end of scope), releasing any COM resources it owns.
     }
 

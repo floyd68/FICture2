@@ -36,6 +36,43 @@ namespace
     static class ImageBrowserImpl* g_rootHorizontalHostBrowser = nullptr;
     static std::atomic<UINT_PTR> g_nextThumbApplyTimerId { 0x4D21 };
 
+    static std::wstring JoinFloatsCsv(const std::vector<float>& values)
+    {
+        std::wstring s;
+        for (size_t i = 0; i < values.size(); ++i)
+        {
+            wchar_t buf[64] {};
+            swprintf_s(buf, L"%.6f", values[i]);
+            if (i != 0)
+            {
+                s += L",";
+            }
+            s += buf;
+        }
+        return s;
+    }
+
+    static std::vector<float> ParseFloatsCsv(const std::wstring& s)
+    {
+        std::vector<float> out;
+        size_t start = 0;
+        while (start < s.size())
+        {
+            size_t end = s.find(L',', start);
+            if (end == std::wstring::npos)
+            {
+                end = s.size();
+            }
+            const std::wstring token = s.substr(start, end - start);
+            if (!token.empty())
+            {
+                out.push_back(static_cast<float>(_wtof(token.c_str())));
+            }
+            start = end + 1;
+        }
+        return out;
+    }
+
     static bool RectContainsPoint(const D2D1_RECT_F& r, const POINT& pt)
     {
         return pt.x >= r.left &&
@@ -490,6 +527,140 @@ namespace
             return true;
         }
 
+        std::wstring GetDisplayedFilePath() const
+        {
+            return ActiveMainPath();
+        }
+
+        std::wstring GetCurrentFolderPath() const
+        {
+            return m_currentFolder.wstring();
+        }
+
+        // Captures split ratios of the horizontal host tree (preorder), excluding per-browser root splits.
+        std::vector<float> CaptureHorizontalSplitRatios() const
+        {
+            std::vector<float> out;
+            CaptureSplitRatiosRecursive(m_hHost, out);
+            return out;
+        }
+
+        void ApplyHorizontalSplitRatios(const std::vector<float>& ratios)
+        {
+            size_t idx = 0;
+            ApplySplitRatiosRecursive(m_hHost, ratios, idx);
+            if (BackplateRef() != nullptr)
+            {
+                BackplateRef()->RequestLayout();
+            }
+        }
+
+        // Restore this browser to show a given file (rebuild thumbs + select/apply).
+        void RestoreOpenFile(const std::wstring& filePath)
+        {
+            if (filePath.empty())
+            {
+                return;
+            }
+
+            const std::filesystem::path p(filePath);
+            if (!std::filesystem::exists(p) || !std::filesystem::is_regular_file(p))
+            {
+                return;
+            }
+
+            m_currentFolder = p.parent_path();
+            m_initialThumbEnsured = false;
+
+            RebuildThumbList(p);
+
+            // Select/apply exact match if present.
+            for (size_t i = 0; i < m_items.size(); ++i)
+            {
+                if (m_items[i].kind == ThumbItemKind::Image && m_items[i].path == p)
+                {
+                    SelectItemByIndex(i, MainApplyMode::Immediate, true /*ensureCentered*/);
+                    return;
+                }
+            }
+
+            // Fallback: show first image in folder.
+            for (size_t i = 0; i < m_items.size(); ++i)
+            {
+                if (m_items[i].kind == ThumbItemKind::Image)
+                {
+                    SelectItemByIndex(i, MainApplyMode::Immediate, true /*ensureCentered*/);
+                    return;
+                }
+            }
+        }
+
+        void RestoreOpenFolder(const std::wstring& folderPath)
+        {
+            if (folderPath.empty())
+            {
+                return;
+            }
+            NavigateToFolder(std::filesystem::path(folderPath));
+        }
+
+        void AddHorizontalViewerForRestore(const std::wstring& filePath)
+        {
+            if (filePath.empty())
+            {
+                return;
+            }
+            SplitHorizontalWithFile(std::filesystem::path(filePath));
+        }
+
+        void AddHorizontalViewerForRestoreFolder(const std::wstring& folderPath)
+        {
+            if (folderPath.empty())
+            {
+                return;
+            }
+
+            // Always apply horizontal splitting at the root host browser.
+            if (g_rootHorizontalHostBrowser != nullptr && g_rootHorizontalHostBrowser != this)
+            {
+                g_rootHorizontalHostBrowser->AddHorizontalViewerForRestoreFolder(folderPath);
+                return;
+            }
+
+            EnsureHorizontalHost();
+            if (m_hPanes.empty())
+            {
+                return;
+            }
+
+            if (static_cast<int>(m_hPanes.size()) >= 4)
+            {
+                return;
+            }
+
+            static int s_splitIdFolder = 10001;
+            const std::wstring childName = L"browser_split_" + std::to_wstring(s_splitIdFolder++);
+            auto newWnd = CreateImageBrowser(childName, 1, L"");
+            auto newBrowser = std::dynamic_pointer_cast<ImageBrowserImpl>(newWnd);
+            if (newBrowser != nullptr)
+            {
+                newBrowser->RestoreOpenFolder(folderPath);
+            }
+            m_hPanes.push_back(newWnd);
+
+            RebuildHorizontalHost();
+
+            if (BackplateRef() != nullptr)
+            {
+                BackplateRef()->RequestLayout();
+            }
+        }
+
+        void ForceApplySyncedThumbStripHeight()
+        {
+            ApplySyncedThumbStripHeightIfNeeded(true);
+        }
+
     private:
         enum class MainApplyMode
         {
@@ -594,7 +765,8 @@ namespace
         {
             // Root: vertical split (main panes + thumb strip)
             auto rootSplit = std::make_shared<FD2D::SplitPanel>(L"rootSplit", FD2D::SplitterOrientation::Vertical);
-            rootSplit->SetSplitRatio(0.80f);
+            // Default: give more space to the main image; thumbnail strip starts shorter.
+            rootSplit->SetSplitRatio(0.85f);
 
             // Thumbnail strip sizing:
             // The splitter's min/max should match the thumbnail min/max size so resizing stays consistent.
@@ -608,8 +780,8 @@ namespace
             BuildMainPanes();
 
             auto thumbs = std::make_shared<FD2D::StackPanel>(L"thumbs", FD2D::Orientation::Horizontal);
-            thumbs->SetSpacing(8.0f);
-            thumbs->SetPadding(8.0f);
+            thumbs->SetSpacing(4.0f);
+            thumbs->SetPadding(4.0f);
             auto thumbScroll = std::make_shared<FD2D::ScrollView>(L"thumbScroll");
             thumbScroll->SetScrollStep(96.0f);
             thumbScroll->SetSmoothScrollEnabled(true);
@@ -660,9 +832,17 @@ namespace
             m_thumbItemSpacing = 0.0f;
             m_thumbOuterSpacing = 8.0f;
 
-            std::wstring mainPath = !m_initialFile.empty() ? m_initialFile : L"D:/Works/FICture2/landscape/cavebaseground01.dds";
-            m_currentFolder = std::filesystem::path(mainPath).parent_path();
-            RebuildThumbList(mainPath);
+            if (!m_initialFile.empty())
+            {
+                m_currentFolder = std::filesystem::path(m_initialFile).parent_path();
+                RebuildThumbList(m_initialFile);
+            }
+            else
+            {
+                // Start empty; a session restore or user navigation will populate.
+                m_currentFolder.clear();
+                RebuildThumbList({});
+            }
 
             ApplyActiveSelectionStyle();
         }
@@ -725,14 +905,15 @@ namespace
             m_mainImages.clear();
             m_mainGrid.reset();
 
-            std::wstring mainPath = !m_initialFile.empty() ? m_initialFile : L"D:/Works/FICture2/landscape/cavebaseground01.dds";
-
             if (m_paneCount == 1)
             {
                 auto mainImage = std::make_shared<FD2D::MainImage>(L"mainImage0");
-                mainImage->SetSourceFile(mainPath);
                 EnsureMainPathSlots();
-                m_mainPaths[0] = mainPath;
+                if (!m_initialFile.empty())
+                {
+                    mainImage->SetSourceFile(m_initialFile);
+                    m_mainPaths[0] = m_initialFile;
+                }
                 mainImage->SetOnViewChanged([this](const FD2D::Image::ViewTransform& vt)
                 {
                     OnActiveMainViewChanged(vt);
@@ -772,9 +953,12 @@ namespace
                 for (int i = 0; i < m_paneCount; ++i)
                 {
                     auto img = std::make_shared<FD2D::MainImage>(L"mainImage" + std::to_wstring(i));
-                    img->SetSourceFile(mainPath);
                     EnsureMainPathSlots();
-                    m_mainPaths[static_cast<size_t>(i)] = mainPath;
+                    if (!m_initialFile.empty())
+                    {
+                        img->SetSourceFile(m_initialFile);
+                        m_mainPaths[static_cast<size_t>(i)] = m_initialFile;
+                    }
                     img->SetOnViewChanged([this](const FD2D::Image::ViewTransform& vt)
                     {
                         OnActiveMainViewChanged(vt);
@@ -1639,6 +1823,48 @@ namespace
         bool m_syncSuppressBroadcast { false };
         bool m_viewSyncSuppressBroadcast { false };
         UINT_PTR m_thumbApplyTimerId { 0 };
+
+        static void CaptureSplitRatiosRecursive(const std::shared_ptr<FD2D::Wnd>& node, std::vector<float>& out)
+        {
+            if (!node)
+            {
+                return;
+            }
+
+            auto sp = std::dynamic_pointer_cast<FD2D::SplitPanel>(node);
+            if (sp && sp->Orientation() == FD2D::SplitterOrientation::Horizontal)
+            {
+                out.push_back(sp->SplitRatio());
+            }
+
+            for (const auto& ch : node->ChildrenInOrder())
+            {
+                CaptureSplitRatiosRecursive(ch, out);
+            }
+        }
+
+        static void ApplySplitRatiosRecursive(const std::shared_ptr<FD2D::Wnd>& node, const std::vector<float>& ratios, size_t& idx)
+        {
+            if (!node)
+            {
+                return;
+            }
+
+            auto sp = std::dynamic_pointer_cast<FD2D::SplitPanel>(node);
+            if (sp && sp->Orientation() == FD2D::SplitterOrientation::Horizontal)
+            {
+                if (idx < ratios.size())
+                {
+                    sp->SetSplitRatio(ratios[idx]);
+                }
+                idx++;
+            }
+
+            for (const auto& ch : node->ChildrenInOrder())
+            {
+                ApplySplitRatiosRecursive(ch, ratios, idx);
+            }
+        }
     };
 }
 
@@ -1655,5 +1881,183 @@ bool ImageBrowser_TryStartCompareWithFileNameMatch(const std::wstring& incomingF
     }
 
     return g_rootHorizontalHostBrowser->TryStartCompareWithFileNameMatch(incomingFilePath);
+}
+
+void ImageBrowser_OpenFileInRoot(const std::wstring& filePath)
+{
+    if (g_rootHorizontalHostBrowser == nullptr)
+    {
+        return;
+    }
+    g_rootHorizontalHostBrowser->RestoreOpenFile(filePath);
+}
+
+void ImageBrowser_SaveSessionToIni(const std::wstring& iniFile)
+{
+    if (iniFile.empty() || g_rootHorizontalHostBrowser == nullptr)
+    {
+        return;
+    }
+
+    // Save viewer count + per-viewer displayed file.
+    const int count = static_cast<int>((std::min)(static_cast<size_t>(4), g_allBrowsers.size()));
+    {
+        wchar_t buf[32] {};
+        _itow_s(count, buf, 10);
+        (void)WritePrivateProfileStringW(L"Session", L"ViewerCount", buf, iniFile.c_str());
+    }
+
+    // Thumb strip height (if known).
+    if (g_hasSyncedThumbStripHeight)
+    {
+        wchar_t buf[64] {};
+        swprintf_s(buf, L"%.2f", g_syncedThumbStripHeight);
+        (void)WritePrivateProfileStringW(L"Session", L"ThumbStripHeight", buf, iniFile.c_str());
+    }
+
+    // Horizontal split ratios (preorder).
+    {
+        const std::wstring csv = JoinFloatsCsv(g_rootHorizontalHostBrowser->CaptureHorizontalSplitRatios());
+        (void)WritePrivateProfileStringW(L"Session", L"HorizontalSplitRatios", csv.c_str(), iniFile.c_str());
+    }
+
+    for (int i = 0; i < count; ++i)
+    {
+        auto* b = g_allBrowsers[static_cast<size_t>(i)];
+        if (!b)
+        {
+            continue;
+        }
+
+        const std::wstring sec = L"Viewer" + std::to_wstring(i);
+        (void)WritePrivateProfileStringW(sec.c_str(), L"DisplayedFile", b->GetDisplayedFilePath().c_str(), iniFile.c_str());
+        (void)WritePrivateProfileStringW(sec.c_str(), L"CurrentFolder", b->GetCurrentFolderPath().c_str(), iniFile.c_str());
+    }
+}
+
+bool ImageBrowser_TryRestoreSessionFromIni(const std::wstring& iniFile)
+{
+    if (iniFile.empty() || g_rootHorizontalHostBrowser == nullptr)
+    {
+        return false;
+    }
+
+    wchar_t buf[8192] {};
+
+    const int count = GetPrivateProfileIntW(L"Session", L"ViewerCount", 0, iniFile.c_str());
+    if (count <= 0)
+    {
+        return false;
+    }
+
+    const int clampedCount = (std::max)(1, (std::min)(4, count));
+
+#if defined(_DEBUG)
+    {
+        wchar_t msg[1024] {};
+        swprintf_s(msg, L"[FICture2] RestoreSession: ini='%s' ViewerCount=%d (clamped=%d)\n", iniFile.c_str(), count, clampedCount);
+        OutputDebugStringW(msg);
+    }
+#endif
+
+    // Load thumb strip height (optional).
+    const DWORD nThumb = GetPrivateProfileStringW(L"Session", L"ThumbStripHeight", L"", buf, static_cast<DWORD>(std::size(buf)), iniFile.c_str());
+    if (nThumb > 0)
+    {
+        const float h = static_cast<float>(_wtof(buf));
+        if (h > 1.0f)
+        {
+            g_syncedThumbStripHeight = h;
+            g_hasSyncedThumbStripHeight = true;
+        }
+    }
+
+    // Read viewer state list.
+    struct ViewerState
+    {
+        std::wstring filePath;
+        std::wstring folderPath;
+    };
+
+    std::vector<ViewerState> viewers;
+    viewers.reserve(static_cast<size_t>(clampedCount));
+    for (int i = 0; i < clampedCount; ++i)
+    {
+        const std::wstring sec = L"Viewer" + std::to_wstring(i);
+        buf[0] = 0;
+        const DWORD nFile = GetPrivateProfileStringW(sec.c_str(), L"DisplayedFile", L"", buf, static_cast<DWORD>(std::size(buf)), iniFile.c_str());
+        std::wstring file = (nFile > 0 && buf[0] != 0) ? std::wstring(buf) : std::wstring();
+
+        buf[0] = 0;
+        const DWORD nFolder = GetPrivateProfileStringW(sec.c_str(), L"CurrentFolder", L"", buf, static_cast<DWORD>(std::size(buf)), iniFile.c_str());
+        std::wstring folder = (nFolder > 0 && buf[0] != 0) ? std::wstring(buf) : std::wstring();
+
+        viewers.push_back({ std::move(file), std::move(folder) });
+    }
+
+#if defined(_DEBUG)
+    for (int i = 0; i < clampedCount; ++i)
+    {
+        const auto& v = viewers[static_cast<size_t>(i)];
+        wchar_t msg[2048] {};
+        swprintf_s(
+            msg,
+            L"[FICture2] RestoreSession: Viewer%d file='%s' folder='%s'\n",
+            i,
+            v.filePath.c_str(),
+            v.folderPath.c_str());
+        OutputDebugStringW(msg);
+    }
+#endif
+
+    // Apply root viewer.
+    if (!viewers.empty())
+    {
+        if (!viewers[0].filePath.empty())
+        {
+            g_rootHorizontalHostBrowser->RestoreOpenFile(viewers[0].filePath);
+        }
+        else if (!viewers[0].folderPath.empty())
+        {
+            g_rootHorizontalHostBrowser->RestoreOpenFolder(viewers[0].folderPath);
+        }
+    }
+
+    // Add additional viewers.
+    for (int i = 1; i < clampedCount; ++i)
+    {
+        const auto& v = viewers[static_cast<size_t>(i)];
+        if (!v.filePath.empty())
+        {
+            g_rootHorizontalHostBrowser->AddHorizontalViewerForRestore(v.filePath);
+        }
+        else if (!v.folderPath.empty())
+        {
+            g_rootHorizontalHostBrowser->AddHorizontalViewerForRestoreFolder(v.folderPath);
+        }
+    }
+
+    // Apply thumb strip height across all (will clamp to min/max on layout).
+    if (g_hasSyncedThumbStripHeight)
+    {
+        for (auto* b : g_allBrowsers)
+        {
+            if (b)
+            {
+                b->ForceApplySyncedThumbStripHeight();
+            }
+        }
+    }
+
+    // Apply horizontal split ratios (optional).
+    buf[0] = 0;
+    const DWORD nRat = GetPrivateProfileStringW(L"Session", L"HorizontalSplitRatios", L"", buf, static_cast<DWORD>(std::size(buf)), iniFile.c_str());
+    if (nRat > 0 && buf[0] != 0)
+    {
+        const std::vector<float> ratios = ParseFloatsCsv(buf);
+        g_rootHorizontalHostBrowser->ApplyHorizontalSplitRatios(ratios);
+    }
+
+    return true;
 }
 
