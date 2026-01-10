@@ -1,16 +1,16 @@
 // FICture2.cpp : application entrypoint
 
-#include "framework.h"
 #include "FICture2.h"
 
-#include "FD2D/FD2D.h"
+#include "FD2D/Application.h"
+#include "FD2D/Backplate.h"
+#include "FD2D/Core.h"
 #include "AppSetup.h"
 #include "ImageBrowser.h"
 
 #include "ImageCore/ImageCore.h"
 
 #include <algorithm>
-#include <memory>
 #include <objbase.h>
 
 #define MAX_LOADSTRING 100
@@ -95,7 +95,7 @@ int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
     {
         // IMPORTANT:
         // Ensure all UI objects (Backplate/Wnd tree) are destroyed BEFORE CoUninitialize().
-        // Some COM-backed objects (e.g. WIC bitmaps created for thumbnails) must be released
+        // Some COM-backed objects used by the UI/render stack must be released
         // before the calling thread uninitializes COM.
         auto backplate = app.CreateWindowedBackplate(L"main", opts);
         if (!backplate)

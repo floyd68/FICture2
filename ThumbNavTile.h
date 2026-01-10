@@ -4,12 +4,10 @@
 #include "FD2D/Text.h"
 
 #include <d2d1.h>
-#include <wincodec.h>
 #include <wrl/client.h>
 
 #include <functional>
 #include <string>
-#include <d2d1.h>
 
 class ThumbNavTile : public FD2D::Wnd
 {

@@ -30,6 +30,7 @@ namespace
     static float g_syncedThumbStripHeight = 0.0f;
     static bool g_hasSyncedThumbStripHeight = false;
     static std::vector<class ImageBrowserImpl*> g_allBrowsers {};
+    static class ImageBrowserImpl* g_rootHorizontalHostBrowser = nullptr;
 
     static bool RectContainsPoint(const D2D1_RECT_F& r, const POINT& pt)
     {
@@ -47,6 +48,10 @@ namespace
             , m_initialFile(initialFile)
         {
             g_allBrowsers.push_back(this);
+            if (g_rootHorizontalHostBrowser == nullptr)
+            {
+                g_rootHorizontalHostBrowser = this;
+            }
             SetPaneCount(paneCount);
             BuildUi();
         }
@@ -57,6 +62,11 @@ namespace
             if (it != g_allBrowsers.end())
             {
                 g_allBrowsers.erase(it);
+            }
+
+            if (g_rootHorizontalHostBrowser == this)
+            {
+                g_rootHorizontalHostBrowser = g_allBrowsers.empty() ? nullptr : g_allBrowsers.front();
             }
         }
 
@@ -110,6 +120,7 @@ namespace
             // live while dragging.
             ApplySyncedThumbStripHeightIfNeeded();
             UpdateThumbSizingFromPane();
+
             Wnd::OnRender(target);
         }
 
@@ -126,8 +137,12 @@ namespace
 
             if (message == WM_FIC2_DEFERRED_ACTION)
             {
-                RunDeferredAction();
-                return true;
+                if (m_deferredKind != DeferredActionKind::None)
+                {
+                    RunDeferredAction();
+                    return true;
+                }
+                return false;
             }
 
             if (message == WM_TIMER)
@@ -145,6 +160,83 @@ namespace
                     }
                     m_hasPendingApply = false;
                     return true;
+                }
+            }
+
+            // Thumbnail wheel: scrolling should also move selection (and update main image).
+            if (message == WM_MOUSEWHEEL)
+            {
+                if (m_thumbScroll && !m_items.empty())
+                {
+                    const POINT pt { GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam) };
+                    if (RectContainsPoint(m_thumbScroll->LayoutRect(), pt))
+                    {
+                        // IMPORTANT:
+                        // Debounced apply uses a window WM_TIMER, and Backplate routes non-mouse messages
+                        // (including WM_TIMER) only to the focused Wnd. Wheel should therefore also
+                        // establish focus so selection + main-image apply stay consistent.
+                        RequestFocus();
+
+                        // Use accumulated wheel delta so high-resolution wheels/trackpads still step predictably.
+                        m_thumbWheelRemainder += GET_WHEEL_DELTA_WPARAM(wParam);
+                        const int steps = m_thumbWheelRemainder / WHEEL_DELTA;
+                        m_thumbWheelRemainder = m_thumbWheelRemainder % WHEEL_DELTA;
+
+                        if (steps != 0)
+                        {
+                            const int dir = (steps > 0) ? -1 : 1; // wheel-up selects previous, wheel-down selects next
+                            const int count = std::abs(steps);
+
+                            size_t cur = (m_selectedIndex < m_items.size()) ? m_selectedIndex : 0;
+                            size_t next = cur;
+
+                            for (int s = 0; s < count; ++s)
+                            {
+                                // Advance to next/prev IMAGE item (skip folders/"..").
+                                size_t probe = next;
+                                bool found = false;
+                                while (true)
+                                {
+                                    if (dir < 0)
+                                    {
+                                        if (probe == 0)
+                                        {
+                                            break;
+                                        }
+                                        probe--;
+                                    }
+                                    else
+                                    {
+                                        probe++;
+                                        if (probe >= m_items.size())
+                                        {
+                                            break;
+                                        }
+                                    }
+
+                                    if (m_items[probe].kind == ThumbItemKind::Image)
+                                    {
+                                        found = true;
+                                        break;
+                                    }
+                                }
+
+                                if (!found)
+                                {
+                                    break;
+                                }
+                                next = probe;
+                            }
+
+                            if (next != cur)
+                            {
+                                // Debounce main image apply to avoid thrashing disk/decoders while spinning the wheel.
+                                SelectItemByIndex(next, MainApplyMode::Debounced, true /*ensureCentered*/);
+                            }
+                        }
+
+                        return true;
+                    }
                 }
             }
 
@@ -750,7 +842,7 @@ namespace
             }
         }
 
-        void SelectItemByIndex(size_t index, MainApplyMode mode)
+        void SelectItemByIndex(size_t index, MainApplyMode mode, bool ensureCentered = true)
         {
             if (m_items.empty())
             {
@@ -788,7 +880,14 @@ namespace
 
             if (m_thumbScroll && m_selectedFocus)
             {
-                m_thumbScroll->EnsureCentered(m_selectedFocus->LayoutRect());
+                if (ensureCentered)
+                {
+                    m_thumbScroll->EnsureCentered(m_selectedFocus->LayoutRect());
+                }
+                else
+                {
+                    m_thumbScroll->EnsureVisible(m_selectedFocus->LayoutRect(), kThumbStripPadding);
+                }
             }
 
             if (m_items[m_selectedIndex].kind == ThumbItemKind::Image && mode == MainApplyMode::Immediate)
@@ -1009,6 +1108,7 @@ namespace
                 const size_t index = m_items.size();
                 thumbTile->SetOnClick([this, index]()
                 {
+                    RequestFocus();
                     SelectItemByIndex(index, MainApplyMode::Immediate);
                 });
                 m_thumbPanel->AddChild(thumbTile);
@@ -1097,6 +1197,9 @@ namespace
 
         void QueueDeferredAction(DeferredActionKind kind, const std::filesystem::path& path = {})
         {
+            // Ensure any deferred action runs on the ImageBrowser that originated it.
+            // (Mouse messages are often handled by child tiles, so the parent ImageBrowser may not see WM_LBUTTONDOWN.)
+            RequestFocus();
             m_deferredKind = kind;
             m_deferredPath = path;
             if (BackplateRef() != nullptr)
@@ -1155,6 +1258,15 @@ namespace
         {
             if (filePath.empty())
             {
+                return;
+            }
+
+            // Always apply horizontal splitting at the root host browser.
+            // Otherwise, if the user triggers Ctrl+Shift+O from a non-root pane, we'd build a nested split-tree
+            // inside that pane (breaking equal-width distribution across all ImageBrowsers).
+            if (g_rootHorizontalHostBrowser != nullptr && g_rootHorizontalHostBrowser != this)
+            {
+                g_rootHorizontalHostBrowser->SplitHorizontalWithFile(filePath);
                 return;
             }
 
@@ -1264,6 +1376,7 @@ namespace
         size_t m_selectedIndex { static_cast<size_t>(-1) };
         bool m_initialThumbEnsured { false };
         ULONGLONG m_lastKeyNavMs { 0 };
+        int m_thumbWheelRemainder { 0 };
         bool m_hasPendingApply { false };
         size_t m_pendingApplyIndex { static_cast<size_t>(-1) };
 
@@ -1281,6 +1394,8 @@ namespace
         std::wstring m_initialFile {};
         std::vector<std::shared_ptr<FD2D::Wnd>> m_hPanes {};
         std::shared_ptr<FD2D::Wnd> m_hHost {};
+
+        // (no focus-background state)
     };
 }
 

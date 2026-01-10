@@ -5,6 +5,7 @@
 #include "FD2D/Backplate.h"
 
 #include <windowsx.h>
+#include <wincodec.h>
 
 ThumbNavTile::ThumbNavTile(const std::wstring& name)
     : Wnd(name)
@@ -260,21 +261,28 @@ void ThumbNavTile::OnRender(ID2D1RenderTarget* target)
         if (m_icon == IconKind::Up)
         {
             // Simple "up" arrow over the folder.
-            const float cx = iconX + iconW * 0.52f;
-            const float cy = iconY + (iconH * 0.54f);
-            const float shaftH = iconH * 0.20f;
-            const float head = iconH * 0.12f;
+            // Center the arrow in the folder body (folder icon visually sits a bit low due to its tab).
+            const float cx = iconX + (iconW * 0.5f);
+            const float cy = iconY + (iconH * 0.60f);
 
-            const D2D1_POINT_2F p0 = D2D1::Point2F(cx, cy + shaftH);
-            const D2D1_POINT_2F p1 = D2D1::Point2F(cx, cy - shaftH * 0.10f);
-            target->DrawLine(p0, p1, m_iconAccentBrush.Get(), 2.75f);
+            // Scale thickness with icon size so it remains readable at small thumbnail sizes.
+            const float thickness = (std::max)(3.5f, iconW * 0.065f);
 
-            // Arrow head
-            const D2D1_POINT_2F h0 = D2D1::Point2F(cx, cy - shaftH * 0.15f);
-            const D2D1_POINT_2F hl = D2D1::Point2F(cx - head, cy + head * 0.45f);
-            const D2D1_POINT_2F hr = D2D1::Point2F(cx + head, cy + head * 0.45f);
-            target->DrawLine(h0, hl, m_iconAccentBrush.Get(), 2.75f);
-            target->DrawLine(h0, hr, m_iconAccentBrush.Get(), 2.75f);
+            const float shaftUp = iconH * 0.20f;
+            const float shaftDown = iconH * 0.08f;
+            const float headW = iconH * 0.16f;
+            const float headH = iconH * 0.14f;
+
+            const D2D1_POINT_2F shaftBottom = D2D1::Point2F(cx, cy + shaftDown);
+            const D2D1_POINT_2F shaftTop = D2D1::Point2F(cx, cy - shaftUp);
+            target->DrawLine(shaftBottom, shaftTop, m_iconAccentBrush.Get(), thickness);
+
+            // Arrow head (chevron/triangle-ish)
+            const D2D1_POINT_2F headTip = shaftTop;
+            const D2D1_POINT_2F headLeft = D2D1::Point2F(cx - headW, shaftTop.y + headH);
+            const D2D1_POINT_2F headRight = D2D1::Point2F(cx + headW, shaftTop.y + headH);
+            target->DrawLine(headTip, headLeft, m_iconAccentBrush.Get(), thickness);
+            target->DrawLine(headTip, headRight, m_iconAccentBrush.Get(), thickness);
         }
     }
 
