@@ -5,17 +5,64 @@
 #include "FD2D/Application.h"
 #include "FD2D/Backplate.h"
 #include "FD2D/Core.h"
+#include "AppIpc.h"
 #include "AppSetup.h"
 #include "ImageBrowser.h"
+#include "IpcCompareRequest.h"
 
 #include "ImageCore/ImageCore.h"
 
 #include <algorithm>
 #include <objbase.h>
+#include <shellapi.h>
 
 #define MAX_LOADSTRING 100
 
 WCHAR g_title[MAX_LOADSTRING];
+
+namespace
+{
+    static std::wstring GetInitialFileFromCommandLine()
+    {
+        int argc = 0;
+        wchar_t** argv = CommandLineToArgvW(GetCommandLineW(), &argc);
+        if (!argv || argc <= 1)
+        {
+            if (argv)
+            {
+                LocalFree(argv);
+            }
+            return L"";
+        }
+
+        std::wstring initial;
+        for (int i = 1; i < argc; ++i)
+        {
+            const std::wstring arg = argv[i] ? argv[i] : L"";
+            if (arg.empty())
+            {
+                continue;
+            }
+            if (arg.rfind(L"--", 0) == 0 || arg.rfind(L"-", 0) == 0)
+            {
+                continue;
+            }
+
+            const DWORD attr = GetFileAttributesW(arg.c_str());
+            if (attr != INVALID_FILE_ATTRIBUTES && (attr & FILE_ATTRIBUTE_DIRECTORY) == 0)
+            {
+                initial = arg;
+                break;
+            }
+        }
+
+        LocalFree(argv);
+        return initial;
+    }
+
+    static constexpr wchar_t kSingleInstanceMutex[] = L"Local\\FICture2_SingleInstance";
+    static constexpr UINT WM_FIC2_IPC_COMPARE = WM_APP + 0x7A12;
+}
 
 int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
     _In_opt_ HINSTANCE hPrevInstance,
@@ -30,6 +77,27 @@ int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
     {
         return static_cast<wchar_t>(towlower(c));
     });
+
+    // Extract initial file path (if any).
+    const std::wstring initialFile = GetInitialFileFromCommandLine();
+
+    // Single-instance detection (Named Mutex):
+    // - If an instance already exists, we use IPC to ask it to start compare mode if filenames match.
+    // - If filenames do not match, we keep running as a new instance.
+    HANDLE instanceMutex = CreateMutexW(nullptr, TRUE, kSingleInstanceMutex);
+    const DWORD mutexErr = GetLastError();
+    const bool hadExistingInstance = (instanceMutex != nullptr && mutexErr == ERROR_ALREADY_EXISTS);
+
+    if (hadExistingInstance && !initialFile.empty())
+    {
+        AppIpc::Decision decision = AppIpc::Decision::Ignore;
+        if (AppIpc::TrySendPath(initialFile, decision) && decision == AppIpc::Decision::CompareStarted)
+        {
+            // Existing instance will enter compare mode (split view); exit this process.
+            return 0;
+        }
+        // else: server not available or decided to ignore -> continue as a new instance.
+    }
 
     // COM lifetime is owned by the application (not FD2D)
     bool coInitialized = false;
@@ -105,12 +173,68 @@ int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
         }
 
         // Core viewer: supports 1..4 panes (we start with 1 by default).
-        backplate->AddWnd(CreateImageBrowser(L"viewer", 1, L""));
+        backplate->AddWnd(CreateImageBrowser(L"viewer", 1, initialFile));
+
+        if (!hadExistingInstance)
+        {
+            // First instance: start IPC server.
+            // Server thread marshals requests onto the UI thread via Backplate broadcast.
+            std::weak_ptr<FD2D::Backplate> weakBackplate = backplate;
+            AppIpc::StartServer([weakBackplate](const std::wstring& path) -> AppIpc::Decision
+            {
+                auto bp = weakBackplate.lock();
+                if (!bp || bp->Window() == nullptr)
+                {
+                    return AppIpc::Decision::Ignore;
+                }
+
+                HANDLE doneEvent = CreateEventW(nullptr, TRUE, FALSE, nullptr);
+                if (doneEvent == nullptr)
+                {
+                    return AppIpc::Decision::Ignore;
+                }
+
+                auto* req = new IpcCompareRequest();
+                req->path = path;
+                req->doneEvent = doneEvent;
+                req->compareStarted = false;
+
+                auto* bm = new FD2D::Backplate::BroadcastMessage();
+                bm->message = WM_FIC2_IPC_COMPARE;
+                bm->wParam = 0;
+                bm->lParam = reinterpret_cast<LPARAM>(req);
+
+                if (!PostMessageW(bp->Window(), FD2D::Backplate::WM_FD2D_BROADCAST, 0, reinterpret_cast<LPARAM>(bm)))
+                {
+                    CloseHandle(doneEvent);
+                    delete req;
+                    delete bm;
+                    return AppIpc::Decision::Ignore;
+                }
+
+                const DWORD wait = WaitForSingleObject(doneEvent, 800);
+                AppIpc::Decision decision = AppIpc::Decision::Ignore;
+                if (wait == WAIT_OBJECT_0 && req->compareStarted)
+                {
+                    decision = AppIpc::Decision::CompareStarted;
+                }
+
+                CloseHandle(doneEvent);
+                delete req;
+                return decision;
+            });
+        }
 
         backplate->Show(nCmdShow);
 
         result = app.RunMessageLoop();
         // backplate is destroyed here (end of scope), releasing any COM resources it owns.
+    }
+
+    if (instanceMutex != nullptr)
+    {
+        CloseHandle(instanceMutex);
+        instanceMutex = nullptr;
     }
 
     app.Shutdown();

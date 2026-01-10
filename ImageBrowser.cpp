@@ -3,6 +3,7 @@
 #include "framework.h"
 #include "ThumbNavTile.h"
 #include "ThumbImageTile.h"
+#include "IpcCompareRequest.h"
 
 #include "FD2D/FD2D.h"
 #include "FD2D/MainImage.h"
@@ -13,7 +14,9 @@
 #include <cmath>
 #include <filesystem>
 #include <memory>
+#include <atomic>
 #include <vector>
+#include <cwctype>
 #include <windowsx.h>
 #include <shlobj.h>
 #include <commdlg.h>
@@ -31,6 +34,7 @@ namespace
     static bool g_hasSyncedThumbStripHeight = false;
     static std::vector<class ImageBrowserImpl*> g_allBrowsers {};
     static class ImageBrowserImpl* g_rootHorizontalHostBrowser = nullptr;
+    static std::atomic<UINT_PTR> g_nextThumbApplyTimerId { 0x4D21 };
 
     static bool RectContainsPoint(const D2D1_RECT_F& r, const POINT& pt)
     {
@@ -47,6 +51,7 @@ namespace
             : Wnd(name)
             , m_initialFile(initialFile)
         {
+            m_thumbApplyTimerId = g_nextThumbApplyTimerId.fetch_add(1);
             g_allBrowsers.push_back(this);
             if (g_rootHorizontalHostBrowser == nullptr)
             {
@@ -126,6 +131,20 @@ namespace
 
         bool OnMessage(UINT message, WPARAM wParam, LPARAM lParam) override
         {
+            if (message == WM_FIC2_IPC_COMPARE)
+            {
+                auto* req = reinterpret_cast<IpcCompareRequest*>(lParam);
+                if (req != nullptr)
+                {
+                    req->compareStarted = TryStartCompareWithFileNameMatch(req->path);
+                    if (req->doneEvent != nullptr)
+                    {
+                        SetEvent(reinterpret_cast<HANDLE>(req->doneEvent));
+                    }
+                }
+                return true;
+            }
+
             if (message == WM_LBUTTONDOWN || message == WM_RBUTTONDOWN || message == WM_MBUTTONDOWN || message == WM_XBUTTONDOWN)
             {
                 const POINT pt { GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam) };
@@ -147,11 +166,11 @@ namespace
 
             if (message == WM_TIMER)
             {
-                if (wParam == kThumbApplyTimerId)
+                if (wParam == m_thumbApplyTimerId)
                 {
                     if (BackplateRef() != nullptr)
                     {
-                        KillTimer(BackplateRef()->Window(), kThumbApplyTimerId);
+                        KillTimer(BackplateRef()->Window(), m_thumbApplyTimerId);
                     }
 
                     if (m_hasPendingApply && m_pendingApplyIndex < m_items.size())
@@ -431,6 +450,46 @@ namespace
             return true;
         }
 
+        bool TryStartCompareWithFileNameMatch(const std::wstring& incomingFilePath)
+        {
+            if (incomingFilePath.empty())
+            {
+                return false;
+            }
+
+            const std::wstring currentPath = ActiveMainPath();
+            if (currentPath.empty())
+            {
+                return false;
+            }
+
+            const auto NormalizeLowerName = [](const std::wstring& p) -> std::wstring
+            {
+                std::filesystem::path fp(p);
+                std::wstring name = fp.filename().wstring();
+                for (auto& c : name)
+                {
+                    c = static_cast<wchar_t>(towlower(c));
+                }
+                return name;
+            };
+
+            const std::wstring incomingName = NormalizeLowerName(incomingFilePath);
+            const std::wstring currentName = NormalizeLowerName(currentPath);
+            if (incomingName.empty() || currentName.empty())
+            {
+                return false;
+            }
+
+            if (incomingName != currentName)
+            {
+                return false;
+            }
+
+            SplitHorizontalWithFile(std::filesystem::path(incomingFilePath));
+            return true;
+        }
+
     private:
         enum class MainApplyMode
         {
@@ -456,9 +515,9 @@ namespace
             std::shared_ptr<ThumbImageTile> imageTile {};
         };
 
-        static constexpr UINT_PTR kThumbApplyTimerId = 0x4D21;
         static constexpr ULONGLONG kKeyRepeatMinIntervalMs = 60;
         static constexpr UINT WM_FIC2_DEFERRED_ACTION = WM_APP + 0x7A11;
+        static constexpr UINT WM_FIC2_IPC_COMPARE = WM_APP + 0x7A12;
 
         enum class DeferredActionKind
         {
@@ -672,6 +731,12 @@ namespace
             {
                 auto mainImage = std::make_shared<FD2D::MainImage>(L"mainImage0");
                 mainImage->SetSourceFile(mainPath);
+                EnsureMainPathSlots();
+                m_mainPaths[0] = mainPath;
+                mainImage->SetOnViewChanged([this](const FD2D::Image::ViewTransform& vt)
+                {
+                    OnActiveMainViewChanged(vt);
+                });
                 mainImage->SetOnClick([this]()
                 {
                     SetActivePane(0);
@@ -708,6 +773,12 @@ namespace
                 {
                     auto img = std::make_shared<FD2D::MainImage>(L"mainImage" + std::to_wstring(i));
                     img->SetSourceFile(mainPath);
+                    EnsureMainPathSlots();
+                    m_mainPaths[static_cast<size_t>(i)] = mainPath;
+                    img->SetOnViewChanged([this](const FD2D::Image::ViewTransform& vt)
+                    {
+                        OnActiveMainViewChanged(vt);
+                    });
                     const size_t idx = static_cast<size_t>(i);
                     img->SetOnClick([this, idx]()
                     {
@@ -728,6 +799,29 @@ namespace
             }
 
             ApplyActiveSelectionStyle();
+        }
+
+        void EnsureMainPathSlots()
+        {
+            const size_t needed = static_cast<size_t>((std::max)(1, m_paneCount));
+            if (m_mainPaths.size() != needed)
+            {
+                m_mainPaths.resize(needed);
+            }
+        }
+
+        std::wstring ActiveMainPath() const
+        {
+            if (m_mainPaths.empty())
+            {
+                return L"";
+            }
+            size_t idx = m_activePane;
+            if (idx >= m_mainPaths.size())
+            {
+                idx = 0;
+            }
+            return m_mainPaths[idx];
         }
 
         void ApplyIniToMainImage(FD2D::Image& mainImage)
@@ -809,11 +903,17 @@ namespace
             m_hasPendingApply = false;
             if (BackplateRef() != nullptr)
             {
-                KillTimer(BackplateRef()->Window(), kThumbApplyTimerId);
+                KillTimer(BackplateRef()->Window(), m_thumbApplyTimerId);
             }
 
             mainImage->SetLoadingSpinnerEnabled(true);
-            mainImage->SetSourceFile(m_items[index].path.wstring());
+            const std::wstring p = m_items[index].path.wstring();
+            mainImage->SetSourceFile(p);
+            EnsureMainPathSlots();
+            if (m_activePane < m_mainPaths.size())
+            {
+                m_mainPaths[m_activePane] = p;
+            }
             mainImage->Invalidate();
         }
 
@@ -837,8 +937,8 @@ namespace
             if (BackplateRef() != nullptr)
             {
                 HWND hwnd = BackplateRef()->Window();
-                KillTimer(hwnd, kThumbApplyTimerId);
-                SetTimer(hwnd, kThumbApplyTimerId, 150, nullptr);
+                KillTimer(hwnd, m_thumbApplyTimerId);
+                SetTimer(hwnd, m_thumbApplyTimerId, 150, nullptr);
             }
         }
 
@@ -899,7 +999,146 @@ namespace
                 ScheduleApply(m_selectedIndex);
             }
 
+            // Folder compare sync:
+            // If we are in compare mode (2+ ImageBrowsers) and a new image is selected in the thumbnail list,
+            // propagate its filename to other ImageBrowsers. Receivers select the same filename in their
+            // current directory (if present).
+            if (!m_syncSuppressBroadcast && g_allBrowsers.size() >= 2 && m_selectedIndex < m_items.size())
+            {
+                const ThumbItem& item = m_items[m_selectedIndex];
+                if (item.kind == ThumbItemKind::Image)
+                {
+                    const std::wstring fileNameLower = ToLower(item.path.filename().wstring());
+                    if (!fileNameLower.empty())
+                    {
+                        for (auto* b : g_allBrowsers)
+                        {
+                            if (b == nullptr || b == this)
+                            {
+                                continue;
+                            }
+                            b->OnSyncedFileNameSelected(fileNameLower);
+                        }
+                    }
+                }
+            }
+
             m_initialThumbEnsured = true;
+        }
+
+        static std::wstring ToLower(std::wstring s)
+        {
+            for (auto& c : s)
+            {
+                c = static_cast<wchar_t>(towlower(c));
+            }
+            return s;
+        }
+
+        void OnSyncedFileNameSelected(const std::wstring& fileNameLower)
+        {
+            if (fileNameLower.empty())
+            {
+                return;
+            }
+
+            // Avoid ping-pong rebroadcast.
+            if (m_syncSuppressBroadcast)
+            {
+                return;
+            }
+
+            // If we already have this file selected, do nothing.
+            if (m_selectedIndex < m_items.size() && m_items[m_selectedIndex].kind == ThumbItemKind::Image)
+            {
+                const std::wstring curLower = ToLower(m_items[m_selectedIndex].path.filename().wstring());
+                if (!curLower.empty() && curLower == fileNameLower)
+                {
+                    return;
+                }
+            }
+
+            // Find same filename among image items in current directory.
+            size_t match = static_cast<size_t>(-1);
+            for (size_t i = 0; i < m_items.size(); ++i)
+            {
+                if (m_items[i].kind != ThumbItemKind::Image)
+                {
+                    continue;
+                }
+
+                const std::wstring nameLower = ToLower(m_items[i].path.filename().wstring());
+                if (!nameLower.empty() && nameLower == fileNameLower)
+                {
+                    match = i;
+                    break;
+                }
+            }
+
+            if (match == static_cast<size_t>(-1))
+            {
+                return;
+            }
+
+            m_syncSuppressBroadcast = true;
+            SelectItemByIndex(match, MainApplyMode::Immediate, true /*ensureCentered*/);
+            m_syncSuppressBroadcast = false;
+        }
+
+        void OnActiveMainViewChanged(const FD2D::Image::ViewTransform& vt)
+        {
+            if (m_viewSyncSuppressBroadcast)
+            {
+                return;
+            }
+
+            // Only sync in compare mode (2+ ImageBrowsers).
+            if (g_allBrowsers.size() < 2)
+            {
+                return;
+            }
+
+            // Only propagate when this ImageBrowser is the focused one (input source).
+            if (!HasFocus())
+            {
+                return;
+            }
+
+            // Only propagate to other ImageBrowsers displaying the same file name.
+            const std::wstring myNameLower = ToLower(std::filesystem::path(ActiveMainPath()).filename().wstring());
+            if (myNameLower.empty())
+            {
+                return;
+            }
+
+            for (auto* b : g_allBrowsers)
+            {
+                if (!b || b == this)
+                {
+                    continue;
+                }
+
+                const std::wstring otherNameLower = ToLower(std::filesystem::path(b->ActiveMainPath()).filename().wstring());
+                if (otherNameLower.empty() || otherNameLower != myNameLower)
+                {
+                    continue;
+                }
+
+                b->ApplySyncedViewTransform(vt);
+            }
+        }
+
+        void ApplySyncedViewTransform(const FD2D::Image::ViewTransform& vt)
+        {
+            auto main = ActiveMainImage();
+            if (!main)
+            {
+                return;
+            }
+
+            m_viewSyncSuppressBroadcast = true;
+            main->SetViewTransform(vt, false /*notify*/);
+            m_viewSyncSuppressBroadcast = false;
         }
 
         void ActivateSelected()
@@ -1368,6 +1607,7 @@ namespace
         std::shared_ptr<FD2D::Wnd> m_mainPaneHost {};
         std::shared_ptr<FD2D::GridPanel> m_mainGrid {};
         std::vector<std::shared_ptr<FD2D::Image>> m_mainImages {};
+        std::vector<std::wstring> m_mainPaths {};
 
         std::shared_ptr<FD2D::Wnd> m_selectedFocus {};
         std::shared_ptr<FD2D::ScrollView> m_thumbScroll {};
@@ -1396,11 +1636,24 @@ namespace
         std::shared_ptr<FD2D::Wnd> m_hHost {};
 
         // (no focus-background state)
+        bool m_syncSuppressBroadcast { false };
+        bool m_viewSyncSuppressBroadcast { false };
+        UINT_PTR m_thumbApplyTimerId { 0 };
     };
 }
 
 std::shared_ptr<FD2D::Wnd> CreateImageBrowser(const std::wstring& name, int paneCount, const std::wstring& initialFile)
 {
     return std::make_shared<ImageBrowserImpl>(name, paneCount, initialFile);
+}
+
+bool ImageBrowser_TryStartCompareWithFileNameMatch(const std::wstring& incomingFilePath)
+{
+    if (g_rootHorizontalHostBrowser == nullptr)
+    {
+        return false;
+    }
+
+    return g_rootHorizontalHostBrowser->TryStartCompareWithFileNameMatch(incomingFilePath);
 }
 
