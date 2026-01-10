@@ -142,6 +142,73 @@ namespace
                     return true;
                 }
 
+                auto pageStep = [this]() -> size_t
+                {
+                    if (!m_thumbScroll)
+                    {
+                        return 1;
+                    }
+                    const D2D1_RECT_F r = m_thumbScroll->LayoutRect();
+                    const float w = r.right - r.left;
+                    if (w <= 1.0f)
+                    {
+                        return 1;
+                    }
+
+                    // Approximate "items per page" based on thumbnail width + constant inter-item spacing.
+                    // (Each item is a vertical StackPanel: [tile] + [label]. Horizontal spacing is on the parent panel.)
+                    const float itemExtent = (std::max)(1.0f, m_thumbW + m_thumbOuterSpacing);
+                    const int count = static_cast<int>(std::floor(w / itemExtent));
+                    return static_cast<size_t>((std::max)(1, count));
+                };
+
+                if (wParam == VK_HOME)
+                {
+                    m_lastKeyNavMs = now;
+                    if (!m_items.empty())
+                    {
+                        SelectItemByIndex(0, MainApplyMode::Debounced);
+                    }
+                    return true;
+                }
+                if (wParam == VK_END)
+                {
+                    m_lastKeyNavMs = now;
+                    if (!m_items.empty())
+                    {
+                        SelectItemByIndex(m_items.size() - 1, MainApplyMode::Debounced);
+                    }
+                    return true;
+                }
+                if (wParam == VK_PRIOR) // Page Up
+                {
+                    m_lastKeyNavMs = now;
+                    if (!m_items.empty())
+                    {
+                        const size_t step = pageStep();
+                        const size_t cur = (m_selectedIndex < m_items.size()) ? m_selectedIndex : 0;
+                        const size_t next = (cur > step) ? (cur - step) : 0;
+                        SelectItemByIndex(next, MainApplyMode::Debounced);
+                    }
+                    return true;
+                }
+                if (wParam == VK_NEXT) // Page Down
+                {
+                    m_lastKeyNavMs = now;
+                    if (!m_items.empty())
+                    {
+                        const size_t step = pageStep();
+                        const size_t cur = (m_selectedIndex < m_items.size()) ? m_selectedIndex : 0;
+                        size_t next = cur + step;
+                        if (next >= m_items.size())
+                        {
+                            next = m_items.size() - 1;
+                        }
+                        SelectItemByIndex(next, MainApplyMode::Debounced);
+                    }
+                    return true;
+                }
+
                 if (wParam == VK_LEFT)
                 {
                     m_lastKeyNavMs = now;
@@ -315,6 +382,7 @@ namespace
             m_thumbH = thumbH;
             m_thumbLabelDip = thumbLabelDip;
             m_thumbItemSpacing = thumbItemSpacing;
+            m_thumbOuterSpacing = 8.0f;
 
             std::wstring mainPath = L"D:/Works/FICture2/landscape/cavebaseground01.dds";
             m_currentFolder = std::filesystem::path(mainPath).parent_path();
@@ -901,6 +969,7 @@ namespace
         float m_thumbH { 128.0f };
         float m_thumbLabelDip { 10.0f };
         float m_thumbItemSpacing { 2.0f };
+        float m_thumbOuterSpacing { 8.0f }; // spacing between thumbnail "items" in the horizontal strip
 
         DeferredActionKind m_deferredKind { DeferredActionKind::None };
         std::filesystem::path m_deferredPath {};
