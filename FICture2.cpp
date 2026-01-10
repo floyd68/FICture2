@@ -11,10 +11,204 @@
 #include <filesystem>
 #include <vector>
 #include <algorithm>
+#include <windowsx.h>
+#include <wrl/client.h>
+#include <cmath>
+#include <shlobj.h>
 
 #define MAX_LOADSTRING 100
 
 WCHAR g_title[MAX_LOADSTRING];
+
+class ThumbNavTile : public FD2D::Wnd
+{
+public:
+    using ClickHandler = std::function<void()>;
+
+    explicit ThumbNavTile(const std::wstring& name)
+        : Wnd(name)
+        , m_label(name + L"_label")
+    {
+        m_label.SetFont(L"Segoe UI Semibold", 18.0f);
+        m_label.SetColor(D2D1::ColorF(D2D1::ColorF::White, 0.90f));
+        m_label.SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
+        m_label.SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+    }
+
+    void SetText(const std::wstring& text)
+    {
+        m_label.SetText(text);
+    }
+
+    void SetFixedSize(const FD2D::Size& size)
+    {
+        m_fixedSize = size;
+    }
+
+    void SetSelected(bool selected)
+    {
+        if (m_selected == selected)
+        {
+            return;
+        }
+
+        m_selected = selected;
+        m_selectedStartMs = GetTickCount64();
+        Invalidate();
+    }
+
+    bool Selected() const
+    {
+        return m_selected;
+    }
+
+    void SetOnClick(ClickHandler handler)
+    {
+        m_onClick = std::move(handler);
+    }
+
+    FD2D::Size Measure(FD2D::Size available) override
+    {
+        UNREFERENCED_PARAMETER(available);
+        m_desired = { m_fixedSize.w + 2.0f * m_margin, m_fixedSize.h + 2.0f * m_margin };
+        return m_desired;
+    }
+
+    void Arrange(FD2D::Rect finalRect) override
+    {
+        Wnd::Arrange(finalRect);
+        m_label.SetRect(LayoutRect());
+    }
+
+    bool OnMessage(UINT message, WPARAM wParam, LPARAM lParam) override
+    {
+        UNREFERENCED_PARAMETER(wParam);
+
+        switch (message)
+        {
+        case WM_MOUSEMOVE:
+        {
+            POINT pt { GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam) };
+            bool prevHover = m_hovered;
+            m_hovered = HitTest(pt);
+            if (m_hovered != prevHover)
+            {
+                Invalidate();
+            }
+            return m_hovered;
+        }
+        case WM_LBUTTONDOWN:
+        {
+            POINT pt { GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam) };
+            if (HitTest(pt))
+            {
+                m_pressed = true;
+                Invalidate();
+                return true;
+            }
+            break;
+        }
+        case WM_LBUTTONUP:
+        {
+            bool wasPressed = m_pressed;
+            m_pressed = false;
+
+            POINT pt { GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam) };
+            if (wasPressed && HitTest(pt))
+            {
+                if (m_onClick)
+                {
+                    m_onClick();
+                }
+                Invalidate();
+                return true;
+            }
+            if (wasPressed)
+            {
+                Invalidate();
+            }
+            break;
+        }
+        default:
+            break;
+        }
+
+        return Wnd::OnMessage(message, wParam, lParam);
+    }
+
+    void OnRender(ID2D1RenderTarget* target) override
+    {
+        if (target == nullptr)
+        {
+            return;
+        }
+
+        if (!m_fillBrush)
+        {
+            target->CreateSolidColorBrush(D2D1::ColorF(D2D1::ColorF::White), &m_fillBrush);
+        }
+        if (!m_strokeBrush)
+        {
+            target->CreateSolidColorBrush(D2D1::ColorF(D2D1::ColorF::White), &m_strokeBrush);
+        }
+
+        D2D1_COLOR_F fill = D2D1::ColorF(0.18f, 0.18f, 0.18f, m_hovered ? 0.95f : 0.85f);
+        if (m_pressed)
+        {
+            fill = D2D1::ColorF(0.12f, 0.12f, 0.12f, 0.95f);
+        }
+
+        m_fillBrush->SetColor(fill);
+        target->FillRectangle(LayoutRect(), m_fillBrush.Get());
+
+        float strokeAlpha = 0.25f;
+        float strokeThickness = 1.5f;
+        D2D1_COLOR_F stroke = D2D1::ColorF(1.0f, 1.0f, 1.0f, strokeAlpha);
+
+        if (m_selected)
+        {
+            // Subtle breathe: modulate alpha.
+            unsigned long long nowMs = GetTickCount64();
+            float t = static_cast<float>((nowMs - m_selectedStartMs) % 1800) / 1800.0f;
+            float s = 0.5f + 0.5f * sinf(t * 6.2831853f);
+            float a = 0.55f + (0.10f * s);
+            stroke = D2D1::ColorF(1.0f, 0.60f, 0.24f, a);
+            strokeThickness = 2.0f;
+
+            if (BackplateRef() != nullptr)
+            {
+                BackplateRef()->RequestAnimationFrame();
+            }
+        }
+
+        m_strokeBrush->SetColor(stroke);
+        target->DrawRectangle(LayoutRect(), m_strokeBrush.Get(), strokeThickness);
+
+        m_label.OnRender(target);
+
+        Wnd::OnRender(target);
+    }
+
+private:
+    bool HitTest(const POINT& pt) const
+    {
+        const auto& rect = LayoutRect();
+        return pt.x >= rect.left &&
+            pt.x <= rect.right &&
+            pt.y >= rect.top &&
+            pt.y <= rect.bottom;
+    }
+
+    FD2D::Size m_fixedSize { 128.0f, 128.0f };
+    FD2D::Text m_label;
+    ClickHandler m_onClick {};
+    Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> m_fillBrush {};
+    Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> m_strokeBrush {};
+    bool m_hovered { false };
+    bool m_pressed { false };
+    bool m_selected { false };
+    unsigned long long m_selectedStartMs { 0 };
+};
 
 class DemoWnd : public FD2D::Wnd
 {
@@ -240,6 +434,32 @@ public:
                 spinner->SetStyle(style);
             }
         }
+        
+        // Load zoom speed from INI file
+        {
+            wchar_t iniPath[MAX_PATH];
+            if (SUCCEEDED(SHGetFolderPathW(nullptr, CSIDL_LOCAL_APPDATA, nullptr, SHGFP_TYPE_CURRENT, iniPath)))
+            {
+                std::wstring iniFile = std::wstring(iniPath) + L"\\FICture2\\FICture2.ini";
+                wchar_t zoomSpeedStr[32];
+                DWORD result = GetPrivateProfileStringW(
+                    L"Image",
+                    L"ZoomSpeed",
+                    L"10.0",
+                    zoomSpeedStr,
+                    static_cast<DWORD>(std::size(zoomSpeedStr)),
+                    iniFile.c_str());
+                if (result > 0)
+                {
+                    float zoomSpeed = static_cast<float>(_wtof(zoomSpeedStr));
+                    if (zoomSpeed > 0.0f && zoomSpeed <= 100.0f)
+                    {
+                        mainImage->SetZoomSpeed(zoomSpeed);
+                    }
+                }
+            }
+        }
+        
         rootSplit->SetFirstChild(mainImage);
         m_mainImage = mainImage;
 
@@ -257,94 +477,16 @@ public:
         rootSplit->SetSecondChild(thumbScroll);
         m_thumbScroll = thumbScroll;
 
-        // 메인 이미지 폴더의 모든 이미지 파일을 썸네일로 표시
-        std::filesystem::path folder = std::filesystem::path(mainPath).parent_path();
-        std::vector<std::filesystem::path> files;
-
-        if (!folder.empty() && std::filesystem::exists(folder))
-        {
-            for (auto& entry : std::filesystem::directory_iterator(folder))
-            {
-                if (!entry.is_regular_file())
-                {
-                    continue;
-                }
-
-                const std::filesystem::path p = entry.path();
-                if (!ImageCore::DecoderRegistry::Instance().IsSupportedPath(p.wstring()))
-                {
-                    continue;
-                }
-
-                files.push_back(p);
-            }
-        }
-
-        std::sort(files.begin(), files.end(), [](const std::filesystem::path& a, const std::filesystem::path& b)
-        {
-            return a.filename().wstring() < b.filename().wstring();
-        });
-
         constexpr float thumbW = 128.0f;
         constexpr float thumbH = 128.0f;
+        m_thumbPanel = thumbs;
+        m_thumbW = thumbW;
+        m_thumbH = thumbH;
+        m_thumbLabelDip = thumbLabelDip;
+        m_thumbItemSpacing = thumbItemSpacing;
 
-        int i = 0;
-        size_t foundMainIndex = static_cast<size_t>(-1);
-        for (const auto& p : files)
-        {
-            std::wstring thumbName = L"thumb_" + std::to_wstring(i++);
-            auto thumb = std::make_shared<FD2D::Image>(thumbName);
-            thumb->SetThumbnailSize({ thumbW, thumbH });
-            thumb->SetImagePurpose(ImageCore::ImagePurpose::Thumbnail);
-            thumb->SetSourceFile(p.wstring());
-            const size_t index = m_thumbs.size();
-            m_thumbs.push_back({ p, thumb });
-
-            if (p.wstring() == mainPath)
-            {
-                foundMainIndex = index;
-            }
-
-            thumb->SetOnClick([this, index]()
-            {
-                SelectThumbByIndex(index, MainApplyMode::Immediate);
-            });
-
-            // Thumbnail item: image + filename label
-            auto item = std::make_shared<FD2D::StackPanel>(thumbName + L"_item", FD2D::Orientation::Vertical);
-            item->SetSpacing(thumbItemSpacing);
-            item->SetPadding(0.0f);
-
-            auto label = std::make_shared<FD2D::Text>(thumbName + L"_label");
-            label->SetText(p.filename().wstring());
-            label->SetFont(L"Segoe UI", thumbLabelDip);
-            label->SetFixedWidth(thumbW);
-            label->SetColor(D2D1::ColorF(0.20f, 0.20f, 0.20f, 1.0f));
-            label->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
-            label->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_NEAR);
-            label->SetEllipsisTrimmingEnabled(true);
-            label->SetOnClick([this, index]()
-            {
-                SelectThumbByIndex(index, MainApplyMode::Immediate);
-            });
-
-            item->AddChild(thumb);
-            item->AddChild(label);
-            thumbs->AddChild(item);
-        }
-
-        // Initial selection should match main image when possible.
-        if (!m_thumbs.empty())
-        {
-            if (foundMainIndex != static_cast<size_t>(-1))
-            {
-                SelectThumbByIndex(foundMainIndex, MainApplyMode::None);
-            }
-            else
-            {
-                SelectThumbByIndex(0, MainApplyMode::None);
-            }
-        }
+        m_currentFolder = std::filesystem::path(mainPath).parent_path();
+        RebuildThumbList(mainPath);
     }
 
     FD2D::Size Measure(FD2D::Size available) override
@@ -360,9 +502,9 @@ public:
         Wnd::Arrange(finalRect);
 
         // First layout: ensure the selected thumb is visible without user interaction.
-        if (!m_initialThumbEnsured && m_thumbScroll && m_selectedThumb)
+        if (!m_initialThumbEnsured && m_thumbScroll && m_selectedFocus)
         {
-            m_thumbScroll->EnsureCentered(m_selectedThumb->LayoutRect());
+            m_thumbScroll->EnsureCentered(m_selectedFocus->LayoutRect());
             m_initialThumbEnsured = true;
         }
     }
@@ -380,6 +522,12 @@ public:
 
     bool OnMessage(UINT message, WPARAM wParam, LPARAM lParam) override
     {
+        if (message == WM_FIC2_DEFERRED_ACTION)
+        {
+            RunDeferredAction();
+            return true;
+        }
+
         // Keyboard navigation:
         // - Act on WM_KEYDOWN for immediate response
         // - Support key-repeat, but throttle to a stable rate (so it's predictable even with fast OS repeat)
@@ -387,17 +535,35 @@ public:
         {
             const bool isRepeat = ((lParam & (1LL << 30)) != 0);
 
-            if (wParam == VK_RETURN)
+            if (wParam == 'N')
             {
-                // Ignore repeats for "apply" (holding Enter should not spam applies).
-                if (!isRepeat && !m_thumbs.empty() && m_selectedIndex < m_thumbs.size())
+                if (!isRepeat)
                 {
-                    ApplyMainFromIndex(m_selectedIndex);
+                    QueueToggleNavItems();
                 }
                 return true;
             }
 
-            if ((wParam == VK_LEFT || wParam == VK_RIGHT || wParam == VK_HOME || wParam == VK_END) && !m_thumbs.empty())
+            if (wParam == VK_BACK)
+            {
+                if (!isRepeat)
+                {
+                    QueueNavigateUp();
+                }
+                return true;
+            }
+
+            if (wParam == VK_RETURN)
+            {
+                // Ignore repeats for "apply" (holding Enter should not spam applies).
+                if (!isRepeat && !m_items.empty() && m_selectedIndex < m_items.size())
+                {
+                    ActivateSelected();
+                }
+                return true;
+            }
+
+            if ((wParam == VK_LEFT || wParam == VK_RIGHT || wParam == VK_HOME || wParam == VK_END) && !m_items.empty())
             {
                 const ULONGLONG nowMs = GetTickCount64();
                 if (isRepeat)
@@ -409,7 +575,7 @@ public:
                 }
                 m_lastKeyNavMs = nowMs;
 
-                size_t idx = (m_selectedIndex < m_thumbs.size()) ? m_selectedIndex : 0;
+                size_t idx = (m_selectedIndex < m_items.size()) ? m_selectedIndex : 0;
 
                 if (wParam == VK_HOME)
                 {
@@ -417,19 +583,19 @@ public:
                 }
                 else if (wParam == VK_END)
                 {
-                    idx = m_thumbs.size() - 1;
+                    idx = m_items.size() - 1;
                 }
                 else if (wParam == VK_LEFT)
                 {
-                    idx = (idx == 0) ? (m_thumbs.size() - 1) : (idx - 1);
+                    idx = (idx == 0) ? (m_items.size() - 1) : (idx - 1);
                 }
                 else
                 {
-                    idx = (idx + 1) % m_thumbs.size();
+                    idx = (idx + 1) % m_items.size();
                 }
 
                 // Keyboard navigation: debounce main image load to avoid spamming decode.
-                SelectThumbByIndex(idx, MainApplyMode::Debounced);
+                SelectItemByIndex(idx, MainApplyMode::Debounced);
                 return true;
             }
         }
@@ -441,7 +607,7 @@ public:
                 KillTimer(BackplateRef()->Window(), kThumbApplyTimerId);
             }
 
-            if (m_hasPendingApply && m_pendingApplyIndex < m_thumbs.size())
+            if (m_hasPendingApply && m_pendingApplyIndex < m_items.size())
             {
                 ApplyMainFromIndex(m_pendingApplyIndex);
             }
@@ -450,14 +616,78 @@ public:
             return true;
         }
 
+        if (message == WM_FIC2_DEFERRED_ACTION)
+        {
+            RunDeferredAction();
+            return true;
+        }
+
         return Wnd::OnMessage(message, wParam, lParam);
     }
 
 private:
-    struct ThumbEntry
+    static constexpr UINT WM_FIC2_DEFERRED_ACTION = WM_APP + 0x7A11;
+
+    enum class DeferredActionKind
     {
+        None,
+        ToggleNavItems,
+        NavigateToFolder,
+        NavigateUp,
+        ActivateSelected,
+    };
+
+    void QueueDeferredAction(DeferredActionKind kind, const std::filesystem::path& path = {})
+    {
+        m_deferredKind = kind;
+        m_deferredPath = path;
+
+        if (BackplateRef() != nullptr)
+        {
+            PostMessageW(BackplateRef()->Window(), WM_FIC2_DEFERRED_ACTION, 0, 0);
+        }
+    }
+
+    void RunDeferredAction()
+    {
+        const DeferredActionKind kind = m_deferredKind;
+        const std::filesystem::path path = m_deferredPath;
+        m_deferredKind = DeferredActionKind::None;
+        m_deferredPath.clear();
+
+        switch (kind)
+        {
+        case DeferredActionKind::ToggleNavItems:
+            ToggleNavItems();
+            break;
+        case DeferredActionKind::NavigateToFolder:
+            NavigateToFolder(path);
+            break;
+        case DeferredActionKind::NavigateUp:
+            NavigateUp();
+            break;
+        case DeferredActionKind::ActivateSelected:
+            ActivateSelectedImpl();
+            break;
+        default:
+            break;
+        }
+    }
+
+    enum class ThumbItemKind
+    {
+        Up,
+        Folder,
+        Image,
+    };
+
+    struct ThumbItem
+    {
+        ThumbItemKind kind { ThumbItemKind::Image };
         std::filesystem::path path {};
+        std::shared_ptr<FD2D::Wnd> focus {};
         std::shared_ptr<FD2D::Image> image {};
+        std::shared_ptr<ThumbNavTile> navTile {};
     };
 
     enum class MainApplyMode
@@ -469,7 +699,12 @@ private:
 
     void ApplyMainFromIndex(size_t index)
     {
-        if (!m_mainImage || index >= m_thumbs.size())
+        if (!m_mainImage || index >= m_items.size())
+        {
+            return;
+        }
+
+        if (m_items[index].kind != ThumbItemKind::Image)
         {
             return;
         }
@@ -485,13 +720,18 @@ private:
         m_mainImage->SetLoadingSpinnerEnabled(true);
 
         m_mainImage->SetImagePurpose(ImageCore::ImagePurpose::FullResolution);
-        m_mainImage->SetSourceFile(m_thumbs[index].path.wstring());
+        m_mainImage->SetSourceFile(m_items[index].path.wstring());
         m_mainImage->Invalidate();
     }
 
     void ScheduleApply(size_t index)
     {
-        if (!m_mainImage || index >= m_thumbs.size())
+        if (!m_mainImage || index >= m_items.size())
+        {
+            return;
+        }
+
+        if (m_items[index].kind != ThumbItemKind::Image)
         {
             return;
         }
@@ -511,41 +751,52 @@ private:
         }
     }
 
-    void SelectThumbByIndex(size_t index, MainApplyMode mode)
+    void SelectItemByIndex(size_t index, MainApplyMode mode)
     {
-        if (m_thumbs.empty())
+        if (m_items.empty())
         {
             return;
         }
 
-        if (index >= m_thumbs.size())
+        if (index >= m_items.size())
         {
-            index = m_thumbs.size() - 1;
+            index = m_items.size() - 1;
         }
 
-        if (m_selectedThumb)
+        if (m_selectedIndex < m_items.size())
         {
-            m_selectedThumb->SetSelected(false);
+            if (m_items[m_selectedIndex].image)
+            {
+                m_items[m_selectedIndex].image->SetSelected(false);
+            }
+            if (m_items[m_selectedIndex].navTile)
+            {
+                m_items[m_selectedIndex].navTile->SetSelected(false);
+            }
         }
 
         m_selectedIndex = index;
-        m_selectedThumb = m_thumbs[m_selectedIndex].image;
+        m_selectedFocus = m_items[m_selectedIndex].focus;
 
-        if (m_selectedThumb)
+        if (m_items[m_selectedIndex].image)
         {
-            m_selectedThumb->SetSelected(true);
+            m_items[m_selectedIndex].image->SetSelected(true);
+        }
+        if (m_items[m_selectedIndex].navTile)
+        {
+            m_items[m_selectedIndex].navTile->SetSelected(true);
         }
 
-        if (m_thumbScroll && m_selectedThumb)
+        if (m_thumbScroll && m_selectedFocus)
         {
-            m_thumbScroll->EnsureCentered(m_selectedThumb->LayoutRect());
+            m_thumbScroll->EnsureCentered(m_selectedFocus->LayoutRect());
         }
 
-        if (mode == MainApplyMode::Immediate)
+        if (m_items[m_selectedIndex].kind == ThumbItemKind::Image && mode == MainApplyMode::Immediate)
         {
             ApplyMainFromIndex(m_selectedIndex);
         }
-        else if (mode == MainApplyMode::Debounced)
+        else if (m_items[m_selectedIndex].kind == ThumbItemKind::Image && mode == MainApplyMode::Debounced)
         {
             ScheduleApply(m_selectedIndex);
         }
@@ -554,19 +805,306 @@ private:
         m_initialThumbEnsured = true;
     }
 
+    void ActivateSelected()
+    {
+        // Activation can rebuild the UI tree; defer it to avoid mutating children during message dispatch.
+        QueueDeferredAction(DeferredActionKind::ActivateSelected);
+    }
+
+    void QueueToggleNavItems()
+    {
+        QueueDeferredAction(DeferredActionKind::ToggleNavItems);
+    }
+
+    void ToggleNavItems()
+    {
+        m_showNavItems = !m_showNavItems;
+
+        std::filesystem::path prefer {};
+        if (m_selectedIndex < m_items.size())
+        {
+            prefer = m_items[m_selectedIndex].path;
+        }
+
+        RebuildThumbList(prefer);
+    }
+
+    void QueueNavigateUp()
+    {
+        QueueDeferredAction(DeferredActionKind::NavigateUp);
+    }
+
+    void NavigateUp()
+    {
+        if (m_currentFolder.empty())
+        {
+            return;
+        }
+
+        std::filesystem::path parent = m_currentFolder.parent_path();
+        if (parent.empty() || parent == m_currentFolder)
+        {
+            return;
+        }
+
+        NavigateToFolder(parent);
+    }
+
+    void ActivateSelectedImpl()
+    {
+        if (m_selectedIndex >= m_items.size())
+        {
+            return;
+        }
+
+        const ThumbItem item = m_items[m_selectedIndex];
+        if (item.kind == ThumbItemKind::Image)
+        {
+            ApplyMainFromIndex(m_selectedIndex);
+        }
+        else if (item.kind == ThumbItemKind::Up || item.kind == ThumbItemKind::Folder)
+        {
+            NavigateToFolder(item.path);
+        }
+    }
+
+    void NavigateToFolder(const std::filesystem::path& folder)
+    {
+        if (folder.empty() || !std::filesystem::exists(folder) || !std::filesystem::is_directory(folder))
+        {
+            return;
+        }
+
+        m_currentFolder = folder;
+        m_initialThumbEnsured = false;
+        RebuildThumbList({});
+
+        if (m_thumbScroll)
+        {
+            m_thumbScroll->SetScrollX(0.0f);
+        }
+
+        // After rebuilding, find the first image and load it into the main view.
+        for (size_t i = 0; i < m_items.size(); ++i)
+        {
+            if (m_items[i].kind == ThumbItemKind::Image)
+            {
+                ApplyMainFromIndex(i);
+                break;
+            }
+        }
+    }
+
+    void RebuildThumbList(const std::filesystem::path& preferSelectPath)
+    {
+        if (!m_thumbPanel)
+        {
+            return;
+        }
+
+        m_thumbPanel->ClearChildren();
+        m_items.clear();
+        m_selectedIndex = static_cast<size_t>(-1);
+        m_selectedFocus.reset();
+
+        std::vector<std::filesystem::path> folders;
+        std::vector<std::filesystem::path> files;
+
+        if (!m_currentFolder.empty() && std::filesystem::exists(m_currentFolder))
+        {
+            for (auto& entry : std::filesystem::directory_iterator(m_currentFolder))
+            {
+                const std::filesystem::path p = entry.path();
+                if (entry.is_directory())
+                {
+                    folders.push_back(p);
+                }
+                else if (entry.is_regular_file())
+                {
+                    if (ImageCore::DecoderRegistry::Instance().IsSupportedPath(p.wstring()))
+                    {
+                        files.push_back(p);
+                    }
+                }
+            }
+        }
+
+        std::sort(folders.begin(), folders.end(), [](const std::filesystem::path& a, const std::filesystem::path& b)
+        {
+            return a.filename().wstring() < b.filename().wstring();
+        });
+
+        std::sort(files.begin(), files.end(), [](const std::filesystem::path& a, const std::filesystem::path& b)
+        {
+            return a.filename().wstring() < b.filename().wstring();
+        });
+
+        int tileId = 0;
+
+        if (m_showNavItems)
+        {
+            std::filesystem::path parent = m_currentFolder.parent_path();
+            if (!parent.empty() && parent != m_currentFolder)
+            {
+                std::wstring base = L"nav_up_" + std::to_wstring(tileId++);
+                auto tile = std::make_shared<ThumbNavTile>(base + L"_tile");
+                tile->SetFixedSize({ m_thumbW, m_thumbH });
+                tile->SetText(L"..");
+                const size_t index = m_items.size();
+                tile->SetOnClick([this]()
+                {
+                    QueueNavigateUp();
+                });
+
+                auto label = std::make_shared<FD2D::Text>(base + L"_label");
+                label->SetText(L"(parent)");
+                label->SetFont(L"Segoe UI", m_thumbLabelDip);
+                label->SetFixedWidth(m_thumbW);
+                label->SetColor(D2D1::ColorF(0.75f, 0.75f, 0.75f, 1.0f));
+                label->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
+                label->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_NEAR);
+
+                auto item = std::make_shared<FD2D::StackPanel>(base + L"_item", FD2D::Orientation::Vertical);
+                item->SetSpacing(m_thumbItemSpacing);
+                item->AddChild(tile);
+                item->AddChild(label);
+
+                m_thumbPanel->AddChild(item);
+                m_items.push_back({ ThumbItemKind::Up, parent, tile, nullptr, tile });
+
+                UNREFERENCED_PARAMETER(index);
+            }
+
+            for (const auto& dir : folders)
+            {
+                std::wstring base = L"nav_folder_" + std::to_wstring(tileId++);
+                auto tile = std::make_shared<ThumbNavTile>(base + L"_tile");
+                tile->SetFixedSize({ m_thumbW, m_thumbH });
+                tile->SetText(L"DIR");
+
+                tile->SetOnClick([this, dir]()
+                {
+                    QueueDeferredAction(DeferredActionKind::NavigateToFolder, dir);
+                });
+
+                auto label = std::make_shared<FD2D::Text>(base + L"_label");
+                label->SetText(L"[DIR] " + dir.filename().wstring());
+                label->SetFont(L"Segoe UI", m_thumbLabelDip);
+                label->SetFixedWidth(m_thumbW);
+                label->SetColor(D2D1::ColorF(0.75f, 0.75f, 0.75f, 1.0f));
+                label->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
+                label->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_NEAR);
+                label->SetEllipsisTrimmingEnabled(true);
+                label->SetOnClick([this, dir]()
+                {
+                    QueueDeferredAction(DeferredActionKind::NavigateToFolder, dir);
+                });
+
+                auto item = std::make_shared<FD2D::StackPanel>(base + L"_item", FD2D::Orientation::Vertical);
+                item->SetSpacing(m_thumbItemSpacing);
+                item->AddChild(tile);
+                item->AddChild(label);
+                m_thumbPanel->AddChild(item);
+
+                m_items.push_back({ ThumbItemKind::Folder, dir, tile, nullptr, tile });
+            }
+        }
+
+        for (const auto& p : files)
+        {
+            std::wstring thumbName = L"thumb_" + std::to_wstring(tileId++);
+            auto thumb = std::make_shared<FD2D::Image>(thumbName);
+            thumb->SetThumbnailSize({ m_thumbW, m_thumbH });
+            thumb->SetImagePurpose(ImageCore::ImagePurpose::Thumbnail);
+            thumb->SetSourceFile(p.wstring());
+
+            const size_t index = m_items.size();
+
+            thumb->SetOnClick([this, index]()
+            {
+                SelectItemByIndex(index, MainApplyMode::Immediate);
+            });
+
+            auto item = std::make_shared<FD2D::StackPanel>(thumbName + L"_item", FD2D::Orientation::Vertical);
+            item->SetSpacing(m_thumbItemSpacing);
+            item->SetPadding(0.0f);
+
+            auto label = std::make_shared<FD2D::Text>(thumbName + L"_label");
+            label->SetText(p.filename().wstring());
+            label->SetFont(L"Segoe UI", m_thumbLabelDip);
+            label->SetFixedWidth(m_thumbW);
+            label->SetColor(D2D1::ColorF(0.20f, 0.20f, 0.20f, 1.0f));
+            label->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
+            label->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_NEAR);
+            label->SetEllipsisTrimmingEnabled(true);
+            label->SetOnClick([this, index]()
+            {
+                SelectItemByIndex(index, MainApplyMode::Immediate);
+            });
+
+            item->AddChild(thumb);
+            item->AddChild(label);
+            m_thumbPanel->AddChild(item);
+
+            m_items.push_back({ ThumbItemKind::Image, p, thumb, thumb, nullptr });
+        }
+
+        // Restore selection:
+        size_t selectIndex = 0;
+        if (!preferSelectPath.empty())
+        {
+            for (size_t i = 0; i < m_items.size(); ++i)
+            {
+                if (m_items[i].path == preferSelectPath)
+                {
+                    selectIndex = i;
+                    break;
+                }
+            }
+        }
+
+        if (!m_items.empty())
+        {
+            SelectItemByIndex(selectIndex, MainApplyMode::None);
+        }
+
+        // Request layout recalculation and repaint.
+        if (BackplateRef() != nullptr)
+        {
+            BackplateRef()->RequestLayout();
+            HWND hwnd = BackplateRef()->Window();
+            if (hwnd != nullptr)
+            {
+                // Force immediate repaint with layout recalculation.
+                RedrawWindow(hwnd, nullptr, nullptr, RDW_INVALIDATE | RDW_UPDATENOW);
+            }
+        }
+    }
+
     static constexpr UINT_PTR kThumbApplyTimerId = 0x4D21;
     static constexpr ULONGLONG kKeyRepeatMinIntervalMs = 60;
 
     std::shared_ptr<FD2D::Image> m_mainImage {};
-    std::shared_ptr<FD2D::Image> m_selectedThumb {};
+    std::shared_ptr<FD2D::Wnd> m_selectedFocus {};
     std::shared_ptr<FD2D::ScrollView> m_thumbScroll {};
-    std::vector<ThumbEntry> m_thumbs {};
+    std::shared_ptr<FD2D::StackPanel> m_thumbPanel {};
+    std::vector<ThumbItem> m_items {};
     size_t m_selectedIndex { static_cast<size_t>(-1) };
     bool m_initialThumbEnsured { false };
     ULONGLONG m_lastKeyNavMs { 0 };
 
     bool m_hasPendingApply { false };
     size_t m_pendingApplyIndex { static_cast<size_t>(-1) };
+
+    std::filesystem::path m_currentFolder {};
+    bool m_showNavItems { true };
+    float m_thumbW { 128.0f };
+    float m_thumbH { 128.0f };
+    float m_thumbLabelDip { 10.0f };
+    float m_thumbItemSpacing { 2.0f };
+
+    DeferredActionKind m_deferredKind { DeferredActionKind::None };
+    std::filesystem::path m_deferredPath {};
 };
 
 int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
