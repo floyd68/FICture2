@@ -457,6 +457,24 @@ public:
                         mainImage->SetZoomSpeed(zoomSpeed);
                     }
                 }
+
+                // Read ZoomStiffness from INI
+                wchar_t zoomStiffnessStr[32];
+                result = GetPrivateProfileStringW(
+                    L"Image",
+                    L"ZoomStiffness",
+                    L"80.0",
+                    zoomStiffnessStr,
+                    static_cast<DWORD>(std::size(zoomStiffnessStr)),
+                    iniFile.c_str());
+                if (result > 0)
+                {
+                    float zoomStiffness = static_cast<float>(_wtof(zoomStiffnessStr));
+                    if (zoomStiffness >= 10.0f && zoomStiffness <= 500.0f)
+                    {
+                        mainImage->SetZoomStiffness(zoomStiffness);
+                    }
+                }
             }
         }
         
