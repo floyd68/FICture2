@@ -11,9 +11,42 @@
 
 namespace
 {
+    void WriteIniDefaults(const std::wstring& iniFile)
+    {
+        if (iniFile.empty())
+        {
+            return;
+        }
+
+        // General
+        (void)WritePrivateProfileStringW(L"General", L"IniVersion", L"1", iniFile.c_str());
+        (void)WritePrivateProfileStringW(L"General", L"Initialized", L"1", iniFile.c_str());
+        (void)WritePrivateProfileStringW(L"General", L"AskedAssociations", L"0", iniFile.c_str());
+        (void)WritePrivateProfileStringW(L"General", L"AssociationsEnabled", L"0", iniFile.c_str());
+
+        // Image / viewer behavior
+        (void)WritePrivateProfileStringW(L"Image", L"ZoomStiffness", L"80.0", iniFile.c_str());
+
+        // Viewer defaults (reserved for future expansion)
+        (void)WritePrivateProfileStringW(L"Viewer", L"PaneCount", L"1", iniFile.c_str());
+        (void)WritePrivateProfileStringW(L"Viewer", L"ShowNavItems", L"1", iniFile.c_str());
+
+        // Thumbnail strip defaults (reserved for future expansion)
+        (void)WritePrivateProfileStringW(L"Thumbnails", L"MinSize", L"32", iniFile.c_str());
+        (void)WritePrivateProfileStringW(L"Thumbnails", L"MaxSize", L"256", iniFile.c_str());
+        (void)WritePrivateProfileStringW(L"Thumbnails", L"ItemSpacing", L"8", iniFile.c_str());
+        (void)WritePrivateProfileStringW(L"Thumbnails", L"Padding", L"8", iniFile.c_str());
+        (void)WritePrivateProfileStringW(L"Thumbnails", L"TileLabelSpacing", L"2", iniFile.c_str());
+    }
+
     void EnsureIniFileExists(const std::wstring& iniFile, bool associationsEnabled)
     {
         if (iniFile.empty())
+        {
+            return;
+        }
+
+        if (std::filesystem::exists(iniFile))
         {
             return;
         }
@@ -28,8 +61,10 @@ namespace
             // Best-effort.
         }
 
-        // Create a minimal INI so next run isn't treated as "first run".
-        (void)WritePrivateProfileStringW(L"General", L"Initialized", L"1", iniFile.c_str());
+        // Create an INI with full default settings so the user can see/edit everything.
+        WriteIniDefaults(iniFile);
+
+        // First-run prompt result.
         (void)WritePrivateProfileStringW(L"General", L"AskedAssociations", L"1", iniFile.c_str());
         (void)WritePrivateProfileStringW(L"General", L"AssociationsEnabled", associationsEnabled ? L"1" : L"0", iniFile.c_str());
     }
@@ -139,20 +174,13 @@ namespace FICture2App
         }
 
         const wchar_t* msg =
-            L"FICture2를 기본 이미지 뷰어로 설정할까요?\n"
-            L"(시스템 전체가 아닌, 현재 사용자 계정(HKCU) 기준으로만 설정합니다.)\n\n"
-            L"연결할 확장자:\n"
-            L".png .jpg .jpeg .bmp .tif .tiff .gif .dds .tga\n\n"
-            L"지금 설정하시겠습니까?\n"
-            L"\n"
-            L"--- English ---\n"
             L"Set FICture2 as your default image viewer?\n"
             L"(This will configure per-user (HKCU) associations only, not system-wide.)\n\n"
             L"Extensions:\n"
             L".png .jpg .jpeg .bmp .tif .tiff .gif .dds .tga\n\n"
             L"Do you want to apply this now?";
 
-        const int choice = MessageBoxW(nullptr, msg, L"FICture2 - 파일 연결", MB_ICONQUESTION | MB_YESNO);
+        const int choice = MessageBoxW(nullptr, msg, L"FICture2 - File Associations", MB_ICONQUESTION | MB_YESNO);
 
         bool enabled = false;
         if (choice == IDYES)
@@ -179,9 +207,9 @@ namespace FICture2App
             {
                 MessageBoxW(
                     nullptr,
-                    L"파일 연결 설정에 실패했습니다.\n\n"
-                    L"Windows 정책/버전에 따라 앱이 기본 앱으로 자동 설정되지 않을 수 있습니다.\n"
-                    L"필요하면 Windows 설정 > 기본 앱에서 수동으로 설정해 주세요.",
+                    L"Failed to configure file associations.\n\n"
+                    L"Depending on your Windows version/policy, apps may not be able to set default apps automatically.\n"
+                    L"If needed, set FICture2 manually in Windows Settings > Default apps.",
                     L"FICture2",
                     MB_OK | MB_ICONWARNING);
             }

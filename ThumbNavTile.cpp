@@ -14,6 +14,7 @@ ThumbNavTile::ThumbNavTile(const std::wstring& name)
     m_label.SetColor(D2D1::ColorF(D2D1::ColorF::White, 0.90f));
     m_label.SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
     m_label.SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+    m_label.SetEllipsisTrimmingEnabled(true);
 }
 
 void ThumbNavTile::SetIcon(IconKind kind)
@@ -30,6 +31,12 @@ void ThumbNavTile::SetIcon(IconKind kind)
 void ThumbNavTile::SetText(const std::wstring& text)
 {
     m_label.SetText(text);
+}
+
+void ThumbNavTile::SetTextPlacement(TextPlacement placement)
+{
+    m_textPlacement = placement;
+    Invalidate();
 }
 
 void ThumbNavTile::SetFixedSize(const FD2D::Size& size)
@@ -70,19 +77,31 @@ void ThumbNavTile::Arrange(FD2D::Rect finalRect)
 {
     Wnd::Arrange(finalRect);
     const auto r = LayoutRect();
+    const float w = r.right - r.left;
+    const float h = r.bottom - r.top;
 
-    if (m_icon != IconKind::None)
+    // Keep name layout behavior consistent with image thumbnail captions:
+    // - scale font with tile height
+    // - apply ellipsis within the tile width
+    const float font = (std::max)(10.0f, (std::min)(14.0f, h * 0.11f));
+    m_label.SetFixedWidth((std::max)(0.0f, w));
+
+    if (m_icon != IconKind::None && m_textPlacement == TextPlacement::Bottom)
     {
         // Reserve bottom area for the text when an icon is shown.
-        const float h = r.bottom - r.top;
         const float labelH = (std::max)(28.0f, h * 0.34f);
-        m_label.SetRect(D2D1::RectF(r.left, r.bottom - labelH, r.right, r.bottom));
-        m_label.SetFont(L"Segoe UI Semibold", 16.0f);
+        m_labelRect = D2D1::RectF(r.left, r.bottom - labelH, r.right, r.bottom);
+        m_label.SetRect(m_labelRect);
+        m_label.SetFont(L"Segoe UI", font);
+        m_label.SetColor(D2D1::ColorF(D2D1::ColorF::White, 0.90f));
     }
     else
     {
-        m_label.SetRect(r);
-        m_label.SetFont(L"Segoe UI Semibold", 18.0f);
+        m_labelRect = r;
+        m_label.SetRect(m_labelRect);
+        // Centered text (folder/up): match image caption sizing and use black for readability on the icon.
+        m_label.SetFont(L"Segoe UI", font);
+        m_label.SetColor(D2D1::ColorF(D2D1::ColorF::Black, 0.90f));
     }
 }
 
@@ -189,6 +208,19 @@ void ThumbNavTile::OnRender(ID2D1RenderTarget* target)
 
     m_strokeBrush->SetColor(stroke);
     target->DrawRectangle(LayoutRect(), m_strokeBrush.Get(), strokeThickness);
+
+    // Caption backdrop (same idea as image thumbnail captions): a subtle translucent band.
+    if (m_icon != IconKind::None && m_textPlacement == TextPlacement::Bottom)
+    {
+        if (!m_labelBackdropBrush)
+        {
+            (void)target->CreateSolidColorBrush(D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.55f), &m_labelBackdropBrush);
+        }
+        if (m_labelBackdropBrush)
+        {
+            target->FillRectangle(m_labelRect, m_labelBackdropBrush.Get());
+        }
+    }
 
     // Draw icon (folder / up) if requested.
     if (m_icon != IconKind::None)

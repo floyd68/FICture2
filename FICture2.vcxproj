@@ -163,12 +163,14 @@
     <ClInclude Include="ImageBrowser.h" />
     <ClInclude Include="Resource.h" />
     <ClInclude Include="targetver.h" />
+    <ClInclude Include="ThumbImageTile.h" />
     <ClInclude Include="ThumbNavTile.h" />
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="AppSetup.cpp" />
     <ClCompile Include="FICture2.cpp" />
     <ClCompile Include="ImageBrowser.cpp" />
+    <ClCompile Include="ThumbImageTile.cpp" />
     <ClCompile Include="ThumbNavTile.cpp" />
   </ItemGroup>
   <ItemGroup>

@@ -2,8 +2,10 @@
 
 #include "framework.h"
 #include "ThumbNavTile.h"
+#include "ThumbImageTile.h"
 
 #include "FD2D/FD2D.h"
+#include "FD2D/MainImage.h"
 #include "ImageCore/DecoderRegistry.h"
 #include "ImageCore/ImageCore.h"
 
@@ -14,17 +16,57 @@
 #include <vector>
 #include <windowsx.h>
 #include <shlobj.h>
+#include <commdlg.h>
 
 namespace
 {
+    constexpr float kThumbStripPadding = 8.0f; // matches thumbs->SetPadding(8)
+    constexpr float kThumbMinSide = 32.0f;
+    constexpr float kThumbMaxSide = 256.0f;
+    constexpr float kThumbStripMinH = (kThumbStripPadding * 2.0f) + kThumbMinSide;
+    constexpr float kThumbStripMaxH = (kThumbStripPadding * 2.0f) + kThumbMaxSide;
+    constexpr float kSplitPanelDefaultHitThickness = 12.0f; // Splitter::m_hitAreaThickness default
+
+    static float g_syncedThumbStripHeight = 0.0f;
+    static bool g_hasSyncedThumbStripHeight = false;
+    static std::vector<class ImageBrowserImpl*> g_allBrowsers {};
+
+    static bool RectContainsPoint(const D2D1_RECT_F& r, const POINT& pt)
+    {
+        return pt.x >= r.left &&
+            pt.x <= r.right &&
+            pt.y >= r.top &&
+            pt.y <= r.bottom;
+    }
+
     class ImageBrowserImpl : public FD2D::Wnd
     {
     public:
-        explicit ImageBrowserImpl(const std::wstring& name, int paneCount)
+        explicit ImageBrowserImpl(const std::wstring& name, int paneCount, const std::wstring& initialFile = L"")
             : Wnd(name)
+            , m_initialFile(initialFile)
         {
+            g_allBrowsers.push_back(this);
             SetPaneCount(paneCount);
             BuildUi();
+        }
+
+        ~ImageBrowserImpl() override
+        {
+            auto it = std::find(g_allBrowsers.begin(), g_allBrowsers.end(), this);
+            if (it != g_allBrowsers.end())
+            {
+                g_allBrowsers.erase(it);
+            }
+        }
+
+        void OnAttached(FD2D::Backplate& backplate) override
+        {
+            Wnd::OnAttached(backplate);
+            if (BackplateRef() != nullptr && BackplateRef()->FocusedWnd() == nullptr)
+            {
+                RequestFocus();
+            }
         }
 
         void SetPaneCount(int paneCount)
@@ -50,6 +92,7 @@ namespace
         {
             Wnd::Arrange(finalRect);
 
+            ApplySyncedThumbStripHeightIfNeeded();
             UpdateThumbSizingFromPane();
 
             // First layout: ensure the selected thumb is visible without user interaction.
@@ -65,12 +108,22 @@ namespace
             // Splitter dragging re-arranges the SplitPanel subtree directly, but may not trigger
             // a full root re-Arrange pass. Drive responsive thumbnail sizing here so it updates
             // live while dragging.
+            ApplySyncedThumbStripHeightIfNeeded();
             UpdateThumbSizingFromPane();
             Wnd::OnRender(target);
         }
 
         bool OnMessage(UINT message, WPARAM wParam, LPARAM lParam) override
         {
+            if (message == WM_LBUTTONDOWN || message == WM_RBUTTONDOWN || message == WM_MBUTTONDOWN || message == WM_XBUTTONDOWN)
+            {
+                const POINT pt { GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam) };
+                if (RectContainsPoint(LayoutRect(), pt))
+                {
+                    RequestFocus();
+                }
+            }
+
             if (message == WM_FIC2_DEFERRED_ACTION)
             {
                 RunDeferredAction();
@@ -123,6 +176,24 @@ namespace
                     if (!isRepeat && !m_items.empty() && m_selectedIndex < m_items.size())
                     {
                         ActivateSelected();
+                    }
+                    return true;
+                }
+
+                if ((wParam == 'O' || wParam == 'o') && (GetKeyState(VK_CONTROL) & 0x8000) && (GetKeyState(VK_SHIFT) & 0x8000))
+                {
+                    if (!isRepeat)
+                    {
+                        OpenFileDialog(OpenDialogMode::SplitHorizontalNewBrowser);
+                    }
+                    return true;
+                }
+
+                if ((wParam == 'O' || wParam == 'o') && (GetKeyState(VK_CONTROL) & 0x8000))
+                {
+                    if (!isRepeat)
+                    {
+                        OpenFileDialog(OpenDialogMode::ReplaceCurrent);
                     }
                     return true;
                 }
@@ -234,6 +305,40 @@ namespace
             return Wnd::OnMessage(message, wParam, lParam);
         }
 
+        bool OnFileDrop(const std::wstring& path, const POINT& clientPt) override
+        {
+            if (path.empty())
+            {
+                return false;
+            }
+
+            // Only accept drops onto the main image region (not the thumbnail strip).
+            if (m_mainPaneHost == nullptr || !RectContainsPoint(m_mainPaneHost->LayoutRect(), clientPt))
+            {
+                return false;
+            }
+
+            // Select the pane under the cursor (for 2-4 pane layouts).
+            for (size_t i = 0; i < m_mainImages.size(); ++i)
+            {
+                if (m_mainImages[i] && RectContainsPoint(m_mainImages[i]->LayoutRect(), clientPt))
+                {
+                    SetActivePane(i);
+                    break;
+                }
+            }
+
+            const std::filesystem::path p(path);
+            if (std::filesystem::exists(p) && std::filesystem::is_directory(p))
+            {
+                QueueDeferredAction(DeferredActionKind::NavigateToFolder, p);
+                return true;
+            }
+
+            QueueDeferredAction(DeferredActionKind::NavigateToFile, p);
+            return true;
+        }
+
     private:
         enum class MainApplyMode
         {
@@ -254,9 +359,9 @@ namespace
             ThumbItemKind kind { ThumbItemKind::Image };
             std::filesystem::path path {};
             std::shared_ptr<FD2D::Wnd> focus {};
-            std::shared_ptr<FD2D::Image> image {};
+            std::shared_ptr<FD2D::ThumbImage> image {};
             std::shared_ptr<ThumbNavTile> navTile {};
-            std::shared_ptr<FD2D::Text> label {};
+            std::shared_ptr<ThumbImageTile> imageTile {};
         };
 
         static constexpr UINT_PTR kThumbApplyTimerId = 0x4D21;
@@ -268,8 +373,16 @@ namespace
             None,
             ToggleNavItems,
             NavigateToFolder,
+            NavigateToFile,
+            SplitHorizontalWithFile,
             NavigateUp,
             ActivateSelected,
+        };
+
+        enum class OpenDialogMode
+        {
+            ReplaceCurrent,
+            SplitHorizontalNewBrowser,
         };
 
         void UpdateThumbSizingFromPane()
@@ -288,8 +401,7 @@ namespace
 
             // Keep thumbnail spacing constant; only scale the thumbnail square with the pane height.
             constexpr float contentPadding = 8.0f; // matches thumbs->SetPadding(8)
-            const float labelLineH = m_thumbLabelDip * 1.2f;
-            const float availableForThumb = paneH - (contentPadding * 2.0f) - m_thumbItemSpacing - labelLineH;
+            const float availableForThumb = paneH - (contentPadding * 2.0f);
 
             float newSide = availableForThumb;
             newSide = (std::max)(32.0f, (std::min)(256.0f, newSide));
@@ -310,20 +422,14 @@ namespace
 
             for (auto& item : m_items)
             {
-                if (item.image)
+                if (item.imageTile)
                 {
-                    item.image->SetThumbnailSize({ m_thumbW, m_thumbH });
-                    item.image->Invalidate();
+                    item.imageTile->SetFixedSize({ m_thumbW, m_thumbH });
                 }
                 if (item.navTile)
                 {
                     item.navTile->SetFixedSize({ m_thumbW, m_thumbH });
                     item.navTile->Invalidate();
-                }
-                if (item.label)
-                {
-                    item.label->SetFixedWidth(m_thumbW);
-                    item.label->Invalidate();
                 }
             }
 
@@ -341,20 +447,8 @@ namespace
 
             // Thumbnail strip sizing:
             // The splitter's min/max should match the thumbnail min/max size so resizing stays consistent.
-            constexpr float thumbStripPadding = 8.0f; // matches thumbs->SetPadding(8)
-            constexpr float thumbLabelPt = 8.0f;
-            constexpr float thumbLabelDip = thumbLabelPt * (96.0f / 72.0f);
-            constexpr float thumbLabelLineH = thumbLabelDip * 1.2f;
-            constexpr float thumbItemSpacing = 2.0f; // tile <-> label spacing (constant)
-
-            constexpr float kThumbMinSide = 32.0f;
-            constexpr float kThumbMaxSide = 256.0f;
-
-            constexpr float thumbStripMinH = (thumbStripPadding * 2.0f) + thumbItemSpacing + thumbLabelLineH + kThumbMinSide;
-            constexpr float thumbStripMaxH = (thumbStripPadding * 2.0f) + thumbItemSpacing + thumbLabelLineH + kThumbMaxSide;
-
-            rootSplit->SetSecondPaneMinExtent(thumbStripMinH);
-            rootSplit->SetSecondPaneMaxExtent(thumbStripMaxH);
+            rootSplit->SetSecondPaneMinExtent(kThumbStripMinH);
+            rootSplit->SetSecondPaneMaxExtent(kThumbStripMaxH);
             rootSplit->SetConstraintPropagation(FD2D::ConstraintPropagation::Minimum);
 
             AddChild(rootSplit);
@@ -375,20 +469,98 @@ namespace
             rootSplit->SetSecondChild(thumbScroll);
             m_thumbScroll = thumbScroll;
 
+            rootSplit->OnSplitChanged([this](float)
+            {
+                if (m_thumbScroll == nullptr)
+                {
+                    return;
+                }
+
+                const D2D1_RECT_F r = m_thumbScroll->LayoutRect();
+                const float h = (std::max)(0.0f, r.bottom - r.top);
+                if (h <= 0.0f)
+                {
+                    return;
+                }
+
+                g_syncedThumbStripHeight = (std::max)(kThumbStripMinH, (std::min)(kThumbStripMaxH, h));
+                g_hasSyncedThumbStripHeight = true;
+
+                for (auto* b : g_allBrowsers)
+                {
+                    if (b != nullptr && b != this)
+                    {
+                        b->ApplySyncedThumbStripHeightIfNeeded(true);
+                    }
+                }
+
+                if (BackplateRef() != nullptr)
+                {
+                    BackplateRef()->RequestLayout();
+                }
+            });
+
             constexpr float thumbW = 128.0f;
             constexpr float thumbH = 128.0f;
             m_thumbPanel = thumbs;
             m_thumbW = thumbW;
             m_thumbH = thumbH;
-            m_thumbLabelDip = thumbLabelDip;
-            m_thumbItemSpacing = thumbItemSpacing;
+            m_thumbLabelDip = 0.0f;
+            m_thumbItemSpacing = 0.0f;
             m_thumbOuterSpacing = 8.0f;
 
-            std::wstring mainPath = L"D:/Works/FICture2/landscape/cavebaseground01.dds";
+            std::wstring mainPath = !m_initialFile.empty() ? m_initialFile : L"D:/Works/FICture2/landscape/cavebaseground01.dds";
             m_currentFolder = std::filesystem::path(mainPath).parent_path();
             RebuildThumbList(mainPath);
 
             ApplyActiveSelectionStyle();
+        }
+
+        void ApplySyncedThumbStripHeightIfNeeded(bool force = false)
+        {
+            if (!g_hasSyncedThumbStripHeight || m_rootSplit == nullptr)
+            {
+                return;
+            }
+
+            if (m_rootSplit->Orientation() != FD2D::SplitterOrientation::Vertical)
+            {
+                return;
+            }
+
+            const D2D1_RECT_F rootR = m_rootSplit->LayoutRect();
+            const float totalH = (std::max)(0.0f, rootR.bottom - rootR.top);
+            if (totalH <= 0.0f)
+            {
+                return;
+            }
+
+            const float desiredSecond = (std::max)(kThumbStripMinH, (std::min)(kThumbStripMaxH, g_syncedThumbStripHeight));
+
+            // Estimate available height like SplitPanel::Arrange (childArea minus splitter thickness).
+            const float availableH = (std::max)(1.0f, totalH - kSplitPanelDefaultHitThickness);
+            const float ratio = 1.0f - (desiredSecond / availableH);
+
+            if (!force)
+            {
+                // If we're already close, avoid churning layouts.
+                if (m_thumbScroll != nullptr)
+                {
+                    const D2D1_RECT_F tr = m_thumbScroll->LayoutRect();
+                    const float cur = (std::max)(0.0f, tr.bottom - tr.top);
+                    if (std::abs(cur - desiredSecond) < 1.0f)
+                    {
+                        return;
+                    }
+                }
+            }
+
+            m_rootSplit->SetSplitRatio((std::max)(0.0f, (std::min)(1.0f, ratio)));
+
+            if (BackplateRef() != nullptr)
+            {
+                BackplateRef()->RequestLayout();
+            }
         }
 
         void BuildMainPanes()
@@ -402,13 +574,12 @@ namespace
             m_mainImages.clear();
             m_mainGrid.reset();
 
-            std::wstring mainPath = L"D:/Works/FICture2/landscape/cavebaseground01.dds";
+            std::wstring mainPath = !m_initialFile.empty() ? m_initialFile : L"D:/Works/FICture2/landscape/cavebaseground01.dds";
 
             if (m_paneCount == 1)
             {
-                auto mainImage = std::make_shared<FD2D::Image>(L"mainImage0");
+                auto mainImage = std::make_shared<FD2D::MainImage>(L"mainImage0");
                 mainImage->SetSourceFile(mainPath);
-                mainImage->SetImagePurpose(ImageCore::ImagePurpose::FullResolution);
                 mainImage->SetOnClick([this]()
                 {
                     SetActivePane(0);
@@ -443,9 +614,8 @@ namespace
 
                 for (int i = 0; i < m_paneCount; ++i)
                 {
-                    auto img = std::make_shared<FD2D::Image>(L"mainImage" + std::to_wstring(i));
+                    auto img = std::make_shared<FD2D::MainImage>(L"mainImage" + std::to_wstring(i));
                     img->SetSourceFile(mainPath);
-                    img->SetImagePurpose(ImageCore::ImagePurpose::FullResolution);
                     const size_t idx = static_cast<size_t>(i);
                     img->SetOnClick([this, idx]()
                     {
@@ -527,13 +697,7 @@ namespace
 
         void ApplyActiveSelectionStyle()
         {
-            for (size_t i = 0; i < m_mainImages.size(); ++i)
-            {
-                if (m_mainImages[i])
-                {
-                    m_mainImages[i]->SetSelected(i == m_activePane);
-                }
-            }
+            // Main images do not render selection borders; keep active-pane purely as a logical state.
         }
 
         void ApplyMainFromIndex(size_t index)
@@ -557,7 +721,6 @@ namespace
             }
 
             mainImage->SetLoadingSpinnerEnabled(true);
-            mainImage->SetImagePurpose(ImageCore::ImagePurpose::FullResolution);
             mainImage->SetSourceFile(m_items[index].path.wstring());
             mainImage->Invalidate();
         }
@@ -728,7 +891,30 @@ namespace
             }
         }
 
-        void RebuildThumbList(const std::filesystem::path& preferSelectPath)
+        void NavigateToFile(const std::filesystem::path& filePath)
+        {
+            if (filePath.empty() || !std::filesystem::exists(filePath) || !std::filesystem::is_regular_file(filePath))
+            {
+                return;
+            }
+
+            if (!ImageCore::DecoderRegistry::Instance().IsSupportedPath(filePath.wstring()))
+            {
+                return;
+            }
+
+            const std::filesystem::path folder = filePath.parent_path();
+            if (folder.empty() || !std::filesystem::exists(folder) || !std::filesystem::is_directory(folder))
+            {
+                return;
+            }
+
+            m_currentFolder = folder;
+            m_initialThumbEnsured = false;
+            RebuildThumbList(filePath, MainApplyMode::Immediate);
+        }
+
+        void RebuildThumbList(const std::filesystem::path& preferSelectPath, MainApplyMode selectMode = MainApplyMode::None)
         {
             if (!m_thumbPanel)
             {
@@ -782,28 +968,16 @@ namespace
                     std::wstring base = L"nav_up_" + std::to_wstring(tileId++);
                     auto tile = std::make_shared<ThumbNavTile>(base + L"_tile");
                     tile->SetFixedSize({ m_thumbW, m_thumbH });
-                    tile->SetText(L"");
+                    tile->SetText(L"..");
+                    tile->SetTextPlacement(ThumbNavTile::TextPlacement::Bottom);
                     tile->SetIcon(ThumbNavTile::IconKind::Up);
                     tile->SetOnClick([this]()
                     {
                         QueueNavigateUp();
                     });
 
-                    auto label = std::make_shared<FD2D::Text>(base + L"_label");
-                    label->SetText(L"(parent)");
-                    label->SetFont(L"Segoe UI", m_thumbLabelDip);
-                    label->SetFixedWidth(m_thumbW);
-                    label->SetColor(D2D1::ColorF(0.75f, 0.75f, 0.75f, 1.0f));
-                    label->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
-                    label->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_NEAR);
-
-                    auto item = std::make_shared<FD2D::StackPanel>(base + L"_item", FD2D::Orientation::Vertical);
-                    item->SetSpacing(m_thumbItemSpacing);
-                    item->AddChild(tile);
-                    item->AddChild(label);
-
-                    m_thumbPanel->AddChild(item);
-                    m_items.push_back({ ThumbItemKind::Up, parent, tile, nullptr, tile, label });
+                    m_thumbPanel->AddChild(tile);
+                    m_items.push_back({ ThumbItemKind::Up, parent, tile, nullptr, tile, nullptr });
                 }
 
                 for (const auto& dir : folders)
@@ -811,72 +985,35 @@ namespace
                     std::wstring base = L"nav_folder_" + std::to_wstring(tileId++);
                     auto tile = std::make_shared<ThumbNavTile>(base + L"_tile");
                     tile->SetFixedSize({ m_thumbW, m_thumbH });
-                    tile->SetText(L"");
+                    tile->SetText(dir.filename().wstring());
+                    tile->SetTextPlacement(ThumbNavTile::TextPlacement::Bottom);
                     tile->SetIcon(ThumbNavTile::IconKind::Folder);
                     tile->SetOnClick([this, dir]()
                     {
                         QueueDeferredAction(DeferredActionKind::NavigateToFolder, dir);
                     });
 
-                    auto label = std::make_shared<FD2D::Text>(base + L"_label");
-                    label->SetText(dir.filename().wstring());
-                    label->SetFont(L"Segoe UI", m_thumbLabelDip);
-                    label->SetFixedWidth(m_thumbW);
-                    label->SetColor(D2D1::ColorF(0.75f, 0.75f, 0.75f, 1.0f));
-                    label->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
-                    label->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_NEAR);
-                    label->SetEllipsisTrimmingEnabled(true);
-                    label->SetOnClick([this, dir]()
-                    {
-                        QueueDeferredAction(DeferredActionKind::NavigateToFolder, dir);
-                    });
-
-                    auto item = std::make_shared<FD2D::StackPanel>(base + L"_item", FD2D::Orientation::Vertical);
-                    item->SetSpacing(m_thumbItemSpacing);
-                    item->AddChild(tile);
-                    item->AddChild(label);
-                    m_thumbPanel->AddChild(item);
-
-                    m_items.push_back({ ThumbItemKind::Folder, dir, tile, nullptr, tile, label });
+                    m_thumbPanel->AddChild(tile);
+                    m_items.push_back({ ThumbItemKind::Folder, dir, tile, nullptr, tile, nullptr });
                 }
             }
 
             for (const auto& p : files)
             {
                 std::wstring thumbName = L"thumb_" + std::to_wstring(tileId++);
-                auto thumb = std::make_shared<FD2D::Image>(thumbName);
-                thumb->SetThumbnailSize({ m_thumbW, m_thumbH });
-                thumb->SetImagePurpose(ImageCore::ImagePurpose::Thumbnail);
-                thumb->SetSourceFile(p.wstring());
+                auto thumbTile = std::make_shared<ThumbImageTile>(thumbName + L"_tile");
+                thumbTile->SetFixedSize({ m_thumbW, m_thumbH });
+                thumbTile->SetSourceFile(p.wstring());
+                thumbTile->SetCaption(p.filename().wstring());
 
                 const size_t index = m_items.size();
-                thumb->SetOnClick([this, index]()
+                thumbTile->SetOnClick([this, index]()
                 {
                     SelectItemByIndex(index, MainApplyMode::Immediate);
                 });
+                m_thumbPanel->AddChild(thumbTile);
 
-                auto item = std::make_shared<FD2D::StackPanel>(thumbName + L"_item", FD2D::Orientation::Vertical);
-                item->SetSpacing(m_thumbItemSpacing);
-                item->SetPadding(0.0f);
-
-                auto label = std::make_shared<FD2D::Text>(thumbName + L"_label");
-                label->SetText(p.filename().wstring());
-                label->SetFont(L"Segoe UI", m_thumbLabelDip);
-                label->SetFixedWidth(m_thumbW);
-                label->SetColor(D2D1::ColorF(0.20f, 0.20f, 0.20f, 1.0f));
-                label->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
-                label->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_NEAR);
-                label->SetEllipsisTrimmingEnabled(true);
-                label->SetOnClick([this, index]()
-                {
-                    SelectItemByIndex(index, MainApplyMode::Immediate);
-                });
-
-                item->AddChild(thumb);
-                item->AddChild(label);
-                m_thumbPanel->AddChild(item);
-
-                m_items.push_back({ ThumbItemKind::Image, p, thumb, thumb, nullptr, label });
+                m_items.push_back({ ThumbItemKind::Image, p, thumbTile, thumbTile->ImageWnd(), nullptr, thumbTile });
             }
 
             // Restore selection
@@ -895,7 +1032,7 @@ namespace
 
             if (!m_items.empty())
             {
-                SelectItemByIndex(selectIndex, MainApplyMode::None);
+                SelectItemByIndex(selectIndex, selectMode);
             }
 
             if (BackplateRef() != nullptr)
@@ -907,6 +1044,55 @@ namespace
                     RedrawWindow(hwnd, nullptr, nullptr, RDW_INVALIDATE | RDW_UPDATENOW);
                 }
             }
+        }
+
+        void OpenFileDialog(OpenDialogMode mode)
+        {
+            wchar_t fileName[MAX_PATH] {};
+
+            // Filter format: "Desc\0pattern\0Desc\0pattern\0\0"
+            const wchar_t* filter =
+                L"Supported images (*.png;*.jpg;*.jpeg;*.bmp;*.tif;*.tiff;*.gif;*.dds;*.tga)\0"
+                L"*.png;*.jpg;*.jpeg;*.bmp;*.tif;*.tiff;*.gif;*.dds;*.tga\0"
+                L"All files (*.*)\0"
+                L"*.*\0\0";
+
+            OPENFILENAMEW ofn {};
+            ofn.lStructSize = sizeof(ofn);
+            ofn.hwndOwner = BackplateRef() ? BackplateRef()->Window() : nullptr;
+            ofn.lpstrFile = fileName;
+            ofn.nMaxFile = static_cast<DWORD>(std::size(fileName));
+            ofn.lpstrFilter = filter;
+            ofn.nFilterIndex = 1;
+            ofn.Flags = OFN_FILEMUSTEXIST | OFN_PATHMUSTEXIST | OFN_EXPLORER | OFN_HIDEREADONLY;
+            ofn.lpstrTitle = L"Open Image";
+
+            std::wstring initialDir;
+            if (!m_currentFolder.empty() && std::filesystem::exists(m_currentFolder) && std::filesystem::is_directory(m_currentFolder))
+            {
+                initialDir = m_currentFolder.wstring();
+                ofn.lpstrInitialDir = initialDir.c_str();
+            }
+
+            if (!GetOpenFileNameW(&ofn))
+            {
+                return; // cancelled
+            }
+
+            const std::filesystem::path chosen = std::filesystem::path(fileName);
+            if (!std::filesystem::exists(chosen) || !std::filesystem::is_regular_file(chosen))
+            {
+                return;
+            }
+
+            if (!ImageCore::DecoderRegistry::Instance().IsSupportedPath(chosen.wstring()))
+            {
+                MessageBoxW(ofn.hwndOwner, L"Selected file type is not supported.", L"FICture2", MB_OK | MB_ICONWARNING);
+                return;
+            }
+
+            // Defer UI tree mutation to avoid reentrancy issues during message dispatch.
+            QueueDeferredAction(mode == OpenDialogMode::SplitHorizontalNewBrowser ? DeferredActionKind::SplitHorizontalWithFile : DeferredActionKind::NavigateToFile, chosen);
         }
 
         void QueueDeferredAction(DeferredActionKind kind, const std::filesystem::path& path = {})
@@ -934,6 +1120,12 @@ namespace
             case DeferredActionKind::NavigateToFolder:
                 NavigateToFolder(path);
                 break;
+            case DeferredActionKind::NavigateToFile:
+                NavigateToFile(path);
+                break;
+            case DeferredActionKind::SplitHorizontalWithFile:
+                SplitHorizontalWithFile(path);
+                break;
             case DeferredActionKind::NavigateUp:
                 NavigateUp();
                 break;
@@ -943,6 +1135,118 @@ namespace
             default:
                 break;
             }
+        }
+
+        void EnsureHorizontalHost()
+        {
+            if (!m_hPanes.empty())
+            {
+                return;
+            }
+
+            // Pane 0 is this browser's existing UI root.
+            if (m_rootSplit)
+            {
+                m_hPanes.push_back(m_rootSplit);
+            }
+        }
+
+        void SplitHorizontalWithFile(const std::filesystem::path& filePath)
+        {
+            if (filePath.empty())
+            {
+                return;
+            }
+
+            EnsureHorizontalHost();
+            if (m_hPanes.empty())
+            {
+                return;
+            }
+
+            if (static_cast<int>(m_hPanes.size()) >= 4)
+            {
+                if (BackplateRef() != nullptr && BackplateRef()->Window() != nullptr)
+                {
+                    MessageBoxW(
+                        BackplateRef()->Window(),
+                        L"Maximum 4 viewers are supported.",
+                        L"FICture2",
+                        MB_OK | MB_ICONINFORMATION);
+                }
+                return;
+            }
+
+            static int s_splitId = 1;
+            const std::wstring childName = L"browser_split_" + std::to_wstring(s_splitId++);
+            auto newBrowser = CreateImageBrowser(childName, 1, filePath.wstring());
+            m_hPanes.push_back(newBrowser);
+
+            RebuildHorizontalHost();
+
+            if (BackplateRef() != nullptr)
+            {
+                BackplateRef()->RequestLayout();
+            }
+        }
+
+        std::shared_ptr<FD2D::Wnd> BuildEqualWidthSplitTree(const std::vector<std::shared_ptr<FD2D::Wnd>>& panes)
+        {
+            const size_t n = panes.size();
+            if (n == 0)
+            {
+                return nullptr;
+            }
+            if (n == 1)
+            {
+                return panes[0];
+            }
+
+            auto makeSplit = [](const std::wstring& name, float ratio, const std::shared_ptr<FD2D::Wnd>& a, const std::shared_ptr<FD2D::Wnd>& b) -> std::shared_ptr<FD2D::SplitPanel>
+            {
+                auto sp = std::make_shared<FD2D::SplitPanel>(name, FD2D::SplitterOrientation::Horizontal);
+                sp->SetSplitRatio(ratio);
+                sp->SetConstraintPropagation(FD2D::ConstraintPropagation::None);
+                sp->SetFirstChild(a);
+                sp->SetSecondChild(b);
+                return sp;
+            };
+
+            static int s_hostId = 1;
+
+            if (n == 2)
+            {
+                return makeSplit(L"hSplit2_" + std::to_wstring(s_hostId++), 0.5f, panes[0], panes[1]);
+            }
+            if (n == 3)
+            {
+                // 1/3 | (2/3 split into 1/2 + 1/2) => 1/3, 1/3, 1/3
+                auto right = makeSplit(L"hSplit3_r_" + std::to_wstring(s_hostId++), 0.5f, panes[1], panes[2]);
+                return makeSplit(L"hSplit3_" + std::to_wstring(s_hostId++), 1.0f / 3.0f, panes[0], right);
+            }
+            // n == 4
+            {
+                // (1/2 split into 1/2 + 1/2) | (1/2 split into 1/2 + 1/2) => quarters
+                auto left = makeSplit(L"hSplit4_l_" + std::to_wstring(s_hostId++), 0.5f, panes[0], panes[1]);
+                auto right = makeSplit(L"hSplit4_r_" + std::to_wstring(s_hostId++), 0.5f, panes[2], panes[3]);
+                return makeSplit(L"hSplit4_" + std::to_wstring(s_hostId++), 0.5f, left, right);
+            }
+        }
+
+        void RebuildHorizontalHost()
+        {
+            // Rebuild the full host so all panes become equal width.
+            // (Nested splits with 0.5 ratios produce 50/25/25 otherwise.)
+            const auto host = BuildEqualWidthSplitTree(m_hPanes);
+            if (!host)
+            {
+                return;
+            }
+
+            // Replace this Wnd's children with the new host tree.
+            ClearChildren();
+            AddChild(host);
+            m_hHost = host;
         }
 
         int m_paneCount { 1 };
@@ -967,17 +1271,21 @@ namespace
         bool m_showNavItems { true };
         float m_thumbW { 128.0f };
         float m_thumbH { 128.0f };
-        float m_thumbLabelDip { 10.0f };
-        float m_thumbItemSpacing { 2.0f };
+        float m_thumbLabelDip { 0.0f };
+        float m_thumbItemSpacing { 0.0f };
         float m_thumbOuterSpacing { 8.0f }; // spacing between thumbnail "items" in the horizontal strip
 
         DeferredActionKind m_deferredKind { DeferredActionKind::None };
         std::filesystem::path m_deferredPath {};
+
+        std::wstring m_initialFile {};
+        std::vector<std::shared_ptr<FD2D::Wnd>> m_hPanes {};
+        std::shared_ptr<FD2D::Wnd> m_hHost {};
     };
 }
 
-std::shared_ptr<FD2D::Wnd> CreateImageBrowser(const std::wstring& name, int paneCount)
+std::shared_ptr<FD2D::Wnd> CreateImageBrowser(const std::wstring& name, int paneCount, const std::wstring& initialFile)
 {
-    return std::make_shared<ImageBrowserImpl>(name, paneCount);
+    return std::make_shared<ImageBrowserImpl>(name, paneCount, initialFile);
 }
 

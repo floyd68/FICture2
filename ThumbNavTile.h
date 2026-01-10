@@ -9,6 +9,7 @@
 
 #include <functional>
 #include <string>
+#include <d2d1.h>
 
 class ThumbNavTile : public FD2D::Wnd
 {
@@ -22,10 +23,17 @@ public:
         Up,
     };
 
+    enum class TextPlacement
+    {
+        Center,
+        Bottom,
+    };
+
     explicit ThumbNavTile(const std::wstring& name);
 
     void SetIcon(IconKind kind);
     void SetText(const std::wstring& text);
+    void SetTextPlacement(TextPlacement placement);
     void SetFixedSize(const FD2D::Size& size);
     void SetSelected(bool selected);
     bool Selected() const;
@@ -42,7 +50,9 @@ private:
 
     FD2D::Size m_fixedSize { 128.0f, 128.0f };
     FD2D::Text m_label;
+    D2D1_RECT_F m_labelRect {};
     ClickHandler m_onClick {};
+    Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> m_labelBackdropBrush {};
     Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> m_fillBrush {};
     Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> m_strokeBrush {};
     Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> m_iconStrokeBrush {};
@@ -50,6 +60,7 @@ private:
     Microsoft::WRL::ComPtr<ID2D1Bitmap> m_folderBitmap {};
     ID2D1RenderTarget* m_folderBitmapTarget { nullptr };
     IconKind m_icon { IconKind::None };
+    TextPlacement m_textPlacement { TextPlacement::Bottom };
     bool m_hovered { false };
     bool m_pressed { false };
     bool m_selected { false };

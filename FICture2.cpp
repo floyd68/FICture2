@@ -7,7 +7,6 @@
 #include "AppSetup.h"
 #include "ImageBrowser.h"
 
-#include "ImageCore/DecoderRegistry.h"
 #include "ImageCore/ImageCore.h"
 
 #include <algorithm>
@@ -106,7 +105,7 @@ int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
         }
 
         // Core viewer: supports 1..4 panes (we start with 1 by default).
-        backplate->AddWnd(CreateImageBrowser(L"viewer", 1));
+        backplate->AddWnd(CreateImageBrowser(L"viewer", 1, L""));
 
         backplate->Show(nCmdShow);
 
