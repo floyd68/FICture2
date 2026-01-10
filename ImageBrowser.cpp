@@ -297,9 +297,20 @@ namespace
             }
 
             // Keyboard navigation:
-            if (message == WM_KEYDOWN)
+            // NOTE: Alt+key combos are often delivered as WM_SYSKEYDOWN.
+            if (message == WM_KEYDOWN || message == WM_SYSKEYDOWN)
             {
                 const bool isRepeat = ((lParam & (1LL << 30)) != 0);
+
+                // Alt+Up: navigate to parent folder in the focused ImageBrowser.
+                if (wParam == VK_UP && (GetKeyState(VK_MENU) & 0x8000))
+                {
+                    if (!isRepeat)
+                    {
+                        QueueNavigateUp();
+                    }
+                    return true;
+                }
 
                 if (wParam == 'N')
                 {
