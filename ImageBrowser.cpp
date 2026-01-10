@@ -17,6 +17,7 @@
 #include <atomic>
 #include <vector>
 #include <cwctype>
+#include <wrl/client.h>
 #include <windowsx.h>
 #include <shlobj.h>
 #include <commdlg.h>
@@ -35,6 +36,36 @@ namespace
     static std::vector<class ImageBrowserImpl*> g_allBrowsers {};
     static class ImageBrowserImpl* g_rootHorizontalHostBrowser = nullptr;
     static std::atomic<UINT_PTR> g_nextThumbApplyTimerId { 0x4D21 };
+
+    static bool g_showNavItems = true;
+    static bool g_showNavItemsInitialized = false;
+
+    static void EnsureShowNavItemsInitialized()
+    {
+        if (g_showNavItemsInitialized)
+        {
+            return;
+        }
+        g_showNavItemsInitialized = true;
+
+        wchar_t iniPath[MAX_PATH] {};
+        if (SUCCEEDED(SHGetFolderPathW(nullptr, CSIDL_LOCAL_APPDATA, nullptr, SHGFP_TYPE_CURRENT, iniPath)))
+        {
+            const std::wstring iniFile = std::wstring(iniPath) + L"\\FICture2\\FICture2.ini";
+            const int v = GetPrivateProfileIntW(L"Viewer", L"ShowNavItems", 1, iniFile.c_str());
+            g_showNavItems = (v != 0);
+        }
+    }
+
+    static void PersistShowNavItems()
+    {
+        wchar_t iniPath[MAX_PATH] {};
+        if (SUCCEEDED(SHGetFolderPathW(nullptr, CSIDL_LOCAL_APPDATA, nullptr, SHGFP_TYPE_CURRENT, iniPath)))
+        {
+            const std::wstring iniFile = std::wstring(iniPath) + L"\\FICture2\\FICture2.ini";
+            (void)WritePrivateProfileStringW(L"Viewer", L"ShowNavItems", g_showNavItems ? L"1" : L"0", iniFile.c_str());
+        }
+    }
 
     static std::wstring JoinFloatsCsv(const std::vector<float>& values)
     {
@@ -88,6 +119,8 @@ namespace
             : Wnd(name)
             , m_initialFile(initialFile)
         {
+            EnsureShowNavItemsInitialized();
+            m_showNavItems = g_showNavItems;
             m_thumbApplyTimerId = g_nextThumbApplyTimerId.fetch_add(1);
             g_allBrowsers.push_back(this);
             if (g_rootHorizontalHostBrowser == nullptr)
@@ -164,6 +197,49 @@ namespace
             UpdateThumbSizingFromPane();
 
             Wnd::OnRender(target);
+
+            if (target == nullptr)
+            {
+                return;
+            }
+
+            // Drag&drop overlay (drawn on top of the main image area only).
+            if (m_dragOverlay != DragOverlayKind::None && m_mainPaneHost != nullptr)
+            {
+                const D2D1_RECT_F r = m_mainPaneHost->LayoutRect();
+                if (r.right > r.left && r.bottom > r.top)
+                {
+                    if (m_dragOverlay == DragOverlayKind::Replace)
+                    {
+                        if (!m_dragReplaceBrush)
+                        {
+                            (void)target->CreateSolidColorBrush(
+                                D2D1::ColorF(1.0f, 0.0f, 0.0f, 0.18f),
+                                m_dragReplaceBrush.ReleaseAndGetAddressOf());
+                        }
+                        if (m_dragReplaceBrush)
+                        {
+                            target->FillRectangle(r, m_dragReplaceBrush.Get());
+                        }
+                    }
+                    else if (m_dragOverlay == DragOverlayKind::Insert)
+                    {
+                        if (!m_dragInsertBrush)
+                        {
+                            (void)target->CreateSolidColorBrush(
+                                D2D1::ColorF(0.0f, 1.0f, 0.0f, 0.18f),
+                                m_dragInsertBrush.ReleaseAndGetAddressOf());
+                        }
+                        if (m_dragInsertBrush)
+                        {
+                            const float w = (std::max)(1.0f, r.right - r.left);
+                            const float splitX = r.left + (w * 0.75f);
+                            const D2D1_RECT_F rr { splitX, r.top, r.right, r.bottom };
+                            target->FillRectangle(rr, m_dragInsertBrush.Get());
+                        }
+                    }
+                }
+            }
         }
 
         bool OnMessage(UINT message, WPARAM wParam, LPARAM lParam) override
@@ -471,10 +547,34 @@ namespace
                 return false;
             }
 
+            // IMPORTANT:
+            // In compare mode, this ImageBrowser can contain other ImageBrowser panes as children (split host).
+            // If the drop is not for *this* browser's main pane, let children try first so drops work on
+            // any pane, not only the first/root ImageBrowser.
+            if (Wnd::OnFileDrop(path, clientPt))
+            {
+                return true;
+            }
+
             // Only accept drops onto the main image region (not the thumbnail strip).
             if (m_mainPaneHost == nullptr || !RectContainsPoint(m_mainPaneHost->LayoutRect(), clientPt))
             {
                 return false;
+            }
+
+            ClearDragOverlay();
+
+            const D2D1_RECT_F mainRect = m_mainPaneHost->LayoutRect();
+            const float mainW = (std::max)(1.0f, mainRect.right - mainRect.left);
+            const float relX = (static_cast<float>(clientPt.x) - mainRect.left) / mainW;
+
+            const std::filesystem::path p(path);
+
+            // Right 1/4: insert new ImageBrowser to the right and open the dropped path there.
+            if (relX >= 0.75f)
+            {
+                QueueInsertHorizontalWithPathAfterThis(p);
+                return true;
             }
 
             // Select the pane under the cursor (for 2-4 pane layouts).
@@ -487,7 +587,6 @@ namespace
                 }
             }
 
-            const std::filesystem::path p(path);
             if (std::filesystem::exists(p) && std::filesystem::is_directory(p))
             {
                 QueueDeferredAction(DeferredActionKind::NavigateToFolder, p);
@@ -496,6 +595,52 @@ namespace
 
             QueueDeferredAction(DeferredActionKind::NavigateToFile, p);
             return true;
+        }
+
+        bool OnFileDrag(const std::wstring& path, const POINT& clientPt, FD2D::FileDragVisual& outVisual) override
+        {
+            // Let child panes handle first (for compare mode where this browser hosts other browsers).
+            if (Wnd::OnFileDrag(path, clientPt, outVisual))
+            {
+                return true;
+            }
+
+            if (m_mainPaneHost == nullptr)
+            {
+                outVisual = FD2D::FileDragVisual::None;
+                ClearDragOverlay();
+                return false;
+            }
+
+            const D2D1_RECT_F r = m_mainPaneHost->LayoutRect();
+            if (!RectContainsPoint(r, clientPt))
+            {
+                outVisual = FD2D::FileDragVisual::None;
+                ClearDragOverlay();
+                return false;
+            }
+
+            const float w = (std::max)(1.0f, r.right - r.left);
+            const float relX = (static_cast<float>(clientPt.x) - r.left) / w;
+            if (relX < 0.75f)
+            {
+                m_dragOverlay = DragOverlayKind::Replace;
+                outVisual = FD2D::FileDragVisual::Replace;
+            }
+            else
+            {
+                m_dragOverlay = DragOverlayKind::Insert;
+                outVisual = FD2D::FileDragVisual::Insert;
+            }
+
+            Invalidate();
+            return true;
+        }
+
+        void OnFileDragLeave() override
+        {
+            Wnd::OnFileDragLeave();
+            ClearDragOverlay();
         }
 
         bool TryStartCompareWithFileNameMatch(const std::wstring& incomingFilePath)
@@ -708,6 +853,7 @@ namespace
             NavigateToFolder,
             NavigateToFile,
             SplitHorizontalWithFile,
+            InsertHorizontalWithPathAfterName,
             NavigateUp,
             ActivateSelected,
         };
@@ -725,15 +871,27 @@ namespace
                 return;
             }
 
-            const D2D1_RECT_F scrollRect = m_thumbScroll->LayoutRect();
-            const float paneH = scrollRect.bottom - scrollRect.top;
+            float paneH = 0.0f;
+            if (g_hasSyncedThumbStripHeight)
+            {
+                // During session restore, individual panes can be briefly laid out with different
+                // thumb-strip heights until the first full Arrange pass settles. If we size thumbs
+                // from per-pane LayoutRect() in that window, 2nd+ panes can jump to huge thumbnails.
+                // Use the globally synced strip height when available so all panes size consistently.
+                paneH = g_syncedThumbStripHeight;
+            }
+            else
+            {
+                const D2D1_RECT_F scrollRect = m_thumbScroll->LayoutRect();
+                paneH = scrollRect.bottom - scrollRect.top;
+            }
             if (paneH <= 1.0f)
             {
                 return;
             }
 
             // Keep thumbnail spacing constant; only scale the thumbnail square with the pane height.
-            constexpr float contentPadding = 8.0f; // matches thumbs->SetPadding(8)
+            constexpr float contentPadding = 4.0f; // matches thumbs->SetPadding(4)
             const float availableForThumb = paneH - (contentPadding * 2.0f);
 
             float newSide = availableForThumb;
@@ -1348,15 +1506,27 @@ namespace
 
         void ToggleNavItems()
         {
-            m_showNavItems = !m_showNavItems;
+            EnsureShowNavItemsInitialized();
+            g_showNavItems = !g_showNavItems;
+            PersistShowNavItems();
 
-            std::filesystem::path prefer {};
-            if (m_selectedIndex < m_items.size())
+            // Apply globally to all ImageBrowsers.
+            for (auto* b : g_allBrowsers)
             {
-                prefer = m_items[m_selectedIndex].path;
-            }
+                if (b == nullptr)
+                {
+                    continue;
+                }
 
-            RebuildThumbList(prefer);
+                b->m_showNavItems = g_showNavItems;
+
+                std::filesystem::path prefer {};
+                if (b->m_selectedIndex < b->m_items.size())
+                {
+                    prefer = b->m_items[b->m_selectedIndex].path;
+                }
+                b->RebuildThumbList(prefer);
+            }
         }
 
         void QueueNavigateUp()
@@ -1642,12 +1812,26 @@ namespace
             }
         }
 
+        void QueueInsertHorizontalWithPathAfterThis(const std::filesystem::path& path)
+        {
+            RequestFocus();
+            m_deferredKind = DeferredActionKind::InsertHorizontalWithPathAfterName;
+            m_deferredPath = path;
+            m_deferredText = Name();
+            if (BackplateRef() != nullptr)
+            {
+                PostMessageW(BackplateRef()->Window(), WM_FIC2_DEFERRED_ACTION, 0, 0);
+            }
+        }
+
         void RunDeferredAction()
         {
             const DeferredActionKind kind = m_deferredKind;
             const std::filesystem::path path = m_deferredPath;
+            const std::wstring text = m_deferredText;
             m_deferredKind = DeferredActionKind::None;
             m_deferredPath.clear();
+            m_deferredText.clear();
 
             switch (kind)
             {
@@ -1663,6 +1847,9 @@ namespace
             case DeferredActionKind::SplitHorizontalWithFile:
                 SplitHorizontalWithFile(path);
                 break;
+            case DeferredActionKind::InsertHorizontalWithPathAfterName:
+                InsertHorizontalWithPathAfterName(text, path);
+                break;
             case DeferredActionKind::NavigateUp:
                 NavigateUp();
                 break;
@@ -1671,6 +1858,70 @@ namespace
                 break;
             default:
                 break;
+            }
+        }
+
+        void InsertHorizontalWithPathAfterName(const std::wstring& afterName, const std::filesystem::path& path)
+        {
+            if (g_rootHorizontalHostBrowser != nullptr && g_rootHorizontalHostBrowser != this)
+            {
+                g_rootHorizontalHostBrowser->InsertHorizontalWithPathAfterName(afterName, path);
+                return;
+            }
+
+            if (path.empty())
+            {
+                return;
+            }
+
+            EnsureHorizontalHost();
+            if (m_hPanes.empty())
+            {
+                return;
+            }
+
+            if (static_cast<int>(m_hPanes.size()) >= 4)
+            {
+                return;
+            }
+
+            size_t insertIndex = m_hPanes.size();
+            for (size_t i = 0; i < m_hPanes.size(); ++i)
+            {
+                if (m_hPanes[i] && m_hPanes[i]->Name() == afterName)
+                {
+                    insertIndex = i + 1;
+                    break;
+                }
+            }
+
+            static int s_insertId = 20001;
+            const std::wstring childName = L"browser_insert_" + std::to_wstring(s_insertId++);
+            auto newWnd = CreateImageBrowser(childName, 1, L"");
+            auto newBrowser = std::dynamic_pointer_cast<ImageBrowserImpl>(newWnd);
+            if (newBrowser)
+            {
+                if (std::filesystem::exists(path) && std::filesystem::is_directory(path))
+                {
+                    newBrowser->RestoreOpenFolder(path.wstring());
+                }
+                else
+                {
+                    newBrowser->RestoreOpenFile(path.wstring());
+                }
+            }
+
+            if (insertIndex > m_hPanes.size())
+            {
+                insertIndex = m_hPanes.size();
+            }
+
+            m_hPanes.insert(m_hPanes.begin() + static_cast<std::ptrdiff_t>(insertIndex), newWnd);
+            RebuildHorizontalHost();
+
+            if (BackplateRef() != nullptr)
+            {
+                BackplateRef()->RequestLayout();
             }
         }
 
@@ -1825,6 +2076,7 @@ namespace
 
         DeferredActionKind m_deferredKind { DeferredActionKind::None };
         std::filesystem::path m_deferredPath {};
+        std::wstring m_deferredText {};
 
         std::wstring m_initialFile {};
         std::vector<std::shared_ptr<FD2D::Wnd>> m_hPanes {};
@@ -1834,6 +2086,26 @@ namespace
         bool m_syncSuppressBroadcast { false };
         bool m_viewSyncSuppressBroadcast { false };
         UINT_PTR m_thumbApplyTimerId { 0 };
+
+        enum class DragOverlayKind
+        {
+            None,
+            Replace,
+            Insert
+        };
+
+        void ClearDragOverlay()
+        {
+            if (m_dragOverlay != DragOverlayKind::None)
+            {
+                m_dragOverlay = DragOverlayKind::None;
+                Invalidate();
+            }
+        }
+
+        DragOverlayKind m_dragOverlay { DragOverlayKind::None };
+        Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> m_dragReplaceBrush {};
+        Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> m_dragInsertBrush {};
 
         static void CaptureSplitRatiosRecursive(const std::shared_ptr<FD2D::Wnd>& node, std::vector<float>& out)
         {

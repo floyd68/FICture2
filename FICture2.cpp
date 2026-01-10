@@ -16,6 +16,7 @@
 #include <cwctype>
 #include <objbase.h>
 #include <shellapi.h>
+#include <ole2.h>
 #include <vector>
 #include <knownfolders.h>
 #include <shlobj_core.h>
@@ -215,17 +216,18 @@ int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
         // else: server not available or decided to ignore -> continue as a new instance.
     }
 
-    // COM lifetime is owned by the application (not FD2D)
-    bool coInitialized = false;
-    HRESULT coHr = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
-    if (SUCCEEDED(coHr))
+    // OLE/COM lifetime is owned by the application (not FD2D).
+    // OLE drag&drop (IDropTarget/RegisterDragDrop) requires OLE init on the UI thread.
+    bool oleInitialized = false;
+    HRESULT oleHr = OleInitialize(nullptr);
+    if (SUCCEEDED(oleHr))
     {
-        coInitialized = true;
+        oleInitialized = true;
     }
-    else if (coHr == RPC_E_CHANGED_MODE)
+    else if (oleHr == RPC_E_CHANGED_MODE)
     {
-        // Another component initialized COM with a different model; continue without owning lifetime
-        coInitialized = false;
+        // Another component initialized COM with a different model; continue without owning lifetime.
+        oleInitialized = false;
     }
     else
     {
@@ -278,7 +280,7 @@ int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
     int result = -1;
     {
         // IMPORTANT:
-        // Ensure all UI objects (Backplate/Wnd tree) are destroyed BEFORE CoUninitialize().
+        // Ensure all UI objects (Backplate/Wnd tree) are destroyed BEFORE OleUninitialize().
         // Some COM-backed objects used by the UI/render stack must be released
         // before the calling thread uninitializes COM.
         auto backplate = app.CreateWindowedBackplate(L"main", opts);
@@ -398,9 +400,9 @@ int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
 
     app.Shutdown();
 
-    if (coInitialized)
+    if (oleInitialized)
     {
-        CoUninitialize();
+        OleUninitialize();
     }
     return result;
 }

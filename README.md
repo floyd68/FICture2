@@ -1,6 +1,6 @@
-## FICture2
+# FICture2
 
-Windows image viewer focused on DDS/texture workflows, built on:
+**FICTure - *F*loyd’s *I*mage *C*ompare minia*ture* 2** is a Windows image viewer focused on DDS/texture workflows, built on:
 
 - **`FD2D/` (submodule)**: lightweight Win32 UI framework using Direct2D/DirectWrite (and optional D3D11 swapchain renderer)
 - **`ImageCore/` (submodule)**: async image decode pipeline (WIC + DirectXTex)
@@ -8,7 +8,7 @@ Windows image viewer focused on DDS/texture workflows, built on:
 
 This repository is the “app shell” that wires the UI (`FD2D`) and the decode pipeline (`ImageCore`) together.
 
-### Quick start
+## Quick start
 
 - **Run with a file parameter**:
   - `FICture2.exe "C:\path\to\image.dds"`
@@ -17,7 +17,7 @@ This repository is the “app shell” that wires the UI (`FD2D`) and the decode
   - If a previous session exists: restores the last session (window placement + viewers + folders/images + splitters).
   - If no session exists: opens the first supported image found in the current user's **Pictures** folder.
 
-### Features
+## Features
 
 - **Thumbnail strip + main image** optimized for DDS-heavy folders
 - **Folder navigation** inside the thumbnail strip (includes `..` “up” item)
@@ -37,16 +37,18 @@ This repository is the “app shell” that wires the UI (`FD2D`) and the decode
   - if another instance is already running and you launch a file:
     - if filenames match: first instance enters compare mode; second instance exits
     - if filenames differ: second instance runs independently
-- **Drag & drop** image file onto the main image region to open
+- **Drag & drop** (main image region):
+  - **Left 3/4** drop zone: replace the current `ImageBrowser` folder/image with the dropped path (**red overlay** while dragging)
+  - **Right 1/4** drop zone: insert a new `ImageBrowser` to the right and open the dropped path there (**green overlay** while dragging)
 - **First-run file association prompt** (per-user / HKCU only)
 
-### Hotkeys
+## Hotkeys
 
-#### Global
+### Global
 
 - **Esc**: exit application
 
-#### Thumbnail list / navigation (focused `ImageBrowser`)
+### Thumbnail list / navigation (focused `ImageBrowser`)
 
 - **Left / Right**: move selection (includes folders and images)
 - **Home / End**: jump to start / end of list
@@ -57,11 +59,11 @@ This repository is the “app shell” that wires the UI (`FD2D`) and the decode
   - image: show in main view
 - **Backspace**: navigate up (same as `..`)
 - **Alt + Up**: navigate up (Explorer-style)
-- **N**: toggle navigation items visibility in the thumbnail strip (folders + `..`)
+- **N**: toggle navigation items visibility **globally** (folders + `..`) across all `ImageBrowser` instances
 - **Ctrl + O**: open file dialog, replace current viewer image/folder context
 - **Ctrl + Shift + O**: open file dialog, create a new viewer on the right (up to 4 total), equal widths
 
-### Mouse controls (main image)
+## Mouse controls (main image)
 
 - **Mouse wheel**: zoom in/out (smooth spring animation)
   - **Shift + wheel**: ±10% per notch
@@ -69,22 +71,30 @@ This repository is the “app shell” that wires the UI (`FD2D`) and the decode
   - Zoom is **pointer-based**: the pixel under the mouse stays fixed during zoom.
 - **Left mouse drag**: pan
 
-### Command line
+## Drag & drop (main image)
+
+- Drag an image file/folder onto a main image view:
+  - **Left 3/4**: replace current view (folder/image) — red overlay while dragging
+  - **Right 1/4**: insert a new `ImageBrowser` on the right and open there — green overlay while dragging
+
+## Command line
 
 - **`--renderer=d3d`**: prefer D3D11 swapchain renderer (default)
 - **`--renderer=d2d`**: force D2D-only renderer (more compatible)
 
-### Configuration (INI)
+## Configuration (INI)
 
 All settings are stored per-user at:
 
 - `%LOCALAPPDATA%\FICture2\FICture2.ini`
 
-#### Important keys
+### Important keys
 
 - **`[Window]`**
   - `Left/Top/Right/Bottom/ShowCmd`
   - Window placement is **auto-saved during move/resize** (debounced) and also saved on exit.
+- **`[Viewer]`**
+  - `ShowNavItems` (0/1): navigation items visibility (**global** across all `ImageBrowser` instances; toggled by **N**)
 - **`[Image]`**
   - `ZoomStiffness` (10..500): higher = faster zoom spring response
 - **`[Thumbnails]`**
@@ -99,7 +109,7 @@ All settings are stored per-user at:
   - `CurrentFolder`
   - `DisplayedFile`
 
-### Repository layout
+## Repository layout
 
 - `FICture2.cpp`: app entrypoint, renderer selection, IPC integration, startup restore logic
 - `ImageBrowser.cpp/.h`: core UI component (thumbnail strip + main image + multi-view + sync)
@@ -107,14 +117,14 @@ All settings are stored per-user at:
 - `ImageCore/`: decode scheduler/dispatcher/cache (submodule)
 - `external/DirectXTex/`: DirectXTex (submodule; **not authored here**)
 
-### Prerequisites
+## Prerequisites
 
 - Windows 10/11
 - Visual Studio 2022 (C++ workload)
 - Windows SDK installed (VS installer)
 - `git` if you want to work with submodules
 
-### Clone
+## Clone
 
 This repo uses **git submodules**. Clone with:
 
@@ -128,7 +138,7 @@ If you already cloned without submodules:
 git submodule update --init --recursive
 ```
 
-### Build (Visual Studio)
+## Build (Visual Studio)
 
 1. Open `FICture2.vcxproj` (or open the folder in VS).
 2. Select configuration:
@@ -136,7 +146,7 @@ git submodule update --init --recursive
    - **Release|x64** for distribution/perf/size tuning
 3. Build + run `FICture2`.
 
-### Build (MSBuild CLI)
+## Build (MSBuild CLI)
 
 From a Developer PowerShell:
 
@@ -144,7 +154,7 @@ From a Developer PowerShell:
 msbuild .\FICture2.vcxproj -m -p:Configuration=Release -p:Platform=x64
 ```
 
-### Release “size-first” notes
+## Release “size-first” notes
 
 This repo can be configured to prioritize output size (even if it costs some runtime speed).
 Typical knobs include:
@@ -157,19 +167,19 @@ Typical knobs include:
 
 > If you want a speed-first profile again, revert the above to `/O2`, `/Ob2`, `/GS`, and `FavorSizeOrSpeed=Speed`.
 
-### Submodules
+## Submodules
 
 - `FD2D`: `https://github.com/floyd68/FD2D`
 - `ImageCore`: `https://github.com/floyd68/ImageCore`
 - `DirectXTex` (external): tracked as a submodule under `external/DirectXTex`
 
-### License
+## License
 
 This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
 
 Copyright (c) 2024 EunSuk, Lee (이은석, floyd)
 
-### Troubleshooting
+## Troubleshooting
 
 - **Submodules are empty / missing files**: run `git submodule update --init --recursive`.
 - **Build fails due to locked exe**: close the running `FICture2.exe` instance.
