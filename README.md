@@ -1,12 +1,101 @@
-# FICture2
+# FICture2 – Ultra-Fast Image Compare & DDS Texture Viewer for Modders
 
-**FICTure - *F*loyd’s *I*mage *C*ompare minia*ture* 2** is a Windows image viewer focused on DDS/texture workflows, built on:
+**FICture2** is an ultra-lightweight, high-performance image viewer and comparison tool built **specifically for game modders and texture artists**.
+
+It aims for a **sub-1MB executable** with **near-instant startup** — no splash screen, no heavy frameworks, no delay.
+Double-click a texture and you’re already comparing it.
+
+> **FICture2** is an acronym for **Floyd’s Image Compare miniaTURE 2**.
+
+## Why FICture2 exists
+
+Most image viewers claim to support DDS — but in reality:
+
+- BCn formats are often **decoded incorrectly**
+- Alpha channels are **mishandled or ignored**
+- Mip levels are **flattened or forced**
+- Performance collapses on large texture folders
+
+**FICture2 was built because no existing lightweight tool handled DDS BCn textures correctly and fast enough for real modding workflows.**
+
+## Proper DDS & BCn support (not “partial” support)
+
+- Native DDS support via **DirectXTex**
+- Correct decoding of:
+  - BC1 / BC3 / BC4 / BC5 / BC6H / BC7
+- Accurate alpha channel handling
+- No forced recompression
+- No incorrect color-space shortcuts
+
+What you see in FICture2 is what the engine actually gets.
+
+## Fast image viewing
+
+- Fast loading of large DDS textures
+- Optimized thumbnail generation for massive mod folders
+- Smooth zoom & pan with mouse-centric controls
+- Designed for inspection, not editing
+
+## Image compare mode (side-by-side)
+
+- Compare **2–4 images simultaneously**
+- Perfect for A/B testing multiple texture replacements
+- Split-view comparison with synchronized navigation
+
+### Folder-to-folder sync (compare mode)
+
+When comparing two folders:
+
+- Selecting an image in one panel automatically selects the **same filename** in the other
+- Ideal for:
+  - Vanilla vs modded textures
+  - Competing retextures
+  - Conflict resolution
+
+## Built for Vortex Mod Manager users
+
+- Automatic **side-by-side comparison of conflicted files**
+- Files with the same filename are paired automatically
+- Zero manual setup
+
+FICture2 is a **natural companion tool for Vortex**.
+
+## Modder-centric image browser
+
+- Thumbnail list includes:
+  - Images
+  - Subfolders (including `..`)
+  - Folder previews with embedded image thumbnails
+- Handles real mod directory structures
+
+## Ultra-light, zero bloat
+
+- Executable size target: **< 1 MB** (size-first release builds)
+- Near-instant cold start
+- No runtime frameworks
+- No background services
+
+## Who this is for
+
+- Modders working heavily with DDS / BCn textures
+- Anyone resolving mod conflicts visually
+- Anyone tired of opening Photoshop just to *check* a texture
+
+## Status
+
+- Actively developed
+- Performance-first design
+- Feedback welcome
+
+> **A sub-1MB, ultra-fast image viewer that finally handles DDS BCn textures correctly — built for modders.**
+
+## Tech overview
+
+This repository is the “app shell” that wires the UI and decode pipeline together:
 
 - **`FD2D/` (submodule)**: lightweight Win32 UI framework using Direct2D/DirectWrite (and optional D3D11 swapchain renderer)
 - **`ImageCore/` (submodule)**: async image decode pipeline (WIC + DirectXTex)
 - **`external/DirectXTex/` (submodule)**: DirectXTex library (external dependency)
-
-This repository is the “app shell” that wires the UI (`FD2D`) and the decode pipeline (`ImageCore`) together.
 
 ## Quick start
 
