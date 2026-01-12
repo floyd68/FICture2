@@ -1,6 +1,7 @@
 #include "ImageBrowser.h"
 
 #include "framework.h"
+#include "Resource.h"
 #include "ThumbNavTile.h"
 #include "ThumbImageTile.h"
 #include "IpcCompareRequest.h"
@@ -35,10 +36,12 @@ namespace
     static bool g_hasSyncedThumbStripHeight = false;
     static std::vector<class ImageBrowserImpl*> g_allBrowsers {};
     static class ImageBrowserImpl* g_rootHorizontalHostBrowser = nullptr;
+    static class ImageBrowserImpl* g_contextMenuBrowser = nullptr;
     static std::atomic<UINT_PTR> g_nextThumbApplyTimerId { 0x4D21 };
 
     static bool g_showNavItems = true;
     static bool g_showNavItemsInitialized = false;
+    static bool g_showAlpha = true;
 
     static const wchar_t* DxgiFormatToString(DXGI_FORMAT fmt)
     {
@@ -720,308 +723,466 @@ namespace
 
         bool OnMessage(UINT message, WPARAM wParam, LPARAM lParam) override
         {
-            if (message == WM_FIC2_IPC_COMPARE)
+            switch (message)
             {
-                auto* req = reinterpret_cast<IpcCompareRequest*>(lParam);
-                if (req != nullptr)
-                {
-                    req->compareStarted = TryStartCompareWithFileNameMatch(req->path);
-                    if (req->doneEvent != nullptr)
-                    {
-                        SetEvent(reinterpret_cast<HANDLE>(req->doneEvent));
-                    }
-                }
-                return true;
-            }
+            case WM_FIC2_IPC_COMPARE:
+                return HandleIpcCompareMessage(lParam);
 
-            if (message == WM_LBUTTONDOWN || message == WM_RBUTTONDOWN || message == WM_MBUTTONDOWN || message == WM_XBUTTONDOWN)
-            {
-                const POINT pt { GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam) };
-                if (RectContainsPoint(LayoutRect(), pt))
-                {
-                    RequestFocus();
-                }
-            }
+            case WM_LBUTTONDOWN:
+            case WM_RBUTTONDOWN:
+            case WM_MBUTTONDOWN:
+            case WM_XBUTTONDOWN:
+                HandleMouseButtonDownFocusMessage(lParam);
+                break;
 
-            if (message == WM_FIC2_DEFERRED_ACTION)
-            {
-                if (m_deferredKind != DeferredActionKind::None)
-                {
-                    RunDeferredAction();
+            case WM_RBUTTONUP:
+                return HandleContextMenuMessage(lParam);
+
+            case WM_FIC2_DEFERRED_ACTION:
+                return HandleDeferredActionMessage();
+
+            case WM_TIMER:
+                if (HandleTimerMessage(wParam))
                     return true;
+                break;
+
+            case WM_MOUSEWHEEL:
+                if (HandleMouseWheelMessage(wParam, lParam))
+                    return true;
+                break;
+
+            case WM_KEYDOWN:
+            case WM_SYSKEYDOWN:
+                if (HandleKeyDownMessage(message, wParam, lParam))
+                    return true;
+                break;
+
+            case WM_KEYUP:
+            case WM_SYSKEYUP:
+                if (HandleKeyUpMessage(message, wParam, lParam))
+                    return true;
+                break;
+
+            default:
+                break;
+            }
+
+            return Wnd::OnMessage(message, wParam, lParam);
+        }
+
+        bool HandleIpcCompareMessage(LPARAM lParam)
+        {
+            auto* req = reinterpret_cast<IpcCompareRequest*>(lParam);
+            if (req != nullptr)
+            {
+                req->compareStarted = TryStartCompareWithFileNameMatch(req->path);
+                if (req->doneEvent != nullptr)
+                {
+                    SetEvent(reinterpret_cast<HANDLE>(req->doneEvent));
                 }
+            }
+            return true;
+        }
+
+        void HandleMouseButtonDownFocusMessage(LPARAM lParam)
+        {
+            const POINT pt { GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam) };
+            if (RectContainsPoint(LayoutRect(), pt))
+            {
+                RequestFocus();
+            }
+        }
+
+        ImageBrowserImpl* FindImageBrowserAtPoint(const POINT& pt) const
+        {
+            ImageBrowserImpl* best = nullptr;
+            float bestArea = 0.0f;
+
+            for (auto* b : g_allBrowsers)
+            {
+                if (b == nullptr)
+                {
+                    continue;
+                }
+
+                const D2D1_RECT_F r = b->LayoutRect();
+                if (!RectContainsPoint(r, pt))
+                {
+                    continue;
+                }
+
+                const float w = (std::max)(0.0f, r.right - r.left);
+                const float h = (std::max)(0.0f, r.bottom - r.top);
+                const float area = w * h;
+
+                // Choose the smallest containing rect (most specific/deepest pane).
+                if (best == nullptr || area < bestArea)
+                {
+                    best = b;
+                    bestArea = area;
+                }
+            }
+
+            return best;
+        }
+
+        bool HandleContextMenuMessage(LPARAM lParam)
+        {
+            const POINT pt { GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam) };
+            if (!RectContainsPoint(LayoutRect(), pt))
+            {
                 return false;
             }
 
-            if (message == WM_TIMER)
+            // IMPORTANT:
+            // In compare mode, a root ImageBrowser can contain other ImageBrowsers as child panes.
+            // Windows message routing can therefore deliver WM_RBUTTONUP to a parent browser.
+            // We must resolve the actual ImageBrowser under the cursor and dispatch the command to it.
+            ImageBrowserImpl* target = FindImageBrowserAtPoint(pt);
+            if (target == nullptr)
             {
-                if (wParam == m_thumbApplyTimerId)
-                {
-                    if (BackplateRef() != nullptr)
-                    {
-                        KillTimer(BackplateRef()->Window(), m_thumbApplyTimerId);
-                    }
+                target = this;
+            }
 
-                    if (m_hasPendingApply && m_pendingApplyIndex < m_items.size())
-                    {
-                        ApplyMainFromIndex(m_pendingApplyIndex);
-                    }
-                    m_hasPendingApply = false;
-                    return true;
+            // Ensure the target browser acts on the pane under the cursor.
+            for (size_t i = 0; i < target->m_mainImages.size(); ++i)
+            {
+                if (target->m_mainImages[i] && RectContainsPoint(target->m_mainImages[i]->LayoutRect(), pt))
+                {
+                    target->SetActivePane(i);
+                    break;
                 }
             }
 
-            // Thumbnail wheel: scrolling should also move selection (and update main image).
-            if (message == WM_MOUSEWHEEL)
+            FD2D::Backplate* backplate = BackplateRef();
+            if (backplate == nullptr)
             {
-                const POINT pt { GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam) };
+                return false;
+            }
 
-                // Wheel over main image should affect the ImageBrowser under the cursor, even if it doesn't
-                // currently have focus. Make it the active input source so zoom/view-sync behaves intuitively.
-                if (m_mainPaneHost != nullptr && RectContainsPoint(m_mainPaneHost->LayoutRect(), pt))
-                {
-                    RequestFocus();
-                }
+            const HWND hwnd = backplate->Window();
+            if (hwnd == nullptr)
+            {
+                return false;
+            }
 
-                if (m_thumbScroll && !m_items.empty())
+            g_contextMenuBrowser = target;
+
+            const HINSTANCE instance = reinterpret_cast<HINSTANCE>(GetWindowLongPtrW(hwnd, GWLP_HINSTANCE));
+            HMENU hMenu = LoadMenuW(instance, MAKEINTRESOURCEW(IDR_MENU_IMAGEBROWSER_CONTEXT));
+            if (hMenu != nullptr)
+            {
+                HMENU hPopup = GetSubMenu(hMenu, 0);
+                if (hPopup != nullptr)
                 {
-                    if (RectContainsPoint(m_thumbScroll->LayoutRect(), pt))
+                    // Dynamic state: enable/disable and toggle labels.
+                    const int viewerCount = target->HorizontalViewerCount();
+                    EnableMenuItem(
+                        hPopup,
+                        IDM_CTX_OPEN_NEW_IMAGE,
+                        MF_BYCOMMAND | ((viewerCount <= 3) ? MF_ENABLED : MF_GRAYED));
+
+                    ModifyMenuW(
+                        hPopup,
+                        IDM_CTX_TOGGLE_DIRECTORIES,
+                        MF_BYCOMMAND | MF_STRING,
+                        IDM_CTX_TOGGLE_DIRECTORIES,
+                        g_showNavItems ? L"Hide Directories" : L"Show Directories");
+
+                        ModifyMenuW(
+                            hPopup,
+                            IDM_CTX_TOGGLE_ALPHA,
+                            MF_BYCOMMAND | MF_STRING,
+                            IDM_CTX_TOGGLE_ALPHA,
+                            g_showAlpha ? L"Hide Alpha" : L"Show Alpha");
+
+                    POINT ptScreen = pt;
+                    ClientToScreen(hwnd, &ptScreen);
+
+                    SetForegroundWindow(hwnd);
+                    const UINT cmd = TrackPopupMenuEx(
+                        hPopup,
+                        TPM_RIGHTBUTTON | TPM_LEFTALIGN | TPM_TOPALIGN | TPM_RETURNCMD,
+                        ptScreen.x,
+                        ptScreen.y,
+                        hwnd,
+                        nullptr);
+                    PostMessageW(hwnd, WM_NULL, 0, 0);
+
+                    if (cmd != 0)
                     {
-                        // IMPORTANT:
-                        // Debounced apply uses a window WM_TIMER, and Backplate routes non-mouse messages
-                        // (including WM_TIMER) only to the focused Wnd. Wheel should therefore also
-                        // establish focus so selection + main-image apply stay consistent.
-                        RequestFocus();
-
-                        // Use accumulated wheel delta so high-resolution wheels/trackpads still step predictably.
-                        m_thumbWheelRemainder += GET_WHEEL_DELTA_WPARAM(wParam);
-                        const int steps = m_thumbWheelRemainder / WHEEL_DELTA;
-                        m_thumbWheelRemainder = m_thumbWheelRemainder % WHEEL_DELTA;
-
-                        if (steps != 0)
+                        if (g_contextMenuBrowser != nullptr)
                         {
-                            const int dir = (steps > 0) ? -1 : 1; // wheel-up selects previous, wheel-down selects next
-                            const int count = std::abs(steps);
+                            g_contextMenuBrowser->HandleContextMenuCommand(cmd);
+                        }
+                    }
+                }
+                DestroyMenu(hMenu);
+            }
 
-                            size_t cur = (m_selectedIndex < m_items.size()) ? m_selectedIndex : 0;
-                            size_t next = cur;
+            return true;
+        }
 
-                            for (int s = 0; s < count; ++s)
+        bool HandleDeferredActionMessage()
+        {
+            if (m_deferredKind != DeferredActionKind::None)
+            {
+                RunDeferredAction();
+                return true;
+            }
+            return false;
+        }
+
+        bool HandleTimerMessage(WPARAM wParam)
+        {
+            if (wParam != m_thumbApplyTimerId)
+            {
+                return false;
+            }
+
+            if (BackplateRef() != nullptr)
+            {
+                KillTimer(BackplateRef()->Window(), m_thumbApplyTimerId);
+            }
+
+            if (m_hasPendingApply && m_pendingApplyIndex < m_items.size())
+            {
+                ApplyMainFromIndex(m_pendingApplyIndex);
+            }
+            m_hasPendingApply = false;
+            return true;
+        }
+
+        bool HandleMouseWheelMessage(WPARAM wParam, LPARAM lParam)
+        {
+            // Thumbnail wheel: scrolling should also move selection (and update main image).
+            const POINT pt { GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam) };
+
+            // Wheel over main image should affect the ImageBrowser under the cursor, even if it doesn't
+            // currently have focus. Make it the active input source so zoom/view-sync behaves intuitively.
+            if (m_mainPaneHost != nullptr && RectContainsPoint(m_mainPaneHost->LayoutRect(), pt))
+            {
+                RequestFocus();
+            }
+
+            if (m_thumbScroll && !m_items.empty())
+            {
+                if (RectContainsPoint(m_thumbScroll->LayoutRect(), pt))
+                {
+                    // IMPORTANT:
+                    // Debounced apply uses a window WM_TIMER, and Backplate routes non-mouse messages
+                    // (including WM_TIMER) only to the focused Wnd. Wheel should therefore also
+                    // establish focus so selection + main-image apply stay consistent.
+                    RequestFocus();
+
+                    // Use accumulated wheel delta so high-resolution wheels/trackpads still step predictably.
+                    m_thumbWheelRemainder += GET_WHEEL_DELTA_WPARAM(wParam);
+                    const int steps = m_thumbWheelRemainder / WHEEL_DELTA;
+                    m_thumbWheelRemainder = m_thumbWheelRemainder % WHEEL_DELTA;
+
+                    if (steps != 0)
+                    {
+                        const int dir = (steps > 0) ? -1 : 1; // wheel-up selects previous, wheel-down selects next
+                        const int count = std::abs(steps);
+
+                        size_t cur = (m_selectedIndex < m_items.size()) ? m_selectedIndex : 0;
+                        size_t next = cur;
+
+                        for (int s = 0; s < count; ++s)
+                        {
+                            // Advance to next/prev IMAGE item (skip folders/"..").
+                            size_t probe = next;
+                            bool found = false;
+                            while (true)
                             {
-                                // Advance to next/prev IMAGE item (skip folders/"..").
-                                size_t probe = next;
-                                bool found = false;
-                                while (true)
+                                if (dir < 0)
                                 {
-                                    if (dir < 0)
+                                    if (probe == 0)
                                     {
-                                        if (probe == 0)
-                                        {
-                                            break;
-                                        }
-                                        probe--;
+                                        break;
                                     }
-                                    else
+                                    probe--;
+                                }
+                                else
+                                {
+                                    probe++;
+                                    if (probe >= m_items.size())
                                     {
-                                        probe++;
-                                        if (probe >= m_items.size())
-                                        {
-                                            break;
-                                        }
-                                    }
-
-                                    if (m_items[probe].kind == ThumbItemKind::Image)
-                                    {
-                                        found = true;
                                         break;
                                     }
                                 }
 
-                                if (!found)
+                                if (m_items[probe].kind == ThumbItemKind::Image)
                                 {
+                                    found = true;
                                     break;
                                 }
-                                next = probe;
                             }
 
-                            if (next != cur)
+                            if (!found)
                             {
-                                // Debounce main image apply to avoid thrashing disk/decoders while spinning the wheel.
-                                SelectItemByIndex(next, MainApplyMode::Debounced, true /*ensureCentered*/);
+                                break;
                             }
+                            next = probe;
                         }
 
-                        return true;
+                        if (next != cur)
+                        {
+                            // Debounce main image apply to avoid thrashing disk/decoders while spinning the wheel.
+                            SelectItemByIndex(next, MainApplyMode::Immediate, true /*ensureCentered*/);
+                        }
                     }
+
+                    return true;
                 }
             }
 
-            // Keyboard navigation:
-            // NOTE: Alt+key combos are often delivered as WM_SYSKEYDOWN.
-            if (message == WM_KEYDOWN || message == WM_SYSKEYDOWN)
+            return false;
+        }
+
+        bool HandleKeyDownMessage(UINT message, WPARAM wParam, LPARAM lParam)
+        {
+            UNREFERENCED_PARAMETER(message);
+            UNREFERENCED_PARAMETER(lParam);
+
+            // Per request:
+            // - Use KEYDOWN only for Left/Right so holding the key continuously steps.
+            // - Handle all other actions on KEYUP.
+            switch (wParam)
             {
-                const bool isRepeat = ((lParam & (1LL << 30)) != 0);
-
-                // Alt+Up: navigate to parent folder in the focused ImageBrowser.
-                if (wParam == VK_UP && (GetKeyState(VK_MENU) & 0x8000))
+            case VK_LEFT:
+                if (!m_items.empty())
                 {
-                    if (!isRepeat)
-                    {
-                        QueueNavigateUp();
-                    }
+                    const size_t cur = (m_selectedIndex < m_items.size()) ? m_selectedIndex : 0;
+                    const size_t next = (cur == 0) ? 0 : (cur - 1);
+                    SelectItemByIndex(next, MainApplyMode::Immediate);
+                }
+                return true;
+
+            case VK_RIGHT:
+                if (!m_items.empty())
+                {
+                    const size_t cur = (m_selectedIndex < m_items.size()) ? m_selectedIndex : 0;
+                    const size_t next = (cur + 1 >= m_items.size()) ? (m_items.size() - 1) : (cur + 1);
+                    SelectItemByIndex(next, MainApplyMode::Immediate);
+                }
+                return true;
+
+            default:
+                return false;
+            }
+        }
+
+        bool HandleKeyUpMessage(UINT message, WPARAM wParam, LPARAM lParam)
+        {
+            UNREFERENCED_PARAMETER(message);
+            UNREFERENCED_PARAMETER(lParam);
+
+            const bool ctrl = ((GetKeyState(VK_CONTROL) & 0x8000) != 0);
+            const bool shift = ((GetKeyState(VK_SHIFT) & 0x8000) != 0);
+            const bool alt = ((GetKeyState(VK_MENU) & 0x8000) != 0);
+
+            auto PageStep = [this]() -> size_t
+            {
+                if (!m_thumbScroll)
+                {
+                    return 1;
+                }
+                const D2D1_RECT_F r = m_thumbScroll->LayoutRect();
+                const float w = r.right - r.left;
+                if (w <= 1.0f)
+                {
+                    return 1;
+                }
+                const float itemExtent = (std::max)(1.0f, m_thumbW + m_thumbOuterSpacing);
+                const int count = static_cast<int>(std::floor(w / itemExtent));
+                return static_cast<size_t>((std::max)(1, count));
+            };
+
+            switch (wParam)
+            {
+            case VK_UP:
+                if (!alt) return false;
+            case VK_BACK:
+                QueueNavigateUp();
+                return true;
+
+            case 'N':
+                QueueToggleNavItems();
+                return true;
+
+            case VK_RETURN:
+                if (!m_items.empty() && m_selectedIndex < m_items.size())
+                {
+                    ActivateSelected();
+                }
+                return true;
+
+            case 'O':
+            case 'o':
+                if (ctrl && shift)
+                {
+                    OpenFileDialog(OpenDialogMode::SplitHorizontalNewBrowser);
                     return true;
                 }
-
-                if (wParam == 'N')
+                if (ctrl)
                 {
-                    if (!isRepeat)
-                    {
-                        QueueToggleNavItems();
-                    }
+                    OpenFileDialog(OpenDialogMode::ReplaceCurrent);
                     return true;
                 }
+                return false;
 
-                if (wParam == VK_BACK)
-                {
-                    if (!isRepeat)
-                    {
-                        QueueNavigateUp();
-                    }
-                    return true;
-                }
-
-                if (wParam == VK_RETURN)
-                {
-                    if (!isRepeat && !m_items.empty() && m_selectedIndex < m_items.size())
-                    {
-                        ActivateSelected();
-                    }
-                    return true;
-                }
-
-                if ((wParam == 'O' || wParam == 'o') && (GetKeyState(VK_CONTROL) & 0x8000) && (GetKeyState(VK_SHIFT) & 0x8000))
-                {
-                    if (!isRepeat)
-                    {
-                        OpenFileDialog(OpenDialogMode::SplitHorizontalNewBrowser);
-                    }
-                    return true;
-                }
-
-                if ((wParam == 'O' || wParam == 'o') && (GetKeyState(VK_CONTROL) & 0x8000))
-                {
-                    if (!isRepeat)
-                    {
-                        OpenFileDialog(OpenDialogMode::ReplaceCurrent);
-                    }
-                    return true;
-                }
-
-                // Active pane selection: 1..4
-                if (!isRepeat && (wParam == '1' || wParam == '2' || wParam == '3' || wParam == '4'))
+            case '1':
+            case '2':
+            case '3':
+            case '4':
                 {
                     const int idx = static_cast<int>(wParam - '1');
                     SetActivePane(static_cast<size_t>(idx));
                     return true;
                 }
 
-                // Arrow key selection (throttled)
-                const ULONGLONG now = GetTickCount64();
-                if (now - m_lastKeyNavMs < kKeyRepeatMinIntervalMs && isRepeat)
+            case VK_HOME:
+                if (!m_items.empty())
                 {
-                    return true;
+                    SelectItemByIndex(0, MainApplyMode::Immediate);
                 }
+                return true;
 
-                auto pageStep = [this]() -> size_t
+            case VK_END:
+                if (!m_items.empty())
                 {
-                    if (!m_thumbScroll)
-                    {
-                        return 1;
-                    }
-                    const D2D1_RECT_F r = m_thumbScroll->LayoutRect();
-                    const float w = r.right - r.left;
-                    if (w <= 1.0f)
-                    {
-                        return 1;
-                    }
+                    SelectItemByIndex(m_items.size() - 1, MainApplyMode::Immediate);
+                }
+                return true;
 
-                    // Approximate "items per page" based on thumbnail width + constant inter-item spacing.
-                    // (Each item is a vertical StackPanel: [tile] + [label]. Horizontal spacing is on the parent panel.)
-                    const float itemExtent = (std::max)(1.0f, m_thumbW + m_thumbOuterSpacing);
-                    const int count = static_cast<int>(std::floor(w / itemExtent));
-                    return static_cast<size_t>((std::max)(1, count));
-                };
+            case VK_PRIOR: // Page Up
+                if (!m_items.empty())
+                {
+                    const size_t step = PageStep();
+                    const size_t cur = (m_selectedIndex < m_items.size()) ? m_selectedIndex : 0;
+                    const size_t next = (cur > step) ? (cur - step) : 0;
+                    SelectItemByIndex(next, MainApplyMode::Immediate);
+                }
+                return true;
 
-                if (wParam == VK_HOME)
+            case VK_NEXT: // Page Down
+                if (!m_items.empty())
                 {
-                    m_lastKeyNavMs = now;
-                    if (!m_items.empty())
+                    const size_t step = PageStep();
+                    const size_t cur = (m_selectedIndex < m_items.size()) ? m_selectedIndex : 0;
+                    size_t next = cur + step;
+                    if (next >= m_items.size())
                     {
-                        SelectItemByIndex(0, MainApplyMode::Debounced);
+                        next = m_items.size() - 1;
                     }
-                    return true;
+                    SelectItemByIndex(next, MainApplyMode::Immediate);
                 }
-                if (wParam == VK_END)
-                {
-                    m_lastKeyNavMs = now;
-                    if (!m_items.empty())
-                    {
-                        SelectItemByIndex(m_items.size() - 1, MainApplyMode::Debounced);
-                    }
-                    return true;
-                }
-                if (wParam == VK_PRIOR) // Page Up
-                {
-                    m_lastKeyNavMs = now;
-                    if (!m_items.empty())
-                    {
-                        const size_t step = pageStep();
-                        const size_t cur = (m_selectedIndex < m_items.size()) ? m_selectedIndex : 0;
-                        const size_t next = (cur > step) ? (cur - step) : 0;
-                        SelectItemByIndex(next, MainApplyMode::Debounced);
-                    }
-                    return true;
-                }
-                if (wParam == VK_NEXT) // Page Down
-                {
-                    m_lastKeyNavMs = now;
-                    if (!m_items.empty())
-                    {
-                        const size_t step = pageStep();
-                        const size_t cur = (m_selectedIndex < m_items.size()) ? m_selectedIndex : 0;
-                        size_t next = cur + step;
-                        if (next >= m_items.size())
-                        {
-                            next = m_items.size() - 1;
-                        }
-                        SelectItemByIndex(next, MainApplyMode::Debounced);
-                    }
-                    return true;
-                }
+                return true;
 
-                if (wParam == VK_LEFT)
-                {
-                    m_lastKeyNavMs = now;
-                    if (!m_items.empty())
-                    {
-                        size_t next = (m_selectedIndex == 0) ? 0 : (m_selectedIndex - 1);
-                        SelectItemByIndex(next, MainApplyMode::Debounced);
-                    }
-                    return true;
-                }
-                if (wParam == VK_RIGHT)
-                {
-                    m_lastKeyNavMs = now;
-                    if (!m_items.empty())
-                    {
-                        size_t next = (m_selectedIndex + 1 >= m_items.size()) ? (m_items.size() - 1) : (m_selectedIndex + 1);
-                        SelectItemByIndex(next, MainApplyMode::Debounced);
-                    }
-                    return true;
-                }
+            default:
+                return false;
             }
-
-            return Wnd::OnMessage(message, wParam, lParam);
         }
 
         bool OnFileDrop(const std::wstring& path, const POINT& clientPt) override
@@ -1680,6 +1841,21 @@ namespace
             return m_mainPaths[idx];
         }
 
+        std::wstring ActiveMainFileNameLower() const
+        {
+            std::wstring p = ActiveMainPath();
+            auto main = ActiveMainImage();
+            if (main)
+            {
+                const auto li = main->GetLoadedInfo();
+                if (!li.sourcePath.empty())
+                {
+                    p = li.sourcePath;
+                }
+            }
+            return ToLower(std::filesystem::path(p).filename().wstring());
+        }
+
         void RefreshInfoPanel()
         {
             if (!m_infoBar)
@@ -2086,6 +2262,28 @@ namespace
             m_viewSyncSuppressBroadcast = false;
         }
 
+        void ApplySyncedFitToScreen()
+        {
+            auto main = ActiveMainImage();
+            if (!main)
+            {
+                return;
+            }
+
+            // Reset zoom + pan to the default aspect-fit and centered view.
+            // Use SetViewTransform so it applies immediately (doesn't rely on animation ticks).
+            m_viewSyncSuppressBroadcast = true;
+            auto vt = main->GetViewTransform();
+            vt.zoomScale = 1.0f;
+            vt.targetZoomScale = 1.0f;
+            vt.zoomVelocity = 0.0f;
+            vt.panX = 0.0f;
+            vt.panY = 0.0f;
+            main->SetViewTransform(vt, false /*notify*/);
+            m_viewSyncSuppressBroadcast = false;
+            RefreshInfoPanel();
+        }
+
         void ActivateSelected()
         {
             QueueDeferredAction(DeferredActionKind::ActivateSelected);
@@ -2389,6 +2587,199 @@ namespace
 
             // Defer UI tree mutation to avoid reentrancy issues during message dispatch.
             QueueDeferredAction(mode == OpenDialogMode::SplitHorizontalNewBrowser ? DeferredActionKind::SplitHorizontalWithFile : DeferredActionKind::NavigateToFile, chosen);
+        }
+
+        int HorizontalViewerCount() const
+        {
+            if (g_rootHorizontalHostBrowser == nullptr)
+            {
+                return 1;
+            }
+
+            if (g_rootHorizontalHostBrowser->m_hPanes.empty())
+            {
+                return 1;
+            }
+
+            return static_cast<int>(g_rootHorizontalHostBrowser->m_hPanes.size());
+        }
+
+        bool TryPickImageFile(std::filesystem::path& outPath, const wchar_t* title)
+        {
+            wchar_t fileName[MAX_PATH] {};
+
+            // Filter format: "Desc\0pattern\0Desc\0pattern\0\0"
+            const wchar_t* filter =
+                L"Supported images (*.png;*.jpg;*.jpeg;*.bmp;*.tif;*.tiff;*.gif;*.dds;*.tga)\0"
+                L"*.png;*.jpg;*.jpeg;*.bmp;*.tif;*.tiff;*.gif;*.dds;*.tga\0"
+                L"All files (*.*)\0"
+                L"*.*\0\0";
+
+            OPENFILENAMEW ofn {};
+            ofn.lStructSize = sizeof(ofn);
+            ofn.hwndOwner = BackplateRef() ? BackplateRef()->Window() : nullptr;
+            ofn.lpstrFile = fileName;
+            ofn.nMaxFile = static_cast<DWORD>(std::size(fileName));
+            ofn.lpstrFilter = filter;
+            ofn.nFilterIndex = 1;
+            ofn.Flags = OFN_FILEMUSTEXIST | OFN_PATHMUSTEXIST | OFN_EXPLORER | OFN_HIDEREADONLY;
+            ofn.lpstrTitle = (title != nullptr) ? title : L"Open Image";
+
+            std::wstring initialDir;
+            if (!m_currentFolder.empty() && std::filesystem::exists(m_currentFolder) && std::filesystem::is_directory(m_currentFolder))
+            {
+                initialDir = m_currentFolder.wstring();
+                ofn.lpstrInitialDir = initialDir.c_str();
+            }
+
+            if (!GetOpenFileNameW(&ofn))
+            {
+                return false; // cancelled
+            }
+
+            const std::filesystem::path chosen = std::filesystem::path(fileName);
+            if (!std::filesystem::exists(chosen) || !std::filesystem::is_regular_file(chosen))
+            {
+                return false;
+            }
+
+            if (!ImageCore::DecoderRegistry::Instance().IsSupportedPath(chosen.wstring()))
+            {
+                MessageBoxW(ofn.hwndOwner, L"Selected file type is not supported.", L"FICture2", MB_OK | MB_ICONWARNING);
+                return false;
+            }
+
+            outPath = chosen;
+            return true;
+        }
+
+        void FitToScreen()
+        {
+            auto main = ActiveMainImage();
+            if (!main)
+            {
+                return;
+            }
+
+            // Treat this browser as the new input source for linked actions.
+            RequestFocus();
+
+            // Always apply locally.
+            auto vt = main->GetViewTransform();
+            vt.zoomScale = 1.0f;
+            vt.targetZoomScale = 1.0f;
+            vt.zoomVelocity = 0.0f;
+            vt.panX = 0.0f;
+            vt.panY = 0.0f;
+            main->SetViewTransform(vt, false /*notify*/);
+            RefreshInfoPanel();
+
+            // Linked/Matched mode:
+            // If multiple ImageBrowsers display the same filename, they sync zoom/pan.
+            // Fit-to-screen should behave the same: apply to the whole linked group.
+            if (g_allBrowsers.size() < 2)
+            {
+                return;
+            }
+
+            const std::wstring myNameLower = ActiveMainFileNameLower();
+            if (myNameLower.empty())
+            {
+                return;
+            }
+
+            bool hasLinkedPeer = false;
+            for (auto* b : g_allBrowsers)
+            {
+                if (!b || b == this)
+                {
+                    continue;
+                }
+                const std::wstring otherNameLower = b->ActiveMainFileNameLower();
+                if (!otherNameLower.empty() && otherNameLower == myNameLower)
+                {
+                    hasLinkedPeer = true;
+                    break;
+                }
+            }
+            if (!hasLinkedPeer)
+            {
+                return; // unlinked mode: local-only
+            }
+
+            for (auto* b : g_allBrowsers)
+            {
+                if (!b || b == this)
+                {
+                    continue;
+                }
+
+                const std::wstring otherNameLower = b->ActiveMainFileNameLower();
+                if (otherNameLower.empty() || otherNameLower != myNameLower)
+                {
+                    continue;
+                }
+
+                b->ApplySyncedFitToScreen();
+            }
+        }
+
+        void HandleContextMenuCommand(UINT cmd)
+        {
+            switch (cmd)
+            {
+            case IDM_CTX_OPEN_IMAGE:
+                OpenFileDialog(OpenDialogMode::ReplaceCurrent);
+                break;
+            case IDM_CTX_OPEN_NEW_IMAGE:
+                {
+                    if (HorizontalViewerCount() > 3)
+                    {
+                        break;
+                    }
+
+                    std::filesystem::path chosen;
+                    if (TryPickImageFile(chosen, L"Open New Image"))
+                    {
+                        QueueInsertHorizontalWithPathAfterThis(chosen);
+                    }
+                }
+                break;
+            case IDM_CTX_FIT_TO_SCREEN:
+                FitToScreen();
+                break;
+            case IDM_CTX_TOGGLE_DIRECTORIES:
+                QueueToggleNavItems(); // same as 'N' key (global)
+                break;
+            case IDM_CTX_TOGGLE_ALPHA:
+                {
+                    g_showAlpha = !g_showAlpha;
+                    const bool checkerEnabled = !g_showAlpha;
+
+                    for (auto* b : g_allBrowsers)
+                    {
+                        if (b == nullptr)
+                        {
+                            continue;
+                        }
+
+                        for (auto& img : b->m_mainImages)
+                        {
+                            if (img)
+                            {
+                                img->SetAlphaCheckerboardEnabled(checkerEnabled);
+                            }
+                        }
+
+                        // Keep the active browser's info bar in sync; others will update on next render.
+                        b->RefreshInfoPanel();
+                    }
+                }
+                break;
+            default:
+                // Show/Hide Alpha is implemented in a later step.
+                break;
+            }
         }
 
         void QueueDeferredAction(DeferredActionKind kind, const std::filesystem::path& path = {})
