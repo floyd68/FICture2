@@ -188,6 +188,7 @@
     <ResourceCompile Include="FICture2.rc" />
   </ItemGroup>
   <ItemGroup>
+    <Image Include="assets\icons8-folder-144.png" />
     <Image Include="FICture2.ico" />
     <Image Include="small.ico" />
   </ItemGroup>

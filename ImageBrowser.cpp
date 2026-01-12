@@ -42,6 +42,80 @@ namespace
     static bool g_showNavItems = true;
     static bool g_showNavItemsInitialized = false;
     static bool g_showAlpha = true;
+    static bool g_backgroundColorInitialized = false;
+    static D2D1_COLOR_F g_focusedBrowserBackgroundColor = D2D1::ColorF(0.18f, 0.16f, 0.03f, 1.0f);
+
+    static bool TryGetIniFilePath(std::wstring& outIniFile)
+    {
+        wchar_t iniPath[MAX_PATH] {};
+        if (SUCCEEDED(SHGetFolderPathW(nullptr, CSIDL_LOCAL_APPDATA, nullptr, SHGFP_TYPE_CURRENT, iniPath)))
+        {
+            outIniFile = std::wstring(iniPath) + L"\\FICture2\\FICture2.ini";
+            return true;
+        }
+        return false;
+    }
+
+    static void EnsureBackgroundColorInitialized(FD2D::Backplate& backplate)
+    {
+        if (g_backgroundColorInitialized)
+        {
+            return;
+        }
+        g_backgroundColorInitialized = true;
+
+        std::wstring iniFile;
+        if (!TryGetIniFilePath(iniFile))
+        {
+            return;
+        }
+
+        wchar_t buf[128] {};
+        const DWORD n = GetPrivateProfileStringW(L"Window", L"BackgroundColor", L"", buf, static_cast<DWORD>(std::size(buf)), iniFile.c_str());
+        if (n == 0)
+        {
+            return;
+        }
+
+        int r = -1;
+        int g = -1;
+        int b = -1;
+        if (swscanf_s(buf, L"%d,%d,%d", &r, &g, &b) != 3)
+        {
+            return;
+        }
+
+        r = (std::max)(0, (std::min)(255, r));
+        g = (std::max)(0, (std::min)(255, g));
+        b = (std::max)(0, (std::min)(255, b));
+
+        backplate.SetClearColor(D2D1::ColorF(
+            static_cast<float>(r) / 255.0f,
+            static_cast<float>(g) / 255.0f,
+            static_cast<float>(b) / 255.0f,
+            1.0f));
+
+        // Focused background color (optional).
+        wchar_t buf2[128] {};
+        const DWORD n2 = GetPrivateProfileStringW(L"Window", L"FocusedBackgroundColor", L"", buf2, static_cast<DWORD>(std::size(buf2)), iniFile.c_str());
+        if (n2 > 0)
+        {
+            int fr = -1;
+            int fg = -1;
+            int fb = -1;
+            if (swscanf_s(buf2, L"%d,%d,%d", &fr, &fg, &fb) == 3)
+            {
+                fr = (std::max)(0, (std::min)(255, fr));
+                fg = (std::max)(0, (std::min)(255, fg));
+                fb = (std::max)(0, (std::min)(255, fb));
+                g_focusedBrowserBackgroundColor = D2D1::ColorF(
+                    static_cast<float>(fr) / 255.0f,
+                    static_cast<float>(fg) / 255.0f,
+                    static_cast<float>(fb) / 255.0f,
+                    1.0f);
+            }
+        }
+    }
 
     static const wchar_t* DxgiFormatToString(DXGI_FORMAT fmt)
     {
@@ -626,6 +700,10 @@ namespace
         void OnAttached(FD2D::Backplate& backplate) override
         {
             Wnd::OnAttached(backplate);
+            EnsureBackgroundColorInitialized(backplate);
+            // Default per-ImageBrowser background follows current global clear color.
+            m_browserBackgroundColor = backplate.ClearColor();
+            m_browserFocusedBackgroundColor = g_focusedBrowserBackgroundColor;
             if (BackplateRef() != nullptr && BackplateRef()->FocusedWnd() == nullptr)
             {
                 RequestFocus();
@@ -666,6 +744,36 @@ namespace
             }
         }
 
+        void OnRenderD3D(ID3D11DeviceContext* context) override
+        {
+            // Per-ImageBrowser background (stationary, never pans with the image).
+            // Draw in the D3D pass so it stays behind GPU-rendered images.
+            FD2D::Backplate* bp = BackplateRef();
+            if (bp != nullptr && bp->D3DDevice() != nullptr && m_mainPaneHost != nullptr)
+            {
+                const D2D1_RECT_F r = m_mainPaneHost->LayoutRect();
+                if (r.right > r.left && r.bottom > r.top)
+                {
+                    const D2D1_COLOR_F baseBg = m_browserBackgroundColor;
+                    const D2D1_COLOR_F focusedBg = m_browserFocusedBackgroundColor;
+                    const D2D1_COLOR_F bg = HasFocus() ? focusedBg : baseBg;
+                    (void)bp->ClearRectD3D(r, bg);
+
+                    // Ensure the main image backdrop matches the ImageBrowser background
+                    // so focus background doesn't "edge shift" when panning.
+                    for (auto& img : m_mainImages)
+                    {
+                        if (img)
+                        {
+                            img->SetBackdropColor(bg);
+                        }
+                    }
+                }
+            }
+
+            Wnd::OnRenderD3D(context);
+        }
+
         void OnRender(ID2D1RenderTarget* target) override
         {
             // Splitter dragging re-arranges the SplitPanel subtree directly, but may not trigger
@@ -674,6 +782,39 @@ namespace
             ApplySyncedThumbStripHeightIfNeeded();
             UpdateThumbSizingFromPane();
             RefreshInfoPanel();
+
+            // D2D-only backend: fill per-ImageBrowser background before drawing children.
+            // (On the D3D swapchain backend, D2D runs after the GPU image pass, so we must NOT fill here.)
+            if (target != nullptr)
+            {
+                FD2D::Backplate* bp = BackplateRef();
+                const bool d3dActive = (bp != nullptr && bp->D3DDevice() != nullptr);
+                if (!d3dActive && m_mainPaneHost != nullptr)
+                {
+                    const D2D1_RECT_F r = m_mainPaneHost->LayoutRect();
+                    if (r.right > r.left && r.bottom > r.top)
+                    {
+                        const D2D1_COLOR_F bg = HasFocus() ? m_browserFocusedBackgroundColor : m_browserBackgroundColor;
+                        if (!m_browserBgBrush)
+                        {
+                            (void)target->CreateSolidColorBrush(bg, m_browserBgBrush.ReleaseAndGetAddressOf());
+                        }
+                        if (m_browserBgBrush)
+                        {
+                            m_browserBgBrush->SetColor(bg);
+                            target->FillRectangle(r, m_browserBgBrush.Get());
+                        }
+
+                        for (auto& img : m_mainImages)
+                        {
+                            if (img)
+                            {
+                                img->SetBackdropColor(bg);
+                            }
+                        }
+                    }
+                }
+            }
 
             Wnd::OnRender(target);
 
@@ -787,6 +928,15 @@ namespace
         void HandleMouseButtonDownFocusMessage(LPARAM lParam)
         {
             const POINT pt { GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam) };
+            // In compare mode the "root" ImageBrowser hosts other ImageBrowsers horizontally,
+            // and its LayoutRect spans the whole backplate. Focus the most specific pane
+            // under the cursor so focus visuals (and key routing) target the correct viewer.
+            if (ImageBrowserImpl* best = FindImageBrowserAtPoint(pt))
+            {
+                best->RequestFocus();
+                return;
+            }
+
             if (RectContainsPoint(LayoutRect(), pt))
             {
                 RequestFocus();
@@ -882,19 +1032,26 @@ namespace
                         IDM_CTX_OPEN_NEW_IMAGE,
                         MF_BYCOMMAND | ((viewerCount <= 3) ? MF_ENABLED : MF_GRAYED));
 
+                    // Close is available only when 2+ viewers exist, and we don't allow closing the root host browser.
+                    const bool canClose = (viewerCount >= 2) && (g_rootHorizontalHostBrowser != nullptr) && (g_contextMenuBrowser != g_rootHorizontalHostBrowser);
+                    EnableMenuItem(
+                        hPopup,
+                        IDM_CTX_CLOSE,
+                        MF_BYCOMMAND | (canClose ? MF_ENABLED : MF_GRAYED));
+
                     ModifyMenuW(
                         hPopup,
                         IDM_CTX_TOGGLE_DIRECTORIES,
                         MF_BYCOMMAND | MF_STRING,
                         IDM_CTX_TOGGLE_DIRECTORIES,
-                        g_showNavItems ? L"Hide Directories" : L"Show Directories");
+                            g_showNavItems ? L"Hide Directories\tN" : L"Show Directories\tN");
 
                         ModifyMenuW(
                             hPopup,
                             IDM_CTX_TOGGLE_ALPHA,
                             MF_BYCOMMAND | MF_STRING,
                             IDM_CTX_TOGGLE_ALPHA,
-                            g_showAlpha ? L"Hide Alpha" : L"Show Alpha");
+                            g_showAlpha ? L"Hide Alpha\tA" : L"Show Alpha\tA");
 
                     POINT ptScreen = pt;
                     ClientToScreen(hwnd, &ptScreen);
@@ -1101,6 +1258,14 @@ namespace
 
             switch (wParam)
             {
+            case VK_F4:
+                if (ctrl)
+                {
+                    QueueCloseHorizontalThisBrowser();
+                    return true;
+                }
+                return false;
+
             case VK_UP:
                 if (!alt) return false;
             case VK_BACK:
@@ -1109,6 +1274,21 @@ namespace
 
             case 'N':
                 QueueToggleNavItems();
+                return true;
+
+            case 'A':
+            case 'a':
+                ToggleAlphaCheckerboard();
+                return true;
+
+            case 'X':
+            case 'x':
+                FitToScreen();
+                return true;
+
+            case 'B':
+            case 'b':
+                PickAndApplyBackgroundColor();
                 return true;
 
             case VK_RETURN:
@@ -1499,6 +1679,7 @@ namespace
             NavigateToFile,
             SplitHorizontalWithFile,
             InsertHorizontalWithPathAfterName,
+            CloseHorizontalByName,
             NavigateUp,
             ActivateSelected,
         };
@@ -2226,7 +2407,8 @@ namespace
             }
 
             // Only propagate to other ImageBrowsers displaying the same file name.
-            const std::wstring myNameLower = ToLower(std::filesystem::path(ActiveMainPath()).filename().wstring());
+            // Use loaded source path when available to avoid stale ActiveMainPath during transitions.
+            const std::wstring myNameLower = ActiveMainFileNameLower();
             if (myNameLower.empty())
             {
                 return;
@@ -2239,7 +2421,7 @@ namespace
                     continue;
                 }
 
-                const std::wstring otherNameLower = ToLower(std::filesystem::path(b->ActiveMainPath()).filename().wstring());
+                const std::wstring otherNameLower = b->ActiveMainFileNameLower();
                 if (otherNameLower.empty() || otherNameLower != myNameLower)
                 {
                     continue;
@@ -2260,28 +2442,6 @@ namespace
             m_viewSyncSuppressBroadcast = true;
             main->SetViewTransform(vt, false /*notify*/);
             m_viewSyncSuppressBroadcast = false;
-        }
-
-        void ApplySyncedFitToScreen()
-        {
-            auto main = ActiveMainImage();
-            if (!main)
-            {
-                return;
-            }
-
-            // Reset zoom + pan to the default aspect-fit and centered view.
-            // Use SetViewTransform so it applies immediately (doesn't rely on animation ticks).
-            m_viewSyncSuppressBroadcast = true;
-            auto vt = main->GetViewTransform();
-            vt.zoomScale = 1.0f;
-            vt.targetZoomScale = 1.0f;
-            vt.zoomVelocity = 0.0f;
-            vt.panX = 0.0f;
-            vt.panY = 0.0f;
-            main->SetViewTransform(vt, false /*notify*/);
-            m_viewSyncSuppressBroadcast = false;
-            RefreshInfoPanel();
         }
 
         void ActivateSelected()
@@ -2661,67 +2821,18 @@ namespace
                 return;
             }
 
-            // Treat this browser as the new input source for linked actions.
+            // Make this ImageBrowser the input source so the existing view-sync routine can propagate.
             RequestFocus();
 
-            // Always apply locally.
+            // Fit-to-screen is simply "reset view"; existing linked/matched sync will apply if filenames match.
             auto vt = main->GetViewTransform();
             vt.zoomScale = 1.0f;
             vt.targetZoomScale = 1.0f;
             vt.zoomVelocity = 0.0f;
             vt.panX = 0.0f;
             vt.panY = 0.0f;
-            main->SetViewTransform(vt, false /*notify*/);
+            main->SetViewTransform(vt, true /*notify*/);
             RefreshInfoPanel();
-
-            // Linked/Matched mode:
-            // If multiple ImageBrowsers display the same filename, they sync zoom/pan.
-            // Fit-to-screen should behave the same: apply to the whole linked group.
-            if (g_allBrowsers.size() < 2)
-            {
-                return;
-            }
-
-            const std::wstring myNameLower = ActiveMainFileNameLower();
-            if (myNameLower.empty())
-            {
-                return;
-            }
-
-            bool hasLinkedPeer = false;
-            for (auto* b : g_allBrowsers)
-            {
-                if (!b || b == this)
-                {
-                    continue;
-                }
-                const std::wstring otherNameLower = b->ActiveMainFileNameLower();
-                if (!otherNameLower.empty() && otherNameLower == myNameLower)
-                {
-                    hasLinkedPeer = true;
-                    break;
-                }
-            }
-            if (!hasLinkedPeer)
-            {
-                return; // unlinked mode: local-only
-            }
-
-            for (auto* b : g_allBrowsers)
-            {
-                if (!b || b == this)
-                {
-                    continue;
-                }
-
-                const std::wstring otherNameLower = b->ActiveMainFileNameLower();
-                if (otherNameLower.empty() || otherNameLower != myNameLower)
-                {
-                    continue;
-                }
-
-                b->ApplySyncedFitToScreen();
-            }
         }
 
         void HandleContextMenuCommand(UINT cmd)
@@ -2745,6 +2856,15 @@ namespace
                     }
                 }
                 break;
+            case IDM_CTX_CLOSE:
+                QueueCloseHorizontalThisBrowser();
+                break;
+            case IDM_CTX_BACKGROUND_COLOR:
+                PickAndApplyBackgroundColor();
+                break;
+            case IDM_CTX_FOCUSED_BACKGROUND_COLOR:
+                PickAndApplyFocusedBackgroundColor();
+                break;
             case IDM_CTX_FIT_TO_SCREEN:
                 FitToScreen();
                 break;
@@ -2752,33 +2872,181 @@ namespace
                 QueueToggleNavItems(); // same as 'N' key (global)
                 break;
             case IDM_CTX_TOGGLE_ALPHA:
-                {
-                    g_showAlpha = !g_showAlpha;
-                    const bool checkerEnabled = !g_showAlpha;
-
-                    for (auto* b : g_allBrowsers)
-                    {
-                        if (b == nullptr)
-                        {
-                            continue;
-                        }
-
-                        for (auto& img : b->m_mainImages)
-                        {
-                            if (img)
-                            {
-                                img->SetAlphaCheckerboardEnabled(checkerEnabled);
-                            }
-                        }
-
-                        // Keep the active browser's info bar in sync; others will update on next render.
-                        b->RefreshInfoPanel();
-                    }
-                }
+                ToggleAlphaCheckerboard();
                 break;
             default:
                 // Show/Hide Alpha is implemented in a later step.
                 break;
+            }
+        }
+
+        void PickAndApplyBackgroundColor()
+        {
+            FD2D::Backplate* bp = BackplateRef();
+            if (bp == nullptr || bp->Window() == nullptr)
+            {
+                return;
+            }
+
+            static COLORREF s_custom[16] {};
+
+            const D2D1_COLOR_F cur = bp->ClearColor();
+            const auto toByte = [](float v) -> BYTE
+            {
+                if (v < 0.0f) v = 0.0f;
+                if (v > 1.0f) v = 1.0f;
+                return static_cast<BYTE>(std::floor(v * 255.0f + 0.5f));
+            };
+
+            CHOOSECOLORW cc {};
+            cc.lStructSize = sizeof(cc);
+            cc.hwndOwner = bp->Window();
+            cc.lpCustColors = s_custom;
+            cc.rgbResult = RGB(toByte(cur.r), toByte(cur.g), toByte(cur.b));
+            cc.Flags = CC_FULLOPEN | CC_RGBINIT;
+
+            if (!ChooseColorW(&cc))
+            {
+                return; // cancelled
+            }
+
+            const BYTE r = GetRValue(cc.rgbResult);
+            const BYTE g = GetGValue(cc.rgbResult);
+            const BYTE b = GetBValue(cc.rgbResult);
+            const D2D1_COLOR_F next = D2D1::ColorF(
+                static_cast<float>(r) / 255.0f,
+                static_cast<float>(g) / 255.0f,
+                static_cast<float>(b) / 255.0f,
+                1.0f);
+
+            bp->SetClearColor(next);
+            // Keep per-ImageBrowser backgrounds in sync with global clear.
+            for (auto* br : g_allBrowsers)
+            {
+                if (br)
+                {
+                    br->m_browserBackgroundColor = next;
+                }
+            }
+
+            std::wstring iniFile;
+            if (TryGetIniFilePath(iniFile))
+            {
+                wchar_t rgb[64] {};
+                swprintf_s(rgb, L"%u,%u,%u", static_cast<unsigned>(r), static_cast<unsigned>(g), static_cast<unsigned>(b));
+                (void)WritePrivateProfileStringW(L"Window", L"BackgroundColor", rgb, iniFile.c_str());
+            }
+        }
+
+        void PickAndApplyFocusedBackgroundColor()
+        {
+            FD2D::Backplate* bp = BackplateRef();
+            if (bp == nullptr || bp->Window() == nullptr)
+            {
+                return;
+            }
+
+            static COLORREF s_custom[16] {};
+
+            const auto toByte = [](float v) -> BYTE
+            {
+                if (v < 0.0f) v = 0.0f;
+                if (v > 1.0f) v = 1.0f;
+                return static_cast<BYTE>(std::floor(v * 255.0f + 0.5f));
+            };
+
+            CHOOSECOLORW cc {};
+            cc.lStructSize = sizeof(cc);
+            cc.hwndOwner = bp->Window();
+            cc.lpCustColors = s_custom;
+            cc.rgbResult = RGB(
+                toByte(g_focusedBrowserBackgroundColor.r),
+                toByte(g_focusedBrowserBackgroundColor.g),
+                toByte(g_focusedBrowserBackgroundColor.b));
+            cc.Flags = CC_FULLOPEN | CC_RGBINIT;
+
+            if (!ChooseColorW(&cc))
+            {
+                return; // cancelled
+            }
+
+            const BYTE r = GetRValue(cc.rgbResult);
+            const BYTE g = GetGValue(cc.rgbResult);
+            const BYTE b = GetBValue(cc.rgbResult);
+
+            g_focusedBrowserBackgroundColor = D2D1::ColorF(
+                static_cast<float>(r) / 255.0f,
+                static_cast<float>(g) / 255.0f,
+                static_cast<float>(b) / 255.0f,
+                1.0f);
+
+            for (auto* br : g_allBrowsers)
+            {
+                if (br)
+                {
+                    br->m_browserFocusedBackgroundColor = g_focusedBrowserBackgroundColor;
+                }
+            }
+
+            if (bp->Window() != nullptr)
+            {
+                InvalidateRect(bp->Window(), nullptr, FALSE);
+            }
+
+            std::wstring iniFile;
+            if (TryGetIniFilePath(iniFile))
+            {
+                wchar_t rgb[64] {};
+                swprintf_s(rgb, L"%u,%u,%u", static_cast<unsigned>(r), static_cast<unsigned>(g), static_cast<unsigned>(b));
+                (void)WritePrivateProfileStringW(L"Window", L"FocusedBackgroundColor", rgb, iniFile.c_str());
+            }
+        }
+
+        void ToggleAlphaCheckerboard()
+        {
+            g_showAlpha = !g_showAlpha;
+            const bool checkerEnabled = !g_showAlpha;
+
+            for (auto* b : g_allBrowsers)
+            {
+                if (b == nullptr)
+                {
+                    continue;
+                }
+
+                for (auto& img : b->m_mainImages)
+                {
+                    if (img)
+                    {
+                        img->SetAlphaCheckerboardEnabled(checkerEnabled);
+                    }
+                }
+
+                // Keep info bars in sync.
+                b->RefreshInfoPanel();
+            }
+        }
+
+        void QueueCloseHorizontalThisBrowser()
+        {
+            // Do not allow closing the root host browser.
+            if (g_rootHorizontalHostBrowser == this)
+            {
+                return;
+            }
+
+            // Require at least 2 viewers.
+            if (HorizontalViewerCount() < 2)
+            {
+                return;
+            }
+
+            RequestFocus();
+            m_deferredKind = DeferredActionKind::CloseHorizontalByName;
+            m_deferredText = Name();
+            if (BackplateRef() != nullptr)
+            {
+                PostMessageW(BackplateRef()->Window(), WM_FIC2_DEFERRED_ACTION, 0, 0);
             }
         }
 
@@ -2833,6 +3101,9 @@ namespace
             case DeferredActionKind::InsertHorizontalWithPathAfterName:
                 InsertHorizontalWithPathAfterName(text, path);
                 break;
+            case DeferredActionKind::CloseHorizontalByName:
+                CloseHorizontalByName(text);
+                break;
             case DeferredActionKind::NavigateUp:
                 NavigateUp();
                 break;
@@ -2841,6 +3112,43 @@ namespace
                 break;
             default:
                 break;
+            }
+        }
+
+        void CloseHorizontalByName(const std::wstring& name)
+        {
+            if (name.empty())
+            {
+                return;
+            }
+
+            // Always apply closing at the root host browser.
+            if (g_rootHorizontalHostBrowser != nullptr && g_rootHorizontalHostBrowser != this)
+            {
+                g_rootHorizontalHostBrowser->CloseHorizontalByName(name);
+                return;
+            }
+
+            EnsureHorizontalHost();
+            if (m_hPanes.size() < 2)
+            {
+                return;
+            }
+
+            // Pane 0 is this root browser's existing UI root, not an ImageBrowserImpl.
+            for (size_t i = 1; i < m_hPanes.size(); ++i)
+            {
+                auto paneBrowser = std::dynamic_pointer_cast<ImageBrowserImpl>(m_hPanes[i]);
+                if (paneBrowser && paneBrowser->Name() == name)
+                {
+                    m_hPanes.erase(m_hPanes.begin() + static_cast<std::ptrdiff_t>(i));
+                    RebuildHorizontalHost();
+                    if (BackplateRef() != nullptr)
+                    {
+                        BackplateRef()->RequestLayout();
+                    }
+                    return;
+                }
             }
         }
 
@@ -3095,6 +3403,12 @@ namespace
         DragOverlayKind m_dragOverlay { DragOverlayKind::None };
         Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> m_dragReplaceBrush {};
         Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> m_dragInsertBrush {};
+        Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> m_browserBgBrush {};
+
+        // ImageBrowser background colors (used for focus indication).
+        // NOTE: base defaults match the global clear; focused defaults to a dark yellow accent.
+        D2D1_COLOR_F m_browserBackgroundColor { 0.09f, 0.09f, 0.10f, 1.0f };
+        D2D1_COLOR_F m_browserFocusedBackgroundColor { 0.18f, 0.16f, 0.03f, 1.0f };
 
         static void CaptureSplitRatiosRecursive(const std::shared_ptr<FD2D::Wnd>& node, std::vector<float>& out)
         {

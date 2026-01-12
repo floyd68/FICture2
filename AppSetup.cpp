@@ -40,6 +40,13 @@ namespace
 
         // Window placement (will be populated on first exit).
         (void)WritePrivateProfileStringW(L"Window", L"ShowCmd", L"1", iniFile.c_str()); // SW_SHOWNORMAL
+
+        // Background color (R,G,B 0-255). Default matches previous clear: (0.09,0.09,0.10) ~ (23,23,26)
+        (void)WritePrivateProfileStringW(L"Window", L"BackgroundColor", L"20,23,23", iniFile.c_str());
+
+        // Focused ImageBrowser background color (R,G,B 0-255). Default: dark yellow accent.
+        // (0.18,0.16,0.03) ~ (46,41,8)
+        (void)WritePrivateProfileStringW(L"Window", L"FocusedBackgroundColor", L"35,43,43", iniFile.c_str());
     }
 
     void EnsureIniFileExists(const std::wstring& iniFile, bool associationsEnabled)
