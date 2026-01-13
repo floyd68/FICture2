@@ -12,10 +12,12 @@
 #include "ImageCore/ImageCore.h"
 
 #include <algorithm>
+#include <cstdint>
 #include <cmath>
 #include <filesystem>
 #include <memory>
 #include <atomic>
+#include <unordered_set>
 #include <vector>
 #include <cwctype>
 #include <wrl/client.h>
