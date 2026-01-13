@@ -16,7 +16,6 @@
 #include <cmath>
 #include <filesystem>
 #include <memory>
-#include <atomic>
 #include <unordered_set>
 #include <vector>
 #include <cwctype>
@@ -39,8 +38,6 @@ namespace
     static std::vector<class ImageBrowserImpl*> g_allBrowsers {};
     static class ImageBrowserImpl* g_rootHorizontalHostBrowser = nullptr;
     static class ImageBrowserImpl* g_contextMenuBrowser = nullptr;
-    static std::atomic<UINT_PTR> g_nextThumbApplyTimerId { 0x4D21 };
-
     static bool g_showNavItems = true;
     static bool g_showNavItemsInitialized = false;
     static bool g_showAlpha = true;
@@ -705,7 +702,6 @@ namespace
         {
             EnsureShowNavItemsInitialized();
             m_showNavItems = g_showNavItems;
-            m_thumbApplyTimerId = g_nextThumbApplyTimerId.fetch_add(1);
             g_allBrowsers.push_back(this);
             if (g_rootHorizontalHostBrowser == nullptr)
             {
@@ -914,11 +910,6 @@ namespace
             case WM_FIC2_DEFERRED_ACTION:
                 return HandleDeferredActionMessage();
 
-            case WM_TIMER:
-                if (HandleTimerMessage(wParam))
-                    return true;
-                break;
-
             case WM_MOUSEWHEEL:
                 if (HandleMouseWheelMessage(wParam, lParam))
                     return true;
@@ -1122,26 +1113,6 @@ namespace
             return false;
         }
 
-        bool HandleTimerMessage(WPARAM wParam)
-        {
-            if (wParam != m_thumbApplyTimerId)
-            {
-                return false;
-            }
-
-            if (BackplateRef() != nullptr)
-            {
-                KillTimer(BackplateRef()->Window(), m_thumbApplyTimerId);
-            }
-
-            if (m_hasPendingApply && m_pendingApplyIndex < m_items.size())
-            {
-                ApplyMainFromIndex(m_pendingApplyIndex);
-            }
-            m_hasPendingApply = false;
-            return true;
-        }
-
         bool HandleMouseWheelMessage(WPARAM wParam, LPARAM lParam)
         {
             // Thumbnail wheel: scrolling should also move selection (and update main image).
@@ -1158,10 +1129,7 @@ namespace
             {
                 if (RectContainsPoint(m_thumbScroll->LayoutRect(), pt))
                 {
-                    // IMPORTANT:
-                    // Debounced apply uses a window WM_TIMER, and Backplate routes non-mouse messages
-                    // (including WM_TIMER) only to the focused Wnd. Wheel should therefore also
-                    // establish focus so selection + main-image apply stay consistent.
+                    // Establish focus so wheel-driven selection behaves consistently.
                     RequestFocus();
 
                     // Use accumulated wheel delta so high-resolution wheels/trackpads still step predictably.
@@ -2229,13 +2197,6 @@ namespace
                 return;
             }
 
-            // Cancel any pending debounced apply.
-            m_hasPendingApply = false;
-            if (BackplateRef() != nullptr)
-            {
-                KillTimer(BackplateRef()->Window(), m_thumbApplyTimerId);
-            }
-
             mainImage->SetLoadingSpinnerEnabled(true);
             const std::wstring p = m_items[index].path.wstring();
             mainImage->SetSourceFile(p);
@@ -2246,31 +2207,6 @@ namespace
             }
             mainImage->Invalidate();
             RefreshInfoPanel();
-        }
-
-        void ScheduleApply(size_t index)
-        {
-            auto mainImage = ActiveMainImage();
-            if (!mainImage || index >= m_items.size())
-            {
-                return;
-            }
-
-            if (m_items[index].kind != ThumbItemKind::Image)
-            {
-                return;
-            }
-
-            mainImage->SetLoadingSpinnerEnabled(false);
-            m_pendingApplyIndex = index;
-            m_hasPendingApply = true;
-
-            if (BackplateRef() != nullptr)
-            {
-                HWND hwnd = BackplateRef()->Window();
-                KillTimer(hwnd, m_thumbApplyTimerId);
-                SetTimer(hwnd, m_thumbApplyTimerId, 150, nullptr);
-            }
         }
 
         void SelectItemByIndex(size_t index, MainApplyMode mode, bool ensureCentered = true, bool ensureScroll = true)
@@ -2311,14 +2247,34 @@ namespace
 
             if (ensureScroll && m_thumbScroll && m_selectedFocus)
             {
+                // If layout isn't ready yet (e.g. command-line / IPC open during startup),
+                // LayoutRect() can still be empty. In that case, defer centering until the next Arrange()
+                // by leaving m_initialThumbEnsured = false.
+                const D2D1_RECT_F scrollRect = m_thumbScroll->LayoutRect();
+                const D2D1_RECT_F focusRect = m_selectedFocus->LayoutRect();
+                const bool layoutReady =
+                    (scrollRect.right > scrollRect.left) &&
+                    (scrollRect.bottom > scrollRect.top) &&
+                    (focusRect.right > focusRect.left) &&
+                    (focusRect.bottom > focusRect.top);
+
                 if (ensureCentered)
                 {
-                    m_thumbScroll->EnsureCentered(m_selectedFocus->LayoutRect());
+                    if (layoutReady)
+                    {
+                        m_thumbScroll->EnsureCentered(focusRect);
+                    }
                 }
                 else
                 {
-                    m_thumbScroll->EnsureVisible(m_selectedFocus->LayoutRect(), kThumbStripPadding);
+                    if (layoutReady)
+                    {
+                        m_thumbScroll->EnsureVisible(focusRect, kThumbStripPadding);
+                    }
                 }
+
+                // If we couldn't scroll yet, Arrange() will do a one-time EnsureCentered later.
+                m_initialThumbEnsured = layoutReady;
             }
 
             if (m_items[m_selectedIndex].kind == ThumbItemKind::Image && mode == MainApplyMode::Immediate)
@@ -2327,7 +2283,8 @@ namespace
             }
             else if (m_items[m_selectedIndex].kind == ThumbItemKind::Image && mode == MainApplyMode::Debounced)
             {
-                ScheduleApply(m_selectedIndex);
+                // Immediate sync: treat Debounced as Immediate.
+                ApplyMainFromIndex(m_selectedIndex);
             }
 
             // Folder compare sync:
@@ -2354,13 +2311,7 @@ namespace
                 }
             }
 
-            // This flag controls the one-time "center selected thumb" behavior in Arrange().
-            // When selection is restored during a rebuild, we intentionally skip scrolling here and
-            // allow the next layout pass to center using fresh LayoutRect() values.
-            if (ensureScroll)
-            {
-                m_initialThumbEnsured = true;
-            }
+            // Note: m_initialThumbEnsured is controlled above for ensureScroll flows.
         }
 
         static std::wstring ToLower(std::wstring s)
@@ -3468,8 +3419,6 @@ namespace
         bool m_initialThumbEnsured { false };
         ULONGLONG m_lastKeyNavMs { 0 };
         int m_thumbWheelRemainder { 0 };
-        bool m_hasPendingApply { false };
-        size_t m_pendingApplyIndex { static_cast<size_t>(-1) };
 
         std::filesystem::path m_currentFolder {};
         bool m_showNavItems { true };
@@ -3490,7 +3439,6 @@ namespace
         // (no focus-background state)
         bool m_syncSuppressBroadcast { false };
         bool m_viewSyncSuppressBroadcast { false };
-        UINT_PTR m_thumbApplyTimerId { 0 };
 
         enum class DragOverlayKind
         {
