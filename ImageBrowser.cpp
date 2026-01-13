@@ -2428,8 +2428,15 @@ namespace
                 return;
             }
 
+            // Sync should mirror the *currently displayed* view state from the focused source.
+            // Do NOT re-run per-pane spring animation on receivers (it can cause subtle jitter
+            // due to different frame timing/layout across panes).
+            FD2D::Image::ViewTransform applied = vt;
+            applied.targetZoomScale = applied.zoomScale;
+            applied.zoomVelocity = 0.0f;
+
             m_viewSyncSuppressBroadcast = true;
-            main->SetViewTransform(vt, false /*notify*/);
+            main->SetViewTransform(applied, false /*notify*/);
             m_viewSyncSuppressBroadcast = false;
         }
 
