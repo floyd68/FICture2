@@ -45,6 +45,36 @@ namespace
     static bool g_backgroundColorInitialized = false;
     static D2D1_COLOR_F g_focusedBrowserBackgroundColor = D2D1::ColorF(0.18f, 0.16f, 0.03f, 1.0f);
 
+    static uint64_t Fnv1a64(const std::wstring& s)
+    {
+        // FNV-1a 64-bit over UTF-16 code units.
+        uint64_t h = 14695981039346656037ull;
+        for (wchar_t c : s)
+        {
+            h ^= static_cast<uint64_t>(c);
+            h *= 1099511628211ull;
+        }
+        return h;
+    }
+
+    static std::wstring Hex64(uint64_t v)
+    {
+        wchar_t buf[32] {};
+        (void)swprintf_s(buf, L"%016llX", static_cast<unsigned long long>(v));
+        return buf;
+    }
+
+    static std::wstring MakeStableThumbName(const wchar_t* prefix, const std::filesystem::path& p)
+    {
+        std::wstring s = p.wstring();
+        for (auto& c : s)
+        {
+            c = static_cast<wchar_t>(towlower(c));
+        }
+
+        return std::wstring(prefix) + L"_" + Hex64(Fnv1a64(s)) + L"_tile";
+    }
+
     static bool TryGetIniFilePath(std::wstring& outIniFile)
     {
         wchar_t iniPath[MAX_PATH] {};
@@ -2574,7 +2604,6 @@ namespace
                 return;
             }
 
-            m_thumbPanel->ClearChildren();
             m_items.clear();
             m_selectedIndex = static_cast<size_t>(-1);
             m_selectedFocus.reset();
@@ -2613,13 +2642,37 @@ namespace
 
             int tileId = 0;
 
+            std::vector<std::wstring> desiredOrder;
+            desiredOrder.reserve(folders.size() + files.size() + 8);
+            std::unordered_set<std::wstring> desiredNames;
+            desiredNames.reserve(folders.size() + files.size() + 8);
+
+            auto getExistingChild = [this](const std::wstring& name) -> std::shared_ptr<FD2D::Wnd>
+            {
+                const auto& children = m_thumbPanel->Children();
+                auto it = children.find(name);
+                if (it == children.end())
+                {
+                    return nullptr;
+                }
+                return it->second;
+            };
+
             if (m_showNavItems)
             {
                 std::filesystem::path parent = m_currentFolder.parent_path();
                 if (!parent.empty() && parent != m_currentFolder)
                 {
-                    std::wstring base = L"nav_up_" + std::to_wstring(tileId++);
-                    auto tile = std::make_shared<ThumbNavTile>(base + L"_tile");
+                    std::wstring name = MakeStableThumbName(L"nav_up", parent);
+                    auto tile = std::dynamic_pointer_cast<ThumbNavTile>(getExistingChild(name));
+                    if (!tile)
+                    {
+                        // If name exists with the wrong type, replace it.
+                        (void)m_thumbPanel->RemoveChild(name);
+                        tile = std::make_shared<ThumbNavTile>(name);
+                        (void)m_thumbPanel->AddChild(tile);
+                    }
+
                     tile->SetFixedSize({ m_thumbW, m_thumbH });
                     tile->SetText(L"..");
                     tile->SetTextPlacement(ThumbNavTile::TextPlacement::Bottom);
@@ -2629,14 +2682,23 @@ namespace
                         QueueNavigateUp();
                     });
 
-                    m_thumbPanel->AddChild(tile);
+                    desiredOrder.push_back(name);
+                    desiredNames.emplace(name);
                     m_items.push_back({ ThumbItemKind::Up, parent, tile, nullptr, tile, nullptr });
+                    ++tileId;
                 }
 
                 for (const auto& dir : folders)
                 {
-                    std::wstring base = L"nav_folder_" + std::to_wstring(tileId++);
-                    auto tile = std::make_shared<ThumbNavTile>(base + L"_tile");
+                    std::wstring name = MakeStableThumbName(L"nav_folder", dir);
+                    auto tile = std::dynamic_pointer_cast<ThumbNavTile>(getExistingChild(name));
+                    if (!tile)
+                    {
+                        (void)m_thumbPanel->RemoveChild(name);
+                        tile = std::make_shared<ThumbNavTile>(name);
+                        (void)m_thumbPanel->AddChild(tile);
+                    }
+
                     tile->SetFixedSize({ m_thumbW, m_thumbH });
                     tile->SetText(dir.filename().wstring());
                     tile->SetTextPlacement(ThumbNavTile::TextPlacement::Bottom);
@@ -2646,18 +2708,32 @@ namespace
                         QueueDeferredAction(DeferredActionKind::NavigateToFolder, dir);
                     });
 
-                    m_thumbPanel->AddChild(tile);
+                    desiredOrder.push_back(name);
+                    desiredNames.emplace(name);
                     m_items.push_back({ ThumbItemKind::Folder, dir, tile, nullptr, tile, nullptr });
+                    ++tileId;
                 }
             }
 
             for (const auto& p : files)
             {
-                std::wstring thumbName = L"thumb_" + std::to_wstring(tileId++);
-                auto thumbTile = std::make_shared<ThumbImageTile>(thumbName + L"_tile");
-                thumbTile->SetFixedSize({ m_thumbW, m_thumbH });
-                thumbTile->SetSourceFile(p.wstring());
-                thumbTile->SetCaption(p.filename().wstring());
+                std::wstring name = MakeStableThumbName(L"thumb_img", p);
+                auto thumbTile = std::dynamic_pointer_cast<ThumbImageTile>(getExistingChild(name));
+                if (!thumbTile)
+                {
+                    (void)m_thumbPanel->RemoveChild(name);
+                    thumbTile = std::make_shared<ThumbImageTile>(name);
+                    thumbTile->SetFixedSize({ m_thumbW, m_thumbH });
+                    thumbTile->SetSourceFile(p.wstring());
+                    thumbTile->SetCaption(p.filename().wstring());
+                    (void)m_thumbPanel->AddChild(thumbTile);
+                }
+                else
+                {
+                    // Keep the already-loaded thumbnail; only update sizing/caption.
+                    thumbTile->SetFixedSize({ m_thumbW, m_thumbH });
+                    thumbTile->SetCaption(p.filename().wstring());
+                }
 
                 const size_t index = m_items.size();
                 thumbTile->SetOnClick([this, index]()
@@ -2665,10 +2741,33 @@ namespace
                     RequestFocus();
                     SelectItemByIndex(index, MainApplyMode::Immediate);
                 });
-                m_thumbPanel->AddChild(thumbTile);
+
+                desiredOrder.push_back(name);
+                desiredNames.emplace(name);
 
                 m_items.push_back({ ThumbItemKind::Image, p, thumbTile, thumbTile->ImageWnd(), nullptr, thumbTile });
+                ++tileId;
             }
+
+            // Remove children that are no longer desired (avoids accumulating stale tiles).
+            {
+                std::vector<std::wstring> toRemove;
+                for (const auto& kv : m_thumbPanel->Children())
+                {
+                    if (desiredNames.find(kv.first) == desiredNames.end())
+                    {
+                        toRemove.push_back(kv.first);
+                    }
+                }
+
+                for (const auto& name : toRemove)
+                {
+                    (void)m_thumbPanel->RemoveChild(name);
+                }
+            }
+
+            // Reorder without detaching existing children (prevents thumbnail reload flicker).
+            (void)m_thumbPanel->ReorderChildren(desiredOrder);
 
             // Restore selection
             size_t selectIndex = 0;
@@ -2692,11 +2791,7 @@ namespace
             if (BackplateRef() != nullptr)
             {
                 BackplateRef()->RequestLayout();
-                HWND hwnd = BackplateRef()->Window();
-                if (hwnd != nullptr)
-                {
-                    RedrawWindow(hwnd, nullptr, nullptr, RDW_INVALIDATE | RDW_UPDATENOW);
-                }
+                Invalidate();
             }
         }
 
