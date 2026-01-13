@@ -2,6 +2,7 @@
 
 #include "framework.h"
 #include "Resource.h"
+#include "DebugFileLog.h"
 #include "ThumbNavTile.h"
 #include "ThumbImageTile.h"
 #include "IpcCompareRequest.h"
@@ -72,6 +73,29 @@ namespace
         }
 
         return std::wstring(prefix) + L"_" + Hex64(Fnv1a64(s)) + L"_tile";
+    }
+
+    static std::wstring NormalizePathLowerForCompare(const std::filesystem::path& p)
+    {
+        std::wstring s = p.wstring();
+        for (auto& c : s)
+        {
+            if (c == L'/')
+            {
+                c = L'\\';
+            }
+            c = static_cast<wchar_t>(towlower(c));
+        }
+        while (!s.empty() && (s.back() == L'\\' || s.back() == L'/'))
+        {
+            s.pop_back();
+        }
+        return s;
+    }
+
+    static bool PathEqualsInsensitive(const std::filesystem::path& a, const std::filesystem::path& b)
+    {
+        return NormalizePathLowerForCompare(a) == NormalizePathLowerForCompare(b);
     }
 
     static bool TryGetIniFilePath(std::wstring& outIniFile)
@@ -761,8 +785,16 @@ namespace
         {
             Wnd::Arrange(finalRect);
 
-            ApplySyncedThumbStripHeightIfNeeded();
-            UpdateThumbSizingFromPane();
+            const bool heightChanged = ApplySyncedThumbStripHeightIfNeeded();
+            const bool sizingChanged = UpdateThumbSizingFromPane();
+
+            // If we triggered a follow-up layout pass (split ratio / thumb sizing changed),
+            // defer centering until the next Arrange() where LayoutRect() values are stable.
+            if (heightChanged || sizingChanged)
+            {
+                m_initialThumbEnsured = false;
+                return;
+            }
 
             // First layout: ensure the selected thumb is visible without user interaction.
             if (!m_initialThumbEnsured && m_thumbScroll && m_selectedFocus)
@@ -807,8 +839,12 @@ namespace
             // Splitter dragging re-arranges the SplitPanel subtree directly, but may not trigger
             // a full root re-Arrange pass. Drive responsive thumbnail sizing here so it updates
             // live while dragging.
-            ApplySyncedThumbStripHeightIfNeeded();
-            UpdateThumbSizingFromPane();
+            const bool heightChanged = ApplySyncedThumbStripHeightIfNeeded();
+            const bool sizingChanged = UpdateThumbSizingFromPane();
+            if (heightChanged || sizingChanged)
+            {
+                m_initialThumbEnsured = false;
+            }
             RefreshInfoPanel();
 
             // D2D-only backend: fill per-ImageBrowser background before drawing children.
@@ -939,6 +975,7 @@ namespace
             auto* req = reinterpret_cast<IpcCompareRequest*>(lParam);
             if (req != nullptr)
             {
+                DebugFileLog::WriteLine(L"IPC_UI", req->path);
                 req->compareStarted = TryStartCompareWithFileNameMatch(req->path);
                 if (req->doneEvent != nullptr)
                 {
@@ -1550,6 +1587,8 @@ namespace
                 return;
             }
 
+            DebugFileLog::WriteLine(L"RESTORE_FILE", p.wstring());
+
             m_currentFolder = p.parent_path();
             m_initialThumbEnsured = false;
 
@@ -1558,9 +1597,10 @@ namespace
             // Select/apply exact match if present.
             for (size_t i = 0; i < m_items.size(); ++i)
             {
-                if (m_items[i].kind == ThumbItemKind::Image && m_items[i].path == p)
+                if (m_items[i].kind == ThumbItemKind::Image && PathEqualsInsensitive(m_items[i].path, p))
                 {
                     SelectItemByIndex(i, MainApplyMode::Immediate, true /*ensureCentered*/);
+                    DebugFileLog::WriteLine(L"RESTORE_MATCH", m_items[i].path.wstring());
                     return;
                 }
             }
@@ -1571,6 +1611,7 @@ namespace
                 if (m_items[i].kind == ThumbItemKind::Image)
                 {
                     SelectItemByIndex(i, MainApplyMode::Immediate, true /*ensureCentered*/);
+                    DebugFileLog::WriteLine(L"RESTORE_FALLBACK", m_items[i].path.wstring());
                     return;
                 }
             }
@@ -1639,7 +1680,7 @@ namespace
 
         void ForceApplySyncedThumbStripHeight()
         {
-            ApplySyncedThumbStripHeightIfNeeded(true);
+            (void)ApplySyncedThumbStripHeightIfNeeded(true);
         }
 
     private:
@@ -1690,11 +1731,11 @@ namespace
             SplitHorizontalNewBrowser,
         };
 
-        void UpdateThumbSizingFromPane()
+        bool UpdateThumbSizingFromPane()
         {
             if (!m_thumbScroll)
             {
-                return;
+                return false;
             }
 
             float paneH = 0.0f;
@@ -1713,7 +1754,7 @@ namespace
             }
             if (paneH <= 1.0f)
             {
-                return;
+                return false;
             }
 
             // Keep thumbnail spacing constant; only scale the thumbnail square with the pane height.
@@ -1726,7 +1767,7 @@ namespace
             // Avoid thrashing while dragging the splitter.
             if (std::abs(newSide - m_thumbW) < 1.0f)
             {
-                return;
+                return false;
             }
 
             m_thumbW = newSide;
@@ -1754,6 +1795,7 @@ namespace
             {
                 BackplateRef()->RequestLayout();
             }
+            return true;
         }
 
         void BuildUi()
@@ -1808,7 +1850,7 @@ namespace
                 {
                     if (b != nullptr && b != this)
                     {
-                        b->ApplySyncedThumbStripHeightIfNeeded(true);
+                                (void)b->ApplySyncedThumbStripHeightIfNeeded(true);
                     }
                 }
 
@@ -1842,23 +1884,23 @@ namespace
             ApplyActiveSelectionStyle();
         }
 
-        void ApplySyncedThumbStripHeightIfNeeded(bool force = false)
+        bool ApplySyncedThumbStripHeightIfNeeded(bool force = false)
         {
             if (!g_hasSyncedThumbStripHeight || m_rootSplit == nullptr)
             {
-                return;
+                return false;
             }
 
             if (m_rootSplit->Orientation() != FD2D::SplitterOrientation::Vertical)
             {
-                return;
+                return false;
             }
 
             const D2D1_RECT_F rootR = m_rootSplit->LayoutRect();
             const float totalH = (std::max)(0.0f, rootR.bottom - rootR.top);
             if (totalH <= 0.0f)
             {
-                return;
+                return false;
             }
 
             const float desiredSecond = (std::max)(kThumbStripMinH, (std::min)(kThumbStripMaxH, g_syncedThumbStripHeight));
@@ -1876,7 +1918,7 @@ namespace
                     const float cur = (std::max)(0.0f, tr.bottom - tr.top);
                     if (std::abs(cur - desiredSecond) < 1.0f)
                     {
-                        return;
+                        return false;
                     }
                 }
             }
@@ -1887,6 +1929,7 @@ namespace
             {
                 BackplateRef()->RequestLayout();
             }
+            return true;
         }
 
         void BuildMainPanes()
@@ -2745,7 +2788,7 @@ namespace
             {
                 for (size_t i = 0; i < m_items.size(); ++i)
                 {
-                    if (m_items[i].path == preferSelectPath)
+                    if (PathEqualsInsensitive(m_items[i].path, preferSelectPath))
                     {
                         selectIndex = i;
                         break;
@@ -3601,6 +3644,8 @@ bool ImageBrowser_TryRestoreSessionFromIni(const std::wstring& iniFile)
 
     const int clampedCount = (std::max)(1, (std::min)(4, count));
 
+    DebugFileLog::WriteLine(L"INI", L"RestoreSession start: " + iniFile);
+
 #if defined(_DEBUG)
     {
         wchar_t msg[1024] {};
@@ -3640,6 +3685,15 @@ bool ImageBrowser_TryRestoreSessionFromIni(const std::wstring& iniFile)
         buf[0] = 0;
         const DWORD nFolder = GetPrivateProfileStringW(sec.c_str(), L"CurrentFolder", L"", buf, static_cast<DWORD>(std::size(buf)), iniFile.c_str());
         std::wstring folder = (nFolder > 0 && buf[0] != 0) ? std::wstring(buf) : std::wstring();
+
+        if (!file.empty())
+        {
+            DebugFileLog::WriteLine(L"INI_FILE", file);
+        }
+        if (!folder.empty())
+        {
+            DebugFileLog::WriteLine(L"INI_FOLDER", folder);
+        }
 
         viewers.push_back({ std::move(file), std::move(folder) });
     }

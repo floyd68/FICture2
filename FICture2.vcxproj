@@ -160,6 +160,7 @@
     <ClInclude Include="FICture2.h" />
     <ClInclude Include="AppIpc.h" />
     <ClInclude Include="AppSetup.h" />
+    <ClInclude Include="DebugFileLog.h" />
     <ClInclude Include="framework.h" />
     <ClInclude Include="ImageBrowser.h" />
     <ClInclude Include="IpcCompareRequest.h" />
@@ -171,6 +172,7 @@
   <ItemGroup>
     <ClCompile Include="AppIpc.cpp" />
     <ClCompile Include="AppSetup.cpp" />
+    <ClCompile Include="DebugFileLog.cpp" />
     <ClCompile Include="FICture2.cpp" />
     <ClCompile Include="ImageBrowser.cpp" />
     <ClCompile Include="ThumbImageTile.cpp" />
