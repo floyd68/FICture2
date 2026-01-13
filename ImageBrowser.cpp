@@ -2273,7 +2273,7 @@ namespace
             }
         }
 
-        void SelectItemByIndex(size_t index, MainApplyMode mode, bool ensureCentered = true)
+        void SelectItemByIndex(size_t index, MainApplyMode mode, bool ensureCentered = true, bool ensureScroll = true)
         {
             if (m_items.empty())
             {
@@ -2309,7 +2309,7 @@ namespace
                 m_items[m_selectedIndex].navTile->SetSelected(true);
             }
 
-            if (m_thumbScroll && m_selectedFocus)
+            if (ensureScroll && m_thumbScroll && m_selectedFocus)
             {
                 if (ensureCentered)
                 {
@@ -2354,7 +2354,13 @@ namespace
                 }
             }
 
-            m_initialThumbEnsured = true;
+            // This flag controls the one-time "center selected thumb" behavior in Arrange().
+            // When selection is restored during a rebuild, we intentionally skip scrolling here and
+            // allow the next layout pass to center using fresh LayoutRect() values.
+            if (ensureScroll)
+            {
+                m_initialThumbEnsured = true;
+            }
         }
 
         static std::wstring ToLower(std::wstring s)
@@ -2606,6 +2612,10 @@ namespace
                 return;
             }
 
+            // Rebuild changes the child tree order/content; we'll re-center the selection after the
+            // next layout pass (Arrange) so we don't use stale LayoutRect() values.
+            m_initialThumbEnsured = false;
+
             m_items.clear();
             m_selectedIndex = static_cast<size_t>(-1);
             m_selectedFocus.reset();
@@ -2787,7 +2797,8 @@ namespace
 
             if (!m_items.empty())
             {
-                SelectItemByIndex(selectIndex, selectMode);
+                // Restore selection without scrolling yet; layout hasn't been updated.
+                SelectItemByIndex(selectIndex, selectMode, true /*ensureCentered*/, false /*ensureScroll*/);
             }
 
             if (BackplateRef() != nullptr)
