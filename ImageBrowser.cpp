@@ -785,23 +785,12 @@ namespace
         {
             Wnd::Arrange(finalRect);
 
-            const bool heightChanged = ApplySyncedThumbStripHeightIfNeeded();
-            const bool sizingChanged = UpdateThumbSizingFromPane();
-
-            // If we triggered a follow-up layout pass (split ratio / thumb sizing changed),
-            // defer centering until the next Arrange() where LayoutRect() values are stable.
-            if (heightChanged || sizingChanged)
+            if (m_selectedFocus)
             {
-                m_initialThumbEnsured = false;
-                return;
+                const D2D1_RECT_F focusRect = m_selectedFocus->LayoutRect();
+                m_thumbScroll->EnsureCentered(focusRect, true);
             }
 
-            // First layout: ensure the selected thumb is visible without user interaction.
-            if (!m_initialThumbEnsured && m_thumbScroll && m_selectedFocus)
-            {
-                m_thumbScroll->EnsureCentered(m_selectedFocus->LayoutRect());
-                m_initialThumbEnsured = true;
-            }
         }
 
         void OnRenderD3D(ID3D11DeviceContext* context) override
@@ -839,12 +828,8 @@ namespace
             // Splitter dragging re-arranges the SplitPanel subtree directly, but may not trigger
             // a full root re-Arrange pass. Drive responsive thumbnail sizing here so it updates
             // live while dragging.
-            const bool heightChanged = ApplySyncedThumbStripHeightIfNeeded();
-            const bool sizingChanged = UpdateThumbSizingFromPane();
-            if (heightChanged || sizingChanged)
-            {
-                m_initialThumbEnsured = false;
-            }
+            (void)ApplySyncedThumbStripHeightIfNeeded();
+            (void)UpdateThumbSizingFromPane();
             RefreshInfoPanel();
 
             // D2D-only backend: fill per-ImageBrowser background before drawing children.
@@ -1223,7 +1208,7 @@ namespace
                         if (next != cur)
                         {
                             // Debounce main image apply to avoid thrashing disk/decoders while spinning the wheel.
-                            SelectItemByIndex(next, MainApplyMode::Immediate, true /*ensureCentered*/);
+                            SelectItemByIndex(next);
                         }
                     }
 
@@ -1242,24 +1227,20 @@ namespace
             // Per request:
             // - Use KEYDOWN only for Left/Right so holding the key continuously steps.
             // - Handle all other actions on KEYUP.
+
+            const size_t cur = (m_selectedIndex < m_items.size()) ? m_selectedIndex : 0;
+
             switch (wParam)
             {
             case VK_LEFT:
-                if (!m_items.empty())
                 {
-                    const size_t cur = (m_selectedIndex < m_items.size()) ? m_selectedIndex : 0;
                     const size_t next = (cur == 0) ? 0 : (cur - 1);
-                    SelectItemByIndex(next, MainApplyMode::Immediate);
+                    SelectItemByIndex(next);
                 }
                 return true;
 
             case VK_RIGHT:
-                if (!m_items.empty())
-                {
-                    const size_t cur = (m_selectedIndex < m_items.size()) ? m_selectedIndex : 0;
-                    const size_t next = (cur + 1 >= m_items.size()) ? (m_items.size() - 1) : (cur + 1);
-                    SelectItemByIndex(next, MainApplyMode::Immediate);
-                }
+                SelectItemByIndex(cur + 1);
                 return true;
 
             default:
@@ -1360,40 +1341,28 @@ namespace
                 }
 
             case VK_HOME:
-                if (!m_items.empty())
-                {
-                    SelectItemByIndex(0, MainApplyMode::Immediate);
-                }
+                SelectItemByIndex(0);
                 return true;
 
             case VK_END:
-                if (!m_items.empty())
-                {
-                    SelectItemByIndex(m_items.size() - 1, MainApplyMode::Immediate);
-                }
+                SelectItemByIndex(m_items.size() - 1);
                 return true;
 
             case VK_PRIOR: // Page Up
-                if (!m_items.empty())
                 {
                     const size_t step = PageStep();
                     const size_t cur = (m_selectedIndex < m_items.size()) ? m_selectedIndex : 0;
                     const size_t next = (cur > step) ? (cur - step) : 0;
-                    SelectItemByIndex(next, MainApplyMode::Immediate);
+                    SelectItemByIndex(next);
                 }
                 return true;
 
             case VK_NEXT: // Page Down
-                if (!m_items.empty())
                 {
                     const size_t step = PageStep();
                     const size_t cur = (m_selectedIndex < m_items.size()) ? m_selectedIndex : 0;
                     size_t next = cur + step;
-                    if (next >= m_items.size())
-                    {
-                        next = m_items.size() - 1;
-                    }
-                    SelectItemByIndex(next, MainApplyMode::Immediate);
+                    SelectItemByIndex(next);
                 }
                 return true;
 
@@ -1590,7 +1559,6 @@ namespace
             DebugFileLog::WriteLine(L"RESTORE_FILE", p.wstring());
 
             m_currentFolder = p.parent_path();
-            m_initialThumbEnsured = false;
 
             RebuildThumbList(p);
 
@@ -1599,7 +1567,7 @@ namespace
             {
                 if (m_items[i].kind == ThumbItemKind::Image && PathEqualsInsensitive(m_items[i].path, p))
                 {
-                    SelectItemByIndex(i, MainApplyMode::Immediate, true /*ensureCentered*/);
+                    SelectItemByIndex(i);
                     DebugFileLog::WriteLine(L"RESTORE_MATCH", m_items[i].path.wstring());
                     return;
                 }
@@ -1610,7 +1578,7 @@ namespace
             {
                 if (m_items[i].kind == ThumbItemKind::Image)
                 {
-                    SelectItemByIndex(i, MainApplyMode::Immediate, true /*ensureCentered*/);
+                    SelectItemByIndex(i);
                     DebugFileLog::WriteLine(L"RESTORE_FALLBACK", m_items[i].path.wstring());
                     return;
                 }
@@ -1684,13 +1652,6 @@ namespace
         }
 
     private:
-        enum class MainApplyMode
-        {
-            None,
-            Debounced,
-            Immediate,
-        };
-
         enum class ThumbItemKind
         {
             Up,
@@ -1821,7 +1782,6 @@ namespace
             thumbs->SetPadding(4.0f);
             auto thumbScroll = std::make_shared<FD2D::ScrollView>(L"thumbScroll");
             thumbScroll->SetScrollStep(96.0f);
-            thumbScroll->SetSmoothScrollEnabled(true);
             thumbScroll->SetSmoothTimeMs(110);
             thumbScroll->SetVerticalScrollEnabled(false);
             thumbScroll->SetContent(thumbs);
@@ -2252,7 +2212,7 @@ namespace
             RefreshInfoPanel();
         }
 
-        void SelectItemByIndex(size_t index, MainApplyMode mode, bool ensureCentered = true, bool ensureScroll = true)
+        void SelectItemByIndex(size_t index)
         {
             if (m_items.empty())
             {
@@ -2288,11 +2248,10 @@ namespace
                 m_items[m_selectedIndex].navTile->SetSelected(true);
             }
 
-            if (ensureScroll && m_thumbScroll && m_selectedFocus)
+            if (m_thumbScroll && m_selectedFocus)
             {
                 // If layout isn't ready yet (e.g. command-line / IPC open during startup),
-                // LayoutRect() can still be empty. In that case, defer centering until the next Arrange()
-                // by leaving m_initialThumbEnsured = false.
+                // LayoutRect() can still be empty. In that case, Arrange() will center later.
                 const D2D1_RECT_F scrollRect = m_thumbScroll->LayoutRect();
                 const D2D1_RECT_F focusRect = m_selectedFocus->LayoutRect();
                 const bool layoutReady =
@@ -2301,32 +2260,15 @@ namespace
                     (focusRect.right > focusRect.left) &&
                     (focusRect.bottom > focusRect.top);
 
-                if (ensureCentered)
+                if (layoutReady)
                 {
-                    if (layoutReady)
-                    {
-                        m_thumbScroll->EnsureCentered(focusRect);
-                    }
-                }
-                else
-                {
-                    if (layoutReady)
-                    {
-                        m_thumbScroll->EnsureVisible(focusRect, kThumbStripPadding);
-                    }
+                    m_thumbScroll->EnsureCentered(focusRect);
                 }
 
-                // If we couldn't scroll yet, Arrange() will do a one-time EnsureCentered later.
-                m_initialThumbEnsured = layoutReady;
             }
 
-            if (m_items[m_selectedIndex].kind == ThumbItemKind::Image && mode == MainApplyMode::Immediate)
+            if (m_items[m_selectedIndex].kind == ThumbItemKind::Image)
             {
-                ApplyMainFromIndex(m_selectedIndex);
-            }
-            else if (m_items[m_selectedIndex].kind == ThumbItemKind::Image && mode == MainApplyMode::Debounced)
-            {
-                // Immediate sync: treat Debounced as Immediate.
                 ApplyMainFromIndex(m_selectedIndex);
             }
 
@@ -2354,7 +2296,6 @@ namespace
                 }
             }
 
-            // Note: m_initialThumbEnsured is controlled above for ensureScroll flows.
         }
 
         static std::wstring ToLower(std::wstring s)
@@ -2412,7 +2353,7 @@ namespace
             }
 
             m_syncSuppressBroadcast = true;
-            SelectItemByIndex(match, MainApplyMode::Immediate, true /*ensureCentered*/);
+            SelectItemByIndex(match);
             m_syncSuppressBroadcast = false;
         }
 
@@ -2565,7 +2506,6 @@ namespace
             }
 
             m_currentFolder = folder;
-            m_initialThumbEnsured = false;
             RebuildThumbList({});
 
             if (m_thumbScroll)
@@ -2602,20 +2542,15 @@ namespace
             }
 
             m_currentFolder = folder;
-            m_initialThumbEnsured = false;
-            RebuildThumbList(filePath, MainApplyMode::Immediate);
+            RebuildThumbList(filePath);
         }
 
-        void RebuildThumbList(const std::filesystem::path& preferSelectPath, MainApplyMode selectMode = MainApplyMode::None)
+        void RebuildThumbList(const std::filesystem::path& preferSelectPath)
         {
             if (!m_thumbPanel)
             {
                 return;
             }
-
-            // Rebuild changes the child tree order/content; we'll re-center the selection after the
-            // next layout pass (Arrange) so we don't use stale LayoutRect() values.
-            m_initialThumbEnsured = false;
 
             m_items.clear();
             m_selectedIndex = static_cast<size_t>(-1);
@@ -2752,7 +2687,7 @@ namespace
                 thumbTile->SetOnClick([this, index]()
                 {
                     RequestFocus();
-                    SelectItemByIndex(index, MainApplyMode::Immediate);
+                    SelectItemByIndex(index);
                 });
 
                 desiredOrder.push_back(name);
@@ -2796,11 +2731,8 @@ namespace
                 }
             }
 
-            if (!m_items.empty())
-            {
-                // Restore selection without scrolling yet; layout hasn't been updated.
-                SelectItemByIndex(selectIndex, selectMode, true /*ensureCentered*/, false /*ensureScroll*/);
-            }
+            // Restore selection without scrolling yet; layout hasn't been updated.
+            SelectItemByIndex(selectIndex);
 
             if (BackplateRef() != nullptr)
             {
@@ -3466,7 +3398,6 @@ namespace
         std::shared_ptr<FD2D::StackPanel> m_thumbPanel {};
         std::vector<ThumbItem> m_items {};
         size_t m_selectedIndex { static_cast<size_t>(-1) };
-        bool m_initialThumbEnsured { false };
         ULONGLONG m_lastKeyNavMs { 0 };
         int m_thumbWheelRemainder { 0 };
 
