@@ -8,7 +8,8 @@ namespace FD2D
     class Wnd;
 }
 
-// Core viewer component: supports 1..4 panes for image comparison.
+// Core viewer component: single main image per ImageBrowser.
+// paneCount is kept for compatibility and is currently ignored (always 1).
 std::shared_ptr<FD2D::Wnd> CreateImageBrowser(const std::wstring& name, int paneCount = 1, const std::wstring& initialFile = L"");
 
 // IPC hook:

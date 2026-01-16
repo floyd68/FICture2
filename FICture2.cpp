@@ -2,6 +2,7 @@
 
 #include "FICture2.h"
 
+#include "Ficture2Backplate.h"
 #include "FD2D/Application.h"
 #include "FD2D/Backplate.h"
 #include "FD2D/Core.h"
@@ -296,8 +297,8 @@ int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
         // Ensure all UI objects (Backplate/Wnd tree) are destroyed BEFORE OleUninitialize().
         // Some COM-backed objects used by the UI/render stack must be released
         // before the calling thread uninitializes COM.
-        auto backplate = app.CreateWindowedBackplate(L"main", opts);
-        if (!backplate)
+        auto backplate = std::make_shared<Ficture2Backplate>(L"main");
+        if (!backplate || FAILED(backplate->CreateWindowed(opts)) || !app.RegisterBackplate(backplate))
         {
             app.Shutdown();
             return FALSE;

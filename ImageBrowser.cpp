@@ -6,6 +6,7 @@
 #include "ThumbNavTile.h"
 #include "ThumbImageTile.h"
 #include "IpcCompareRequest.h"
+#include "Ficture2Backplate.h"
 
 #include "FD2D/FD2D.h"
 #include "FD2D/MainImage.h"
@@ -27,6 +28,8 @@
 
 namespace
 {
+    class ImageBrowserImpl;
+
     constexpr float kThumbStripPadding = 8.0f; // matches thumbs->SetPadding(8)
     constexpr float kThumbMinSide = 32.0f;
     constexpr float kThumbMaxSide = 256.0f;
@@ -36,7 +39,6 @@ namespace
 
     static float g_syncedThumbStripHeight = 0.0f;
     static bool g_hasSyncedThumbStripHeight = false;
-    static std::vector<class ImageBrowserImpl*> g_allBrowsers {};
     static class ImageBrowserImpl* g_rootHorizontalHostBrowser = nullptr;
     static class ImageBrowserImpl* g_contextMenuBrowser = nullptr;
     static bool g_showNavItems = true;
@@ -724,34 +726,21 @@ namespace
             : Wnd(name)
             , m_initialFile(initialFile)
         {
+            UNREFERENCED_PARAMETER(paneCount);
             EnsureShowNavItemsInitialized();
             m_showNavItems = g_showNavItems;
-            g_allBrowsers.push_back(this);
-            if (g_rootHorizontalHostBrowser == nullptr)
-            {
-                g_rootHorizontalHostBrowser = this;
-            }
-            SetPaneCount(paneCount);
             BuildUi();
         }
 
         ~ImageBrowserImpl() override
         {
-            auto it = std::find(g_allBrowsers.begin(), g_allBrowsers.end(), this);
-            if (it != g_allBrowsers.end())
-            {
-                g_allBrowsers.erase(it);
-            }
-
-            if (g_rootHorizontalHostBrowser == this)
-            {
-                g_rootHorizontalHostBrowser = g_allBrowsers.empty() ? nullptr : g_allBrowsers.front();
-            }
+            UnregisterFromEventBus();
         }
 
         void OnAttached(FD2D::Backplate& backplate) override
         {
             Wnd::OnAttached(backplate);
+            RegisterWithEventBus();
             EnsureBackgroundColorInitialized(backplate);
             // Default per-ImageBrowser background follows current global clear color.
             m_browserBackgroundColor = backplate.ClearColor();
@@ -762,17 +751,204 @@ namespace
             }
         }
 
-        void SetPaneCount(int paneCount)
+        void OnDetached() override
         {
-            m_paneCount = (std::max)(1, (std::min)(4, paneCount));
-            if (m_activePane >= static_cast<size_t>(m_paneCount))
+            UnregisterFromEventBus();
+            Wnd::OnDetached();
+        }
+
+        std::shared_ptr<Ficture2Backplate::EventBus> EventBusRef() const
+        {
+            FD2D::Backplate* bp = BackplateRef();
+            if (bp == nullptr)
             {
-                m_activePane = 0;
+                return nullptr;
             }
-            if (m_rootSplit)
+
+            auto* ficBp = dynamic_cast<Ficture2Backplate*>(bp);
+            if (ficBp == nullptr)
             {
-                BuildMainPanes();
+                return nullptr;
             }
+
+            return ficBp->BusPtr();
+        }
+
+        void RegisterWithEventBus()
+        {
+            if (!m_eventBus.expired())
+            {
+                return;
+            }
+
+            auto bus = EventBusRef();
+            if (!bus)
+            {
+                return;
+            }
+
+            m_eventBus = bus;
+            bus->RegisterImageBrowser(this);
+            if (m_eventBusToken == 0)
+            {
+                m_eventBusToken = bus->Subscribe([this](const Ficture2Backplate::ImageBrowserEvent& ev)
+                {
+                    HandleBusEvent(ev);
+                });
+            }
+
+            if (g_rootHorizontalHostBrowser == nullptr)
+            {
+                g_rootHorizontalHostBrowser = this;
+            }
+        }
+
+        void UnregisterFromEventBus()
+        {
+            auto bus = m_eventBus.lock();
+            if (!bus)
+            {
+                if (g_rootHorizontalHostBrowser == this)
+                {
+                    g_rootHorizontalHostBrowser = nullptr;
+                }
+                return;
+            }
+
+            bus->UnregisterImageBrowser(this);
+
+            if (m_eventBusToken != 0)
+            {
+                bus->Unsubscribe(m_eventBusToken);
+                m_eventBusToken = 0;
+            }
+
+            if (g_rootHorizontalHostBrowser == this)
+            {
+                const auto remaining = bus->ImageBrowsersSnapshot();
+                g_rootHorizontalHostBrowser = remaining.empty()
+                    ? nullptr
+                    : static_cast<ImageBrowserImpl*>(remaining.front());
+            }
+
+            if (g_contextMenuBrowser == this)
+            {
+                g_contextMenuBrowser = nullptr;
+            }
+
+            m_eventBus.reset();
+        }
+
+        size_t ImageBrowserCount() const
+        {
+            auto bus = m_eventBus.lock();
+            if (!bus)
+            {
+                return 0;
+            }
+            return bus->ImageBrowserCount();
+        }
+
+        std::vector<ImageBrowserImpl*> ImageBrowsersSnapshot() const
+        {
+            std::vector<ImageBrowserImpl*> out;
+            auto bus = m_eventBus.lock();
+            if (!bus)
+            {
+                return out;
+            }
+
+            const auto browsers = bus->ImageBrowsersSnapshot();
+            out.reserve(browsers.size());
+            for (auto* b : browsers)
+            {
+                if (b != nullptr)
+                {
+                    out.push_back(static_cast<ImageBrowserImpl*>(b));
+                }
+            }
+            return out;
+        }
+
+        void HandleBusEvent(const Ficture2Backplate::ImageBrowserEvent& ev)
+        {
+            if (ev.source == this)
+            {
+                return;
+            }
+
+            switch (ev.type)
+            {
+            case Ficture2Backplate::ImageBrowserEvent::Type::ThumbStripHeightChanged:
+                g_syncedThumbStripHeight = ev.thumbStripHeight;
+                g_hasSyncedThumbStripHeight = true;
+                (void)ApplySyncedThumbStripHeightIfNeeded(true);
+                if (BackplateRef() != nullptr)
+                {
+                    BackplateRef()->RequestLayout();
+                }
+                break;
+            case Ficture2Backplate::ImageBrowserEvent::Type::FileNameSelected:
+                OnSyncedFileNameSelected(ev.fileNameLower);
+                break;
+            case Ficture2Backplate::ImageBrowserEvent::Type::ViewTransformChanged:
+                if (!ev.fileNameLower.empty())
+                {
+                    const std::wstring otherNameLower = ActiveMainFileNameLower();
+                    if (!otherNameLower.empty() && otherNameLower == ev.fileNameLower)
+                    {
+                        ApplySyncedViewTransform(ev.viewTransform);
+                    }
+                }
+                break;
+            case Ficture2Backplate::ImageBrowserEvent::Type::ShowNavItemsChanged:
+                ApplyShowNavItems(ev.boolValue);
+                break;
+            case Ficture2Backplate::ImageBrowserEvent::Type::BackgroundColorChanged:
+                ApplyBrowserBackgroundColor(ev.color);
+                break;
+            case Ficture2Backplate::ImageBrowserEvent::Type::FocusedBackgroundColorChanged:
+                ApplyFocusedBackgroundColor(ev.color);
+                break;
+            case Ficture2Backplate::ImageBrowserEvent::Type::AlphaCheckerboardChanged:
+                ApplyAlphaCheckerboard(ev.boolValue);
+                break;
+            default:
+                break;
+            }
+        }
+
+        void ApplyShowNavItems(bool showNavItems)
+        {
+            m_showNavItems = showNavItems;
+
+            std::filesystem::path prefer {};
+            if (m_selectedIndex < m_items.size())
+            {
+                prefer = m_items[m_selectedIndex].path;
+            }
+            RebuildThumbList(prefer);
+        }
+
+        void ApplyBrowserBackgroundColor(const D2D1_COLOR_F& color)
+        {
+            m_browserBackgroundColor = color;
+        }
+
+        void ApplyFocusedBackgroundColor(const D2D1_COLOR_F& color)
+        {
+            m_browserFocusedBackgroundColor = color;
+        }
+
+        void ApplyAlphaCheckerboard(bool checkerEnabled)
+        {
+            if (m_mainImage)
+            {
+                m_mainImage->SetAlphaCheckerboardEnabled(checkerEnabled);
+            }
+
+            // Keep info bars in sync.
+            RefreshInfoPanel();
         }
 
         FD2D::Size Measure(FD2D::Size available) override
@@ -798,9 +974,9 @@ namespace
             // Per-ImageBrowser background (stationary, never pans with the image).
             // Draw in the D3D pass so it stays behind GPU-rendered images.
             FD2D::Backplate* bp = BackplateRef();
-            if (bp != nullptr && bp->D3DDevice() != nullptr && m_mainPaneHost != nullptr)
+            if (bp != nullptr && bp->D3DDevice() != nullptr && m_mainImage != nullptr)
             {
-                const D2D1_RECT_F r = m_mainPaneHost->LayoutRect();
+                const D2D1_RECT_F r = m_mainImage->LayoutRect();
                 if (r.right > r.left && r.bottom > r.top)
                 {
                     const D2D1_COLOR_F baseBg = m_browserBackgroundColor;
@@ -810,12 +986,9 @@ namespace
 
                     // Ensure the main image backdrop matches the ImageBrowser background
                     // so focus background doesn't "edge shift" when panning.
-                    for (auto& img : m_mainImages)
+                    if (m_mainImage)
                     {
-                        if (img)
-                        {
-                            img->SetBackdropColor(bg);
-                        }
+                        m_mainImage->SetBackdropColor(bg);
                     }
                 }
             }
@@ -838,9 +1011,9 @@ namespace
             {
                 FD2D::Backplate* bp = BackplateRef();
                 const bool d3dActive = (bp != nullptr && bp->D3DDevice() != nullptr);
-                if (!d3dActive && m_mainPaneHost != nullptr)
+                if (!d3dActive && m_mainImage != nullptr)
                 {
-                    const D2D1_RECT_F r = m_mainPaneHost->LayoutRect();
+                    const D2D1_RECT_F r = m_mainImage->LayoutRect();
                     if (r.right > r.left && r.bottom > r.top)
                     {
                         const D2D1_COLOR_F bg = HasFocus() ? m_browserFocusedBackgroundColor : m_browserBackgroundColor;
@@ -854,12 +1027,9 @@ namespace
                             target->FillRectangle(r, m_browserBgBrush.Get());
                         }
 
-                        for (auto& img : m_mainImages)
+                        if (m_mainImage)
                         {
-                            if (img)
-                            {
-                                img->SetBackdropColor(bg);
-                            }
+                            m_mainImage->SetBackdropColor(bg);
                         }
                     }
                 }
@@ -873,9 +1043,9 @@ namespace
             }
 
             // Drag&drop overlay (drawn on top of the main image area only).
-            if (m_dragOverlay != DragOverlayKind::None && m_mainPaneHost != nullptr)
+            if (m_dragOverlay != DragOverlayKind::None && m_mainImage != nullptr)
             {
-                const D2D1_RECT_F r = m_mainPaneHost->LayoutRect();
+                const D2D1_RECT_F r = m_mainImage->LayoutRect();
                 if (r.right > r.left && r.bottom > r.top)
                 {
                     if (m_dragOverlay == DragOverlayKind::Replace)
@@ -917,13 +1087,6 @@ namespace
             {
             case WM_FIC2_IPC_COMPARE:
                 return HandleIpcCompareMessage(lParam);
-
-            case WM_LBUTTONDOWN:
-            case WM_RBUTTONDOWN:
-            case WM_MBUTTONDOWN:
-            case WM_XBUTTONDOWN:
-                HandleMouseButtonDownFocusMessage(lParam);
-                break;
 
             case WM_RBUTTONUP:
                 return HandleContextMenuMessage(lParam);
@@ -970,83 +1133,12 @@ namespace
             return true;
         }
 
-        void HandleMouseButtonDownFocusMessage(LPARAM lParam)
-        {
-            const POINT pt { GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam) };
-            // In compare mode the "root" ImageBrowser hosts other ImageBrowsers horizontally,
-            // and its LayoutRect spans the whole backplate. Focus the most specific pane
-            // under the cursor so focus visuals (and key routing) target the correct viewer.
-            if (ImageBrowserImpl* best = FindImageBrowserAtPoint(pt))
-            {
-                best->RequestFocus();
-                return;
-            }
-
-            if (RectContainsPoint(LayoutRect(), pt))
-            {
-                RequestFocus();
-            }
-        }
-
-        ImageBrowserImpl* FindImageBrowserAtPoint(const POINT& pt) const
-        {
-            ImageBrowserImpl* best = nullptr;
-            float bestArea = 0.0f;
-
-            for (auto* b : g_allBrowsers)
-            {
-                if (b == nullptr)
-                {
-                    continue;
-                }
-
-                const D2D1_RECT_F r = b->LayoutRect();
-                if (!RectContainsPoint(r, pt))
-                {
-                    continue;
-                }
-
-                const float w = (std::max)(0.0f, r.right - r.left);
-                const float h = (std::max)(0.0f, r.bottom - r.top);
-                const float area = w * h;
-
-                // Choose the smallest containing rect (most specific/deepest pane).
-                if (best == nullptr || area < bestArea)
-                {
-                    best = b;
-                    bestArea = area;
-                }
-            }
-
-            return best;
-        }
-
         bool HandleContextMenuMessage(LPARAM lParam)
         {
             const POINT pt { GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam) };
             if (!RectContainsPoint(LayoutRect(), pt))
             {
                 return false;
-            }
-
-            // IMPORTANT:
-            // In compare mode, a root ImageBrowser can contain other ImageBrowsers as child panes.
-            // Windows message routing can therefore deliver WM_RBUTTONUP to a parent browser.
-            // We must resolve the actual ImageBrowser under the cursor and dispatch the command to it.
-            ImageBrowserImpl* target = FindImageBrowserAtPoint(pt);
-            if (target == nullptr)
-            {
-                target = this;
-            }
-
-            // Ensure the target browser acts on the pane under the cursor.
-            for (size_t i = 0; i < target->m_mainImages.size(); ++i)
-            {
-                if (target->m_mainImages[i] && RectContainsPoint(target->m_mainImages[i]->LayoutRect(), pt))
-                {
-                    target->SetActivePane(i);
-                    break;
-                }
             }
 
             FD2D::Backplate* backplate = BackplateRef();
@@ -1061,7 +1153,7 @@ namespace
                 return false;
             }
 
-            g_contextMenuBrowser = target;
+            g_contextMenuBrowser = this;
 
             const HINSTANCE instance = reinterpret_cast<HINSTANCE>(GetWindowLongPtrW(hwnd, GWLP_HINSTANCE));
             HMENU hMenu = LoadMenuW(instance, MAKEINTRESOURCEW(IDR_MENU_IMAGEBROWSER_CONTEXT));
@@ -1071,7 +1163,7 @@ namespace
                 if (hPopup != nullptr)
                 {
                     // Dynamic state: enable/disable and toggle labels.
-                    const int viewerCount = target->HorizontalViewerCount();
+                    const int viewerCount = HorizontalViewerCount();
                     EnableMenuItem(
                         hPopup,
                         IDM_CTX_OPEN_NEW_IMAGE,
@@ -1142,7 +1234,7 @@ namespace
 
             // Wheel over main image should affect the ImageBrowser under the cursor, even if it doesn't
             // currently have focus. Make it the active input source so zoom/view-sync behaves intuitively.
-            if (m_mainPaneHost != nullptr && RectContainsPoint(m_mainPaneHost->LayoutRect(), pt))
+            if (m_mainImage != nullptr && RectContainsPoint(m_mainImage->LayoutRect(), pt))
             {
                 RequestFocus();
             }
@@ -1330,16 +1422,6 @@ namespace
                 }
                 return false;
 
-            case '1':
-            case '2':
-            case '3':
-            case '4':
-                {
-                    const int idx = static_cast<int>(wParam - '1');
-                    SetActivePane(static_cast<size_t>(idx));
-                    return true;
-                }
-
             case VK_HOME:
                 SelectItemByIndex(0);
                 return true;
@@ -1388,14 +1470,14 @@ namespace
             }
 
             // Only accept drops onto the main image region (not the thumbnail strip).
-            if (m_mainPaneHost == nullptr || !RectContainsPoint(m_mainPaneHost->LayoutRect(), clientPt))
+            if (m_mainImage == nullptr || !RectContainsPoint(m_mainImage->LayoutRect(), clientPt))
             {
                 return false;
             }
 
             ClearDragOverlay();
 
-            const D2D1_RECT_F mainRect = m_mainPaneHost->LayoutRect();
+            const D2D1_RECT_F mainRect = m_mainImage->LayoutRect();
             const float mainW = (std::max)(1.0f, mainRect.right - mainRect.left);
             const float relX = (static_cast<float>(clientPt.x) - mainRect.left) / mainW;
 
@@ -1406,16 +1488,6 @@ namespace
             {
                 QueueInsertHorizontalWithPathAfterThis(p);
                 return true;
-            }
-
-            // Select the pane under the cursor (for 2-4 pane layouts).
-            for (size_t i = 0; i < m_mainImages.size(); ++i)
-            {
-                if (m_mainImages[i] && RectContainsPoint(m_mainImages[i]->LayoutRect(), clientPt))
-                {
-                    SetActivePane(i);
-                    break;
-                }
             }
 
             if (std::filesystem::exists(p) && std::filesystem::is_directory(p))
@@ -1436,14 +1508,14 @@ namespace
                 return true;
             }
 
-            if (m_mainPaneHost == nullptr)
+            if (m_mainImage == nullptr)
             {
                 outVisual = FD2D::FileDragVisual::None;
                 ClearDragOverlay();
                 return false;
             }
 
-            const D2D1_RECT_F r = m_mainPaneHost->LayoutRect();
+            const D2D1_RECT_F r = m_mainImage->LayoutRect();
             if (!RectContainsPoint(r, clientPt))
             {
                 outVisual = FD2D::FileDragVisual::None;
@@ -1761,7 +1833,7 @@ namespace
 
         void BuildUi()
         {
-            // Root: vertical split (main panes + thumb strip)
+            // Root: vertical split (main pane + thumb strip)
             auto rootSplit = std::make_shared<FD2D::SplitPanel>(L"rootSplit", FD2D::SplitterOrientation::Vertical);
             // Default: give more space to the main image; thumbnail strip starts shorter.
             rootSplit->SetSplitRatio(0.85f);
@@ -1806,12 +1878,14 @@ namespace
                 g_syncedThumbStripHeight = (std::max)(kThumbStripMinH, (std::min)(kThumbStripMaxH, h));
                 g_hasSyncedThumbStripHeight = true;
 
-                for (auto* b : g_allBrowsers)
+                auto bus = m_eventBus.lock();
+                if (bus)
                 {
-                    if (b != nullptr && b != this)
-                    {
-                                (void)b->ApplySyncedThumbStripHeightIfNeeded(true);
-                    }
+                    Ficture2Backplate::ImageBrowserEvent ev {};
+                    ev.type = Ficture2Backplate::ImageBrowserEvent::Type::ThumbStripHeightChanged;
+                    ev.source = this;
+                    ev.thumbStripHeight = g_syncedThumbStripHeight;
+                    bus->Publish(ev);
                 }
 
                 if (BackplateRef() != nullptr)
@@ -1841,7 +1915,6 @@ namespace
                 RebuildThumbList({});
             }
 
-            ApplyActiveSelectionStyle();
         }
 
         bool ApplySyncedThumbStripHeightIfNeeded(bool force = false)
@@ -1900,84 +1973,25 @@ namespace
             }
 
             // Create/recreate pane host
-            m_mainImages.clear();
-            m_mainGrid.reset();
+            m_mainImage.reset();
             m_mainDock.reset();
 
-            if (m_paneCount == 1)
+            auto mainImage = std::make_shared<FD2D::MainImage>(L"mainImage0");
+            if (!m_initialFile.empty())
             {
-                auto mainImage = std::make_shared<FD2D::MainImage>(L"mainImage0");
-                EnsureMainPathSlots();
-                if (!m_initialFile.empty())
-                {
-                    mainImage->SetSourceFile(m_initialFile);
-                    m_mainPaths[0] = m_initialFile;
-                }
-                mainImage->SetOnViewChanged([this](const FD2D::Image::ViewTransform& vt)
-                {
-                    OnActiveMainViewChanged(vt);
-                });
-                mainImage->SetOnClick([this]()
-                {
-                    SetActivePane(0);
-                });
-                ApplyIniToMainImage(*mainImage);
-                m_mainImages.push_back(mainImage);
-                m_mainPaneHost = mainImage;
+                mainImage->SetSourceFile(m_initialFile);
+                m_mainPath = m_initialFile;
             }
-            else
+            mainImage->SetOnViewChanged([this](const FD2D::Image::ViewTransform& vt)
             {
-                auto grid = std::make_shared<FD2D::GridPanel>(L"mainGrid");
-
-                // Layout: 2 panes = 1 row x 2 cols, 3-4 panes = 2x2.
-                std::vector<FD2D::GridLength> cols;
-                std::vector<FD2D::GridLength> rows;
-                cols.push_back({ FD2D::GridLength::Type::Star, 1.0f });
-                cols.push_back({ FD2D::GridLength::Type::Star, 1.0f });
-
-                if (m_paneCount == 2)
-                {
-                    rows.push_back({ FD2D::GridLength::Type::Star, 1.0f });
-                }
-                else
-                {
-                    rows.push_back({ FD2D::GridLength::Type::Star, 1.0f });
-                    rows.push_back({ FD2D::GridLength::Type::Star, 1.0f });
-                }
-
-                grid->SetColumns(cols);
-                grid->SetRows(rows);
-
-                for (int i = 0; i < m_paneCount; ++i)
-                {
-                    auto img = std::make_shared<FD2D::MainImage>(L"mainImage" + std::to_wstring(i));
-                    EnsureMainPathSlots();
-                    if (!m_initialFile.empty())
-                    {
-                        img->SetSourceFile(m_initialFile);
-                        m_mainPaths[static_cast<size_t>(i)] = m_initialFile;
-                    }
-                    img->SetOnViewChanged([this](const FD2D::Image::ViewTransform& vt)
-                    {
-                        OnActiveMainViewChanged(vt);
-                    });
-                    const size_t idx = static_cast<size_t>(i);
-                    img->SetOnClick([this, idx]()
-                    {
-                        SetActivePane(idx);
-                    });
-                    ApplyIniToMainImage(*img);
-                    m_mainImages.push_back(img);
-
-                    int col = (m_paneCount == 2) ? i : (i % 2);
-                    int row = (m_paneCount == 2) ? 0 : (i / 2);
-                    grid->AddChild(img);
-                    grid->SetChildCell(img, col, row);
-                }
-
-                m_mainGrid = grid;
-                m_mainPaneHost = grid;
-            }
+                OnActiveMainViewChanged(vt);
+            });
+            mainImage->SetOnClick([this]()
+            {
+                RequestFocus();
+            });
+            ApplyIniToMainImage(*mainImage);
+            m_mainImage = mainImage;
 
             if (!m_infoBar)
             {
@@ -1994,35 +2008,16 @@ namespace
             dock->SetChildDock(m_pathBar, FD2D::Dock::Top);
             dock->AddChild(m_infoBar);
             dock->SetChildDock(m_infoBar, FD2D::Dock::Bottom);
-            dock->AddChild(m_mainPaneHost);
-            dock->SetChildDock(m_mainPaneHost, FD2D::Dock::Fill);
+            dock->AddChild(m_mainImage);
+            dock->SetChildDock(m_mainImage, FD2D::Dock::Fill);
             m_mainDock = dock;
             m_rootSplit->SetFirstChild(dock);
 
-            ApplyActiveSelectionStyle();
-        }
-
-        void EnsureMainPathSlots()
-        {
-            const size_t needed = static_cast<size_t>((std::max)(1, m_paneCount));
-            if (m_mainPaths.size() != needed)
-            {
-                m_mainPaths.resize(needed);
-            }
         }
 
         std::wstring ActiveMainPath() const
         {
-            if (m_mainPaths.empty())
-            {
-                return L"";
-            }
-            size_t idx = m_activePane;
-            if (idx >= m_mainPaths.size())
-            {
-                idx = 0;
-            }
-            return m_mainPaths[idx];
+            return m_mainPath;
         }
 
         std::wstring ActiveMainFileNameLower() const
@@ -2125,7 +2120,7 @@ namespace
             }
         }
 
-        void ApplyIniToMainImage(FD2D::Image& mainImage)
+        void ApplyIniToMainImage(FD2D::MainImage& mainImage)
         {
             wchar_t iniPath[MAX_PATH];
             if (SUCCEEDED(SHGetFolderPathW(nullptr, CSIDL_LOCAL_APPDATA, nullptr, SHGFP_TYPE_CURRENT, iniPath)))
@@ -2150,41 +2145,9 @@ namespace
             }
         }
 
-        std::shared_ptr<FD2D::Image> ActiveMainImage() const
+        std::shared_ptr<FD2D::MainImage> ActiveMainImage() const
         {
-            if (m_mainImages.empty())
-            {
-                return nullptr;
-            }
-
-            size_t idx = m_activePane;
-            if (idx >= m_mainImages.size())
-            {
-                idx = 0;
-            }
-            return m_mainImages[idx];
-        }
-
-        void SetActivePane(size_t index)
-        {
-            if (m_mainImages.empty())
-            {
-                m_activePane = 0;
-                return;
-            }
-
-            if (index >= m_mainImages.size())
-            {
-                index = m_mainImages.size() - 1;
-            }
-
-            m_activePane = index;
-            ApplyActiveSelectionStyle();
-        }
-
-        void ApplyActiveSelectionStyle()
-        {
-            // Main images do not render selection borders; keep active-pane purely as a logical state.
+            return m_mainImage;
         }
 
         void ApplyMainFromIndex(size_t index)
@@ -2203,11 +2166,7 @@ namespace
             mainImage->SetLoadingSpinnerEnabled(true);
             const std::wstring p = m_items[index].path.wstring();
             mainImage->SetSourceFile(p);
-            EnsureMainPathSlots();
-            if (m_activePane < m_mainPaths.size())
-            {
-                m_mainPaths[m_activePane] = p;
-            }
+            m_mainPath = p;
             mainImage->Invalidate();
             RefreshInfoPanel();
         }
@@ -2276,7 +2235,7 @@ namespace
             // If we are in compare mode (2+ ImageBrowsers) and a new image is selected in the thumbnail list,
             // propagate its filename to other ImageBrowsers. Receivers select the same filename in their
             // current directory (if present).
-            if (!m_syncSuppressBroadcast && g_allBrowsers.size() >= 2 && m_selectedIndex < m_items.size())
+            if (!m_syncSuppressBroadcast && ImageBrowserCount() >= 2 && m_selectedIndex < m_items.size())
             {
                 const ThumbItem& item = m_items[m_selectedIndex];
                 if (item.kind == ThumbItemKind::Image)
@@ -2284,13 +2243,14 @@ namespace
                     const std::wstring fileNameLower = ToLower(item.path.filename().wstring());
                     if (!fileNameLower.empty())
                     {
-                        for (auto* b : g_allBrowsers)
+                        auto bus = m_eventBus.lock();
+                        if (bus)
                         {
-                            if (b == nullptr || b == this)
-                            {
-                                continue;
-                            }
-                            b->OnSyncedFileNameSelected(fileNameLower);
+                            Ficture2Backplate::ImageBrowserEvent ev {};
+                            ev.type = Ficture2Backplate::ImageBrowserEvent::Type::FileNameSelected;
+                            ev.source = this;
+                            ev.fileNameLower = fileNameLower;
+                            bus->Publish(ev);
                         }
                     }
                 }
@@ -2368,7 +2328,7 @@ namespace
             }
 
             // Only sync in compare mode (2+ ImageBrowsers).
-            if (g_allBrowsers.size() < 2)
+            if (ImageBrowserCount() < 2)
             {
                 return;
             }
@@ -2387,20 +2347,15 @@ namespace
                 return;
             }
 
-            for (auto* b : g_allBrowsers)
+            auto bus = m_eventBus.lock();
+            if (bus)
             {
-                if (!b || b == this)
-                {
-                    continue;
-                }
-
-                const std::wstring otherNameLower = b->ActiveMainFileNameLower();
-                if (otherNameLower.empty() || otherNameLower != myNameLower)
-                {
-                    continue;
-                }
-
-                b->ApplySyncedViewTransform(vt);
+                Ficture2Backplate::ImageBrowserEvent ev {};
+                ev.type = Ficture2Backplate::ImageBrowserEvent::Type::ViewTransformChanged;
+                ev.source = this;
+                ev.fileNameLower = myNameLower;
+                ev.viewTransform = vt;
+                bus->Publish(ev);
             }
         }
 
@@ -2440,22 +2395,16 @@ namespace
             g_showNavItems = !g_showNavItems;
             PersistShowNavItems();
 
-            // Apply globally to all ImageBrowsers.
-            for (auto* b : g_allBrowsers)
+            ApplyShowNavItems(g_showNavItems);
+
+            auto bus = m_eventBus.lock();
+            if (bus)
             {
-                if (b == nullptr)
-                {
-                    continue;
-                }
-
-                b->m_showNavItems = g_showNavItems;
-
-                std::filesystem::path prefer {};
-                if (b->m_selectedIndex < b->m_items.size())
-                {
-                    prefer = b->m_items[b->m_selectedIndex].path;
-                }
-                b->RebuildThumbList(prefer);
+                Ficture2Backplate::ImageBrowserEvent ev {};
+                ev.type = Ficture2Backplate::ImageBrowserEvent::Type::ShowNavItemsChanged;
+                ev.source = this;
+                ev.boolValue = g_showNavItems;
+                bus->Publish(ev);
             }
         }
 
@@ -2962,12 +2911,15 @@ namespace
 
             bp->SetClearColor(next);
             // Keep per-ImageBrowser backgrounds in sync with global clear.
-            for (auto* br : g_allBrowsers)
+            ApplyBrowserBackgroundColor(next);
+            auto bus = m_eventBus.lock();
+            if (bus)
             {
-                if (br)
-                {
-                    br->m_browserBackgroundColor = next;
-                }
+                Ficture2Backplate::ImageBrowserEvent ev {};
+                ev.type = Ficture2Backplate::ImageBrowserEvent::Type::BackgroundColorChanged;
+                ev.source = this;
+                ev.color = next;
+                bus->Publish(ev);
             }
 
             std::wstring iniFile;
@@ -3021,12 +2973,15 @@ namespace
                 static_cast<float>(b) / 255.0f,
                 1.0f);
 
-            for (auto* br : g_allBrowsers)
+            ApplyFocusedBackgroundColor(g_focusedBrowserBackgroundColor);
+            auto bus = m_eventBus.lock();
+            if (bus)
             {
-                if (br)
-                {
-                    br->m_browserFocusedBackgroundColor = g_focusedBrowserBackgroundColor;
-                }
+                Ficture2Backplate::ImageBrowserEvent ev {};
+                ev.type = Ficture2Backplate::ImageBrowserEvent::Type::FocusedBackgroundColorChanged;
+                ev.source = this;
+                ev.color = g_focusedBrowserBackgroundColor;
+                bus->Publish(ev);
             }
 
             if (bp->Window() != nullptr)
@@ -3048,23 +3003,15 @@ namespace
             g_showAlpha = !g_showAlpha;
             const bool checkerEnabled = !g_showAlpha;
 
-            for (auto* b : g_allBrowsers)
+            ApplyAlphaCheckerboard(checkerEnabled);
+            auto bus = m_eventBus.lock();
+            if (bus)
             {
-                if (b == nullptr)
-                {
-                    continue;
-                }
-
-                for (auto& img : b->m_mainImages)
-                {
-                    if (img)
-                    {
-                        img->SetAlphaCheckerboardEnabled(checkerEnabled);
-                    }
-                }
-
-                // Keep info bars in sync.
-                b->RefreshInfoPanel();
+                Ficture2Backplate::ImageBrowserEvent ev {};
+                ev.type = Ficture2Backplate::ImageBrowserEvent::Type::AlphaCheckerboardChanged;
+                ev.source = this;
+                ev.boolValue = checkerEnabled;
+                bus->Publish(ev);
             }
         }
 
@@ -3378,20 +3325,15 @@ namespace
             m_hHost = host;
         }
 
-        int m_paneCount { 1 };
-        size_t m_activePane { 0 };
-
         std::shared_ptr<FD2D::SplitPanel> m_rootSplit {};
-        std::shared_ptr<FD2D::Wnd> m_mainPaneHost {};
-        std::shared_ptr<FD2D::GridPanel> m_mainGrid {};
         std::shared_ptr<FD2D::DockPanel> m_mainDock {};
         std::shared_ptr<PathBar> m_pathBar {};
         std::shared_ptr<InfoBar> m_infoBar {};
         std::wstring m_lastPathText {};
         std::wstring m_lastInfoText {};
         std::wstring m_lastZoomText {};
-        std::vector<std::shared_ptr<FD2D::Image>> m_mainImages {};
-        std::vector<std::wstring> m_mainPaths {};
+        std::shared_ptr<FD2D::MainImage> m_mainImage {};
+        std::wstring m_mainPath {};
 
         std::shared_ptr<FD2D::Wnd> m_selectedFocus {};
         std::shared_ptr<FD2D::ScrollView> m_thumbScroll {};
@@ -3420,6 +3362,8 @@ namespace
         // (no focus-background state)
         bool m_syncSuppressBroadcast { false };
         bool m_viewSyncSuppressBroadcast { false };
+        std::weak_ptr<Ficture2Backplate::EventBus> m_eventBus {};
+        Ficture2Backplate::EventBus::HandlerId m_eventBusToken { 0 };
 
         enum class DragOverlayKind
         {
@@ -3523,7 +3467,8 @@ void ImageBrowser_SaveSessionToIni(const std::wstring& iniFile)
     }
 
     // Save viewer count + per-viewer displayed file.
-    const int count = static_cast<int>((std::min)(static_cast<size_t>(4), g_allBrowsers.size()));
+    const std::vector<ImageBrowserImpl*> browsers = g_rootHorizontalHostBrowser->ImageBrowsersSnapshot();
+    const int count = static_cast<int>((std::min)(static_cast<size_t>(4), browsers.size()));
     {
         wchar_t buf[32] {};
         _itow_s(count, buf, 10);
@@ -3546,7 +3491,7 @@ void ImageBrowser_SaveSessionToIni(const std::wstring& iniFile)
 
     for (int i = 0; i < count; ++i)
     {
-        auto* b = g_allBrowsers[static_cast<size_t>(i)];
+        auto* b = browsers[static_cast<size_t>(i)];
         if (!b)
         {
             continue;
@@ -3674,7 +3619,8 @@ bool ImageBrowser_TryRestoreSessionFromIni(const std::wstring& iniFile)
     // Apply thumb strip height across all (will clamp to min/max on layout).
     if (g_hasSyncedThumbStripHeight)
     {
-        for (auto* b : g_allBrowsers)
+        const std::vector<ImageBrowserImpl*> browsers = g_rootHorizontalHostBrowser->ImageBrowsersSnapshot();
+        for (auto* b : browsers)
         {
             if (b)
             {
