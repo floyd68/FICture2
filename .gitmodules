@@ -9,3 +9,6 @@
 	path = ImageCore
 	url = https://github.com/floyd68/ImageCore.git
 	branch = master
+[submodule "ThumbnailProvider"]
+	path = ThumbnailProvider
+	url = https://github.com/floyd68/FICture2-ThumbnailProvider.git
