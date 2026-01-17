@@ -84,13 +84,10 @@
     </ResourceCompile>
   </ItemGroup>
   <ItemGroup>
-    <Image Include="small.ico">
-      <Filter>리소스 파일</Filter>
-    </Image>
-    <Image Include="FICture2.ico">
-      <Filter>리소스 파일</Filter>
-    </Image>
     <Image Include="assets\icons8-folder-144.png">
+      <Filter>리소스 파일</Filter>
+    </Image>
+    <Image Include="F2.ico">
       <Filter>리소스 파일</Filter>
     </Image>
   </ItemGroup>

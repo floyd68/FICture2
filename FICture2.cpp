@@ -279,6 +279,8 @@ int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
     opts.title = g_title;
     opts.chrome = FD2D::ChromeStyle::Standard;
     opts.instance = hInstance;
+    opts.iconLarge = LoadIcon(hInstance, MAKEINTRESOURCE(IDI_FICTURE2));
+    opts.iconSmall = LoadIcon(hInstance, MAKEINTRESOURCE(IDI_FICTURE2));
     // User override:
     //   --renderer=d2d  : force D2D-only renderer (more compatible, no D3D pass)
     //   --renderer=d3d  : prefer D3D11 swapchain renderer (default, fastest)
