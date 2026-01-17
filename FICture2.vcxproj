@@ -160,7 +160,6 @@
     <ClInclude Include="FICture2.h" />
     <ClInclude Include="AppIpc.h" />
     <ClInclude Include="AppSetup.h" />
-    <ClInclude Include="DebugFileLog.h" />
     <ClInclude Include="Ficture2Backplate.h" />
     <ClInclude Include="framework.h" />
     <ClInclude Include="ImageBrowser.h" />
@@ -173,7 +172,6 @@
   <ItemGroup>
     <ClCompile Include="AppIpc.cpp" />
     <ClCompile Include="AppSetup.cpp" />
-    <ClCompile Include="DebugFileLog.cpp" />
     <ClCompile Include="FICture2.cpp" />
     <ClCompile Include="Ficture2Backplate.cpp" />
     <ClCompile Include="ImageBrowser.cpp" />

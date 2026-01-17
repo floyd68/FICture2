@@ -2,7 +2,6 @@
 
 #include "framework.h"
 #include "Resource.h"
-#include "DebugFileLog.h"
 #include "ThumbNavTile.h"
 #include "ThumbImageTile.h"
 #include "IpcCompareRequest.h"
@@ -1123,7 +1122,6 @@ namespace
             auto* req = reinterpret_cast<IpcCompareRequest*>(lParam);
             if (req != nullptr)
             {
-                DebugFileLog::WriteLine(L"IPC_UI", req->path);
                 req->compareStarted = TryStartCompareWithFileNameMatch(req->path);
                 if (req->doneEvent != nullptr)
                 {
@@ -1628,8 +1626,6 @@ namespace
                 return;
             }
 
-            DebugFileLog::WriteLine(L"RESTORE_FILE", p.wstring());
-
             m_currentFolder = p.parent_path();
 
             RebuildThumbList(p);
@@ -1640,7 +1636,6 @@ namespace
                 if (m_items[i].kind == ThumbItemKind::Image && PathEqualsInsensitive(m_items[i].path, p))
                 {
                     SelectItemByIndex(i);
-                    DebugFileLog::WriteLine(L"RESTORE_MATCH", m_items[i].path.wstring());
                     return;
                 }
             }
@@ -1651,7 +1646,6 @@ namespace
                 if (m_items[i].kind == ThumbItemKind::Image)
                 {
                     SelectItemByIndex(i);
-                    DebugFileLog::WriteLine(L"RESTORE_FALLBACK", m_items[i].path.wstring());
                     return;
                 }
             }
@@ -3520,8 +3514,6 @@ bool ImageBrowser_TryRestoreSessionFromIni(const std::wstring& iniFile)
 
     const int clampedCount = (std::max)(1, (std::min)(4, count));
 
-    DebugFileLog::WriteLine(L"INI", L"RestoreSession start: " + iniFile);
-
 #if defined(_DEBUG)
     {
         wchar_t msg[1024] {};
@@ -3561,15 +3553,6 @@ bool ImageBrowser_TryRestoreSessionFromIni(const std::wstring& iniFile)
         buf[0] = 0;
         const DWORD nFolder = GetPrivateProfileStringW(sec.c_str(), L"CurrentFolder", L"", buf, static_cast<DWORD>(std::size(buf)), iniFile.c_str());
         std::wstring folder = (nFolder > 0 && buf[0] != 0) ? std::wstring(buf) : std::wstring();
-
-        if (!file.empty())
-        {
-            DebugFileLog::WriteLine(L"INI_FILE", file);
-        }
-        if (!folder.empty())
-        {
-            DebugFileLog::WriteLine(L"INI_FOLDER", folder);
-        }
 
         viewers.push_back({ std::move(file), std::move(folder) });
     }

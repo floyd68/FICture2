@@ -45,9 +45,6 @@
     <ClInclude Include="ThumbNavTile.h">
       <Filter>헤더 파일</Filter>
     </ClInclude>
-    <ClInclude Include="DebugFileLog.h">
-      <Filter>헤더 파일</Filter>
-    </ClInclude>
     <ClInclude Include="Ficture2Backplate.h">
       <Filter>헤더 파일</Filter>
     </ClInclude>
@@ -69,9 +66,6 @@
       <Filter>소스 파일</Filter>
     </ClCompile>
     <ClCompile Include="ThumbNavTile.cpp">
-      <Filter>소스 파일</Filter>
-    </ClCompile>
-    <ClCompile Include="DebugFileLog.cpp">
       <Filter>소스 파일</Filter>
     </ClCompile>
     <ClCompile Include="Ficture2Backplate.cpp">

@@ -8,7 +8,6 @@
 #include "FD2D/Core.h"
 #include "AppIpc.h"
 #include "AppSetup.h"
-#include "DebugFileLog.h"
 #include "ImageBrowser.h"
 #include "IpcCompareRequest.h"
 
@@ -192,18 +191,6 @@ int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
     // Extract initial file path (if any).
     const std::wstring initialFile = GetInitialFileFromCommandLine();
 
-#if !defined(_DEBUG)
-    // Always log incoming file paths for debugging in release as well (best-effort).
-#endif
-    if (!initialFile.empty())
-    {
-        DebugFileLog::WriteLine(L"CMD", initialFile);
-    }
-    else
-    {
-        DebugFileLog::WriteLine(L"CMD", L"(no file argument)");
-    }
-
 #if defined(_DEBUG)
     {
         wchar_t msg[1024] {};
@@ -357,8 +344,6 @@ int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
             std::weak_ptr<FD2D::Backplate> weakBackplate = backplate;
             AppIpc::StartServer([weakBackplate](const std::wstring& path) -> AppIpc::Decision
             {
-                DebugFileLog::WriteLine(L"IPC_IN", path);
-
                 auto bp = weakBackplate.lock();
                 if (!bp || bp->Window() == nullptr)
                 {
