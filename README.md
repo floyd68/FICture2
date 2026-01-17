@@ -13,6 +13,10 @@ Double-click a texture and you're already comparing it.
 
 Watch the demo: [https://youtu.be/2eowYOEa5dw](https://youtu.be/2eowYOEa5dw)
 
+## Download
+
+FICture2 is available on NexusMods: [https://www.nexusmods.com/fallout4/mods/100267](https://www.nexusmods.com/fallout4/mods/100267)
+
 ## Why FICture2 exists
 
 Most image viewers claim to support DDS — but in reality:
