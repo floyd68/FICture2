@@ -3,9 +3,15 @@
 **FICture2** is an ultra-lightweight, high-performance image viewer and comparison tool built **specifically for game modders and texture artists**.
 
 It aims for a **sub-1MB executable** with **near-instant startup** — no splash screen, no heavy frameworks, no delay.
-Double-click a texture and you’re already comparing it.
+Double-click a texture and you're already comparing it.
 
-> **FICture2** is an acronym for **Floyd’s Image Compare miniaTURE 2**.
+> **FICture2** is an acronym for **Floyd's Image Compare miniaTURE 2**.
+
+## Demo Video
+
+[![FICture2 Demo](https://img.youtube.com/vi/2eowYOEa5dw/0.jpg)](https://youtu.be/2eowYOEa5dw)
+
+Watch the demo: [https://youtu.be/2eowYOEa5dw](https://youtu.be/2eowYOEa5dw)
 
 ## Why FICture2 exists
 
@@ -96,6 +102,28 @@ This repository is the “app shell” that wires the UI and decode pipeline tog
 - **`FD2D/` (submodule)**: lightweight Win32 UI framework using Direct2D/DirectWrite (and optional D3D11 swapchain renderer)
 - **`ImageCore/` (submodule)**: async image decode pipeline (WIC + DirectXTex)
 - **`external/DirectXTex/` (submodule)**: DirectXTex library (external dependency)
+
+## Installation & running
+
+### Requirements
+
+- Windows 10/11 (x64)
+- Visual Studio 2022 with **Desktop development with C++**
+- Windows 10/11 SDK
+
+### Build
+
+1. Clone repo with submodules:
+   - `git clone --recurse-submodules https://github.com/floyd68/FICture2.git`
+2. Open `FICture2.slnx` in Visual Studio
+3. Select **Release x64**
+4. Build `FICture2` project
+
+### Run
+
+- Launch the built exe from `x64\Release\FICture2.exe`
+- Or run from a terminal:
+  - `FICture2.exe "C:\path\to\image.dds"`
 
 ## Quick start
 
