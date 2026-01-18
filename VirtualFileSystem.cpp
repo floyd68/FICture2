@@ -4,6 +4,7 @@
 #include <cwctype>
 #include <fstream>
 #include <unordered_set>
+#include <Windows.h>
 
 namespace
 {
@@ -217,10 +218,12 @@ std::vector<VirtualFileEntry> VirtualFileSystem::ListArchiveRoot(const std::file
     auto reader = ArchiveReaderFactory::Open(archivePath);
     if (!reader)
     {
+        OutputDebugStringW((L"[VFS] Failed to open archive: " + archivePath.wstring() + L"\n").c_str());
         return entries;
     }
 
     auto archiveEntries = reader->ListEntries();
+    OutputDebugStringW((L"[VFS] Archive has " + std::to_wstring(archiveEntries.size()) + L" entries\n").c_str());
     std::unordered_set<std::wstring> addedDirs;
 
     for (const auto& archEntry : archiveEntries)
