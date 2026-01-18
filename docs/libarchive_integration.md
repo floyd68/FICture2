@@ -19,7 +19,7 @@ Build script: `external/libarchive/build-minimal.ps1`
 
 **CMake Configuration:**
 ```cmake
--G "Visual Studio 17 2022"       # VS 2022 (compatible with v145 toolset)
+-G "Visual Studio 18 2026"       # VS 2026 (v145 toolset)
 -A x64                           # 64-bit platform
 -DBUILD_SHARED_LIBS=OFF          # Static library
 -DENABLE_ZLIB=ON                 # ZIP deflate (REQUIRED)
@@ -38,7 +38,7 @@ Build script: `external/libarchive/build-minimal.ps1`
 -DENABLE_XATTR=OFF               # No extended attributes
 ```
 
-**Note**: FICture2 uses PlatformToolset `v145` (Visual Studio 2022). The CMake generator "Visual Studio 17 2022" uses `v143` toolset by default, but they are binary compatible.
+**Note**: FICture2 uses PlatformToolset `v145` (Visual Studio 2026). The CMake generator "Visual Studio 18 2026" matches this toolset.
 
 **Build Output:**
 - Debug: `external/libarchive/build-minimal/libarchive/Debug/archive.lib`
