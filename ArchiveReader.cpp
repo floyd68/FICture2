@@ -86,10 +86,7 @@ public:
         archive_read_support_format_rar(a);
 
         // Enable compression filters
-        archive_read_support_filter_none(a);
-        archive_read_support_filter_deflate(a);
-        archive_read_support_filter_lzma(a);
-        archive_read_support_filter_bzip2(a);
+        archive_read_support_filter_all(a);
 
         std::string pathUtf8 = WideToUtf8(m_path.wstring());
         int r = archive_read_open_filename(a, pathUtf8.c_str(), 10240);
@@ -153,10 +150,7 @@ private:
         archive_read_support_format_rar(a);
 
         // Enable compression filters
-        archive_read_support_filter_none(a);
-        archive_read_support_filter_deflate(a);
-        archive_read_support_filter_lzma(a);
-        archive_read_support_filter_bzip2(a);
+        archive_read_support_filter_all(a);
 
         std::string pathUtf8 = WideToUtf8(m_path.wstring());
         int r = archive_read_open_filename(a, pathUtf8.c_str(), 10240);
