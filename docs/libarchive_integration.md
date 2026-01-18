@@ -19,13 +19,15 @@ Build script: `external/libarchive/build-minimal.ps1`
 
 **CMake Configuration:**
 ```cmake
+-G "Visual Studio 17 2022"       # VS 2022 (compatible with v145 toolset)
+-A x64                           # 64-bit platform
 -DBUILD_SHARED_LIBS=OFF          # Static library
--DENABLE_ZLIB=ON                 # ZIP deflate
--DENABLE_LZMA=ON                 # 7z LZMA/XZ
--DENABLE_BZip2=OFF               # Disabled
--DENABLE_ZSTD=OFF                # Disabled
--DENABLE_LZ4=OFF                 # Disabled
--DENABLE_LZO=OFF                 # Disabled
+-DENABLE_ZLIB=ON                 # ZIP deflate (REQUIRED)
+-DENABLE_LZMA=ON                 # 7z LZMA/XZ (REQUIRED)
+-DENABLE_BZip2=OFF               # Disabled (not needed)
+-DENABLE_ZSTD=OFF                # Disabled (not needed)
+-DENABLE_LZ4=OFF                 # Disabled (not needed)
+-DENABLE_LZO=OFF                 # Disabled (not needed)
 -DENABLE_OPENSSL=OFF             # No encryption
 -DENABLE_TAR=OFF                 # No TAR format
 -DENABLE_CPIO=OFF                # No CPIO format
@@ -36,6 +38,8 @@ Build script: `external/libarchive/build-minimal.ps1`
 -DENABLE_XATTR=OFF               # No extended attributes
 ```
 
+**Note**: FICture2 uses PlatformToolset `v145` (Visual Studio 2022). The CMake generator "Visual Studio 17 2022" uses `v143` toolset by default, but they are binary compatible.
+
 **Build Output:**
 - Debug: `external/libarchive/build-minimal/libarchive/Debug/archive.lib`
 - Release: `external/libarchive/build-minimal/libarchive/Release/archive.lib`
@@ -45,11 +49,11 @@ Build script: `external/libarchive/build-minimal.ps1`
 
 ### Supported Archive Formats
 
-| Format | Read | Write | Notes |
-|--------|------|-------|-------|
-| **ZIP** | ✅ | ❌ | Deflate compression |
-| **7-Zip** | ✅ | ❌ | LZMA/LZMA2/XZ compression |
-| **RAR** | ✅ | ❌ | RAR3/RAR5, read-only |
+| Format | Read | Write | Compression Filters |
+|--------|------|-------|---------------------|
+| **ZIP** | ✅ | ❌ | gzip (deflate) |
+| **7-Zip** | ✅ | ❌ | LZMA, LZMA2, XZ |
+| **RAR** | ✅ | ❌ | Built-in decoder |
 
 ### Compression Filters
 
@@ -60,10 +64,10 @@ archive_read_support_filter_none(a);    // Uncompressed
 archive_read_support_filter_gzip(a);    // ZIP deflate/gzip
 archive_read_support_filter_lzma(a);    // 7z LZMA
 archive_read_support_filter_xz(a);      // 7z XZ
-archive_read_support_filter_bzip2(a);   // Optional: bzip2
 ```
 
 **Excluded filters** (to reduce size):
+- ❌ `bzip2` - BZip2 compression (not used in ZIP/7z/RAR typically)
 - ❌ `zstd` - Zstandard compression
 - ❌ `lz4` - LZ4 compression
 - ❌ `lzo` - LZO compression
