@@ -2488,12 +2488,16 @@ namespace
 
         void NavigateToFolder(const VirtualPath& folder)
         {
+            OutputDebugStringW((L"[ImageBrowser] NavigateToFolder: " + folder.GetDisplayPath() + L"\n").c_str());
+            
             // Check if folder is valid (directory or archive)
             if (!VirtualFileSystem::IsDirectory(folder))
             {
+                OutputDebugStringW(L"[ImageBrowser] Not a directory, aborting\n");
                 return;
             }
 
+            OutputDebugStringW(L"[ImageBrowser] Setting current folder and rebuilding thumb list\n");
             m_currentFolder = folder;
             RebuildThumbList(VirtualPath());
 
@@ -2553,10 +2557,13 @@ namespace
             if (m_currentFolder.hostPath.empty())
             {
                 // No current folder set
+                OutputDebugStringW(L"[ImageBrowser] RebuildThumbList: No current folder set\n");
             }
             else
             {
+                OutputDebugStringW((L"[ImageBrowser] RebuildThumbList: Listing " + m_currentFolder.GetDisplayPath() + L"\n").c_str());
                 auto entries = VirtualFileSystem::ListDirectory(m_currentFolder);
+                OutputDebugStringW((L"[ImageBrowser] RebuildThumbList: Found " + std::to_wstring(entries.size()) + L" entries\n").c_str());
                 
                 for (const auto& entry : entries)
                 {
