@@ -78,6 +78,17 @@ namespace
         return std::wstring(prefix) + L"_" + Hex64(Fnv1a64(s)) + L"_tile";
     }
 
+    static std::wstring MakeStableThumbName(const wchar_t* prefix, const VirtualPath& vp)
+    {
+        std::wstring s = vp.GetDisplayPath();
+        for (auto& c : s)
+        {
+            c = static_cast<wchar_t>(towlower(c));
+        }
+
+        return std::wstring(prefix) + L"_" + Hex64(Fnv1a64(s)) + L"_tile";
+    }
+
     static std::wstring NormalizePathLowerForCompare(const std::filesystem::path& p)
     {
         std::wstring s = p.wstring();
@@ -99,6 +110,16 @@ namespace
     static bool PathEqualsInsensitive(const std::filesystem::path& a, const std::filesystem::path& b)
     {
         return NormalizePathLowerForCompare(a) == NormalizePathLowerForCompare(b);
+    }
+
+    static bool PathEqualsInsensitive(const std::filesystem::path& a, const VirtualPath& b)
+    {
+        return NormalizePathLowerForCompare(a) == NormalizePathLowerForCompare(b.hostPath);
+    }
+
+    static bool PathEqualsInsensitive(const VirtualPath& a, const VirtualPath& b)
+    {
+        return a == b;
     }
 
     static bool TryGetIniFilePath(std::wstring& outIniFile)
@@ -923,7 +944,7 @@ namespace
         {
             m_showNavItems = showNavItems;
 
-            std::filesystem::path prefer {};
+            VirtualPath prefer {};
             if (m_selectedIndex < m_items.size())
             {
                 prefer = m_items[m_selectedIndex].path;
@@ -1481,22 +1502,26 @@ namespace
             const float mainW = (std::max)(1.0f, mainRect.right - mainRect.left);
             const float relX = (static_cast<float>(clientPt.x) - mainRect.left) / mainW;
 
-            const std::filesystem::path p(path);
+            auto vp = VirtualPath::Parse(path);
+            if (!vp)
+            {
+                return false;
+            }
 
             // Right 1/4: insert new ImageBrowser to the right and open the dropped path there.
             if (relX >= 0.75f)
             {
-                QueueInsertHorizontalWithPathAfterThis(p);
+                QueueInsertHorizontalWithPathAfterThis(*vp);
                 return true;
             }
 
-            if (std::filesystem::exists(p) && std::filesystem::is_directory(p))
+            if (VirtualFileSystem::IsDirectory(*vp))
             {
-                QueueDeferredAction(DeferredActionKind::NavigateToFolder, p);
+                QueueDeferredAction(DeferredActionKind::NavigateToFolder, *vp);
                 return true;
             }
 
-            QueueDeferredAction(DeferredActionKind::NavigateToFile, p);
+            QueueDeferredAction(DeferredActionKind::NavigateToFile, *vp);
             return true;
         }
 
@@ -1582,7 +1607,11 @@ namespace
                 return false;
             }
 
-            SplitHorizontalWithFile(std::filesystem::path(incomingFilePath));
+            auto vp = VirtualPath::Parse(incomingFilePath);
+            if (vp)
+            {
+                SplitHorizontalWithFile(*vp);
+            }
             return true;
         }
 
@@ -1622,20 +1651,21 @@ namespace
                 return;
             }
 
-            const std::filesystem::path p(filePath);
-            if (!std::filesystem::exists(p) || !std::filesystem::is_regular_file(p))
+            auto vp = VirtualPath::Parse(filePath);
+            if (!vp || !vp->Exists())
             {
                 return;
             }
 
-            m_currentFolder = p.parent_path();
+            auto parent = vp->GetParent();
+            m_currentFolder = parent;
 
-            RebuildThumbList(p);
+            RebuildThumbList(*vp);
 
             // Select/apply exact match if present.
             for (size_t i = 0; i < m_items.size(); ++i)
             {
-                if (m_items[i].kind == ThumbItemKind::Image && PathEqualsInsensitive(m_items[i].path, p))
+                if (m_items[i].kind == ThumbItemKind::Image && m_items[i].path == *vp)
                 {
                     SelectItemByIndex(i);
                     return;
@@ -1659,7 +1689,11 @@ namespace
             {
                 return;
             }
-            NavigateToFolder(std::filesystem::path(folderPath));
+            auto vp = VirtualPath::Parse(folderPath);
+            if (vp)
+            {
+                NavigateToFolder(*vp);
+            }
         }
 
         void AddHorizontalViewerForRestore(const std::wstring& filePath)
@@ -1668,7 +1702,11 @@ namespace
             {
                 return;
             }
-            SplitHorizontalWithFile(std::filesystem::path(filePath));
+            auto vp = VirtualPath::Parse(filePath);
+            if (vp)
+            {
+                SplitHorizontalWithFile(*vp);
+            }
         }
 
         void AddHorizontalViewerForRestoreFolder(const std::wstring& folderPath)
@@ -1730,7 +1768,7 @@ namespace
         struct ThumbItem
         {
             ThumbItemKind kind { ThumbItemKind::Image };
-            std::filesystem::path path {};
+            VirtualPath path {};
             std::shared_ptr<FD2D::Wnd> focus {};
             std::shared_ptr<FD2D::ThumbImage> image {};
             std::shared_ptr<ThumbNavTile> navTile {};
@@ -1911,8 +1949,8 @@ namespace
             else
             {
                 // Start empty; a session restore or user navigation will populate.
-                m_currentFolder.clear();
-                RebuildThumbList({});
+                m_currentFolder = VirtualPath();
+                RebuildThumbList(VirtualPath());
             }
 
         }
@@ -2722,10 +2760,13 @@ namespace
             ofn.lpstrTitle = L"Open Image";
 
             std::wstring initialDir;
-            if (!m_currentFolder.empty() && std::filesystem::exists(m_currentFolder) && std::filesystem::is_directory(m_currentFolder))
+            if (!m_currentFolder.empty() && m_currentFolder.IsFilesystemPath())
             {
-                initialDir = m_currentFolder.wstring();
-                ofn.lpstrInitialDir = initialDir.c_str();
+                if (std::filesystem::exists(m_currentFolder.hostPath) && std::filesystem::is_directory(m_currentFolder.hostPath))
+                {
+                    initialDir = m_currentFolder.hostPath.wstring();
+                    ofn.lpstrInitialDir = initialDir.c_str();
+                }
             }
 
             if (!GetOpenFileNameW(&ofn))
@@ -2746,7 +2787,7 @@ namespace
             }
 
             // Defer UI tree mutation to avoid reentrancy issues during message dispatch.
-            QueueDeferredAction(mode == OpenDialogMode::SplitHorizontalNewBrowser ? DeferredActionKind::SplitHorizontalWithFile : DeferredActionKind::NavigateToFile, chosen);
+            QueueDeferredAction(mode == OpenDialogMode::SplitHorizontalNewBrowser ? DeferredActionKind::SplitHorizontalWithFile : DeferredActionKind::NavigateToFile, VirtualPath::FromFilesystem(chosen));
         }
 
         int HorizontalViewerCount() const
@@ -2786,10 +2827,13 @@ namespace
             ofn.lpstrTitle = (title != nullptr) ? title : L"Open Image";
 
             std::wstring initialDir;
-            if (!m_currentFolder.empty() && std::filesystem::exists(m_currentFolder) && std::filesystem::is_directory(m_currentFolder))
+            if (!m_currentFolder.empty() && m_currentFolder.IsFilesystemPath())
             {
-                initialDir = m_currentFolder.wstring();
-                ofn.lpstrInitialDir = initialDir.c_str();
+                if (std::filesystem::exists(m_currentFolder.hostPath) && std::filesystem::is_directory(m_currentFolder.hostPath))
+                {
+                    initialDir = m_currentFolder.hostPath.wstring();
+                    ofn.lpstrInitialDir = initialDir.c_str();
+                }
             }
 
             if (!GetOpenFileNameW(&ofn))
@@ -2852,7 +2896,7 @@ namespace
                     std::filesystem::path chosen;
                     if (TryPickImageFile(chosen, L"Open New Image"))
                     {
-                        QueueInsertHorizontalWithPathAfterThis(chosen);
+                        QueueInsertHorizontalWithPathAfterThis(VirtualPath::FromFilesystem(chosen));
                     }
                 }
                 break;
@@ -3048,7 +3092,7 @@ namespace
             }
         }
 
-        void QueueDeferredAction(DeferredActionKind kind, const std::filesystem::path& path = {})
+        void QueueDeferredAction(DeferredActionKind kind, const VirtualPath& path = {})
         {
             // Ensure any deferred action runs on the ImageBrowser that originated it.
             // (Mouse messages are often handled by child tiles, so the parent ImageBrowser may not see WM_LBUTTONDOWN.)
@@ -3061,7 +3105,7 @@ namespace
             }
         }
 
-        void QueueInsertHorizontalWithPathAfterThis(const std::filesystem::path& path)
+        void QueueInsertHorizontalWithPathAfterThis(const VirtualPath& path)
         {
             RequestFocus();
             m_deferredKind = DeferredActionKind::InsertHorizontalWithPathAfterName;
@@ -3190,13 +3234,13 @@ namespace
             auto newBrowser = std::dynamic_pointer_cast<ImageBrowserImpl>(newWnd);
             if (newBrowser)
             {
-                if (std::filesystem::exists(path) && std::filesystem::is_directory(path))
+                if (VirtualFileSystem::IsDirectory(path))
                 {
-                    newBrowser->RestoreOpenFolder(path.wstring());
+                    newBrowser->RestoreOpenFolder(path.GetDisplayPath());
                 }
                 else
                 {
-                    newBrowser->RestoreOpenFile(path.wstring());
+                    newBrowser->RestoreOpenFile(path.GetDisplayPath());
                 }
             }
 

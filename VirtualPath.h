@@ -35,6 +35,30 @@ struct VirtualPath
         return !archiveInnerPath.empty();
     }
 
+    // Check if path is empty
+    bool empty() const
+    {
+        return hostPath.empty();
+    }
+
+    // Check if this is a regular filesystem path (not in archive)
+    bool IsFilesystemPath() const
+    {
+        return archiveInnerPath.empty();
+    }
+
+    // Get wstring representation (for compatibility)
+    std::wstring wstring() const
+    {
+        return GetDisplayPath();
+    }
+
+    // Get filename as path object (for compatibility)
+    std::filesystem::path filename() const
+    {
+        return std::filesystem::path(GetFilename());
+    }
+
     // Check if the host path is an archive file
     bool IsArchiveFile() const;
 
