@@ -85,8 +85,12 @@ public:
         archive_read_support_format_7zip(a);
         archive_read_support_format_rar(a);
 
-        // Enable compression filters
-        archive_read_support_filter_all(a);
+        // Enable only essential compression filters for ZIP/7z/RAR
+        archive_read_support_filter_none(a);    // Uncompressed
+        archive_read_support_filter_gzip(a);    // ZIP deflate/gzip
+        archive_read_support_filter_lzma(a);    // 7z LZMA
+        archive_read_support_filter_xz(a);      // 7z XZ
+        archive_read_support_filter_bzip2(a);   // Optional: bzip2 in archives
 
         std::string pathUtf8 = WideToUtf8(m_path.wstring());
         int r = archive_read_open_filename(a, pathUtf8.c_str(), 10240);
@@ -149,8 +153,12 @@ private:
         archive_read_support_format_7zip(a);
         archive_read_support_format_rar(a);
 
-        // Enable compression filters
-        archive_read_support_filter_all(a);
+        // Enable only essential compression filters for ZIP/7z/RAR
+        archive_read_support_filter_none(a);    // Uncompressed
+        archive_read_support_filter_gzip(a);    // ZIP deflate/gzip
+        archive_read_support_filter_lzma(a);    // 7z LZMA
+        archive_read_support_filter_xz(a);      // 7z XZ
+        archive_read_support_filter_bzip2(a);   // Optional: bzip2 in archives
 
         std::string pathUtf8 = WideToUtf8(m_path.wstring());
         int r = archive_read_open_filename(a, pathUtf8.c_str(), 10240);
