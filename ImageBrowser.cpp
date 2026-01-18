@@ -1868,6 +1868,8 @@ namespace
 
         void BuildUi()
         {
+            OutputDebugStringW(L"[ImageBrowser] BuildUi: Starting UI construction\n");
+            
             // Root: vertical split (main pane + thumb strip)
             auto rootSplit = std::make_shared<FD2D::SplitPanel>(L"rootSplit", FD2D::SplitterOrientation::Vertical);
             // Default: give more space to the main image; thumbnail strip starts shorter.
@@ -1881,6 +1883,8 @@ namespace
 
             AddChild(rootSplit);
             m_rootSplit = rootSplit;
+            
+            OutputDebugStringW((L"[ImageBrowser] BuildUi: rootSplit created, ratio=0.85, minH=" + std::to_wstring(kThumbStripMinH) + L", maxH=" + std::to_wstring(kThumbStripMaxH) + L"\n").c_str());
 
             BuildMainPanes();
 
@@ -1895,6 +1899,8 @@ namespace
 
             rootSplit->SetSecondChild(thumbScroll);
             m_thumbScroll = thumbScroll;
+            
+            OutputDebugStringW(L"[ImageBrowser] BuildUi: thumbScroll created and set as SecondChild\n");
 
             rootSplit->OnSplitChanged([this](float)
             {
@@ -1938,8 +1944,11 @@ namespace
             m_thumbItemSpacing = 0.0f;
             m_thumbOuterSpacing = 8.0f;
 
+            OutputDebugStringW(L"[ImageBrowser] BuildUi: m_thumbPanel assigned\n");
+
             if (!m_initialFile.empty())
             {
+                OutputDebugStringW((L"[ImageBrowser] BuildUi: Initializing with file: " + m_initialFile + L"\n").c_str());
                 auto parsed = VirtualPath::Parse(m_initialFile);
                 if (parsed)
                 {
@@ -1949,11 +1958,13 @@ namespace
             }
             else
             {
+                OutputDebugStringW(L"[ImageBrowser] BuildUi: No initial file, starting empty\n");
                 // Start empty; a session restore or user navigation will populate.
                 m_currentFolder = VirtualPath();
                 RebuildThumbList(VirtualPath());
             }
 
+            OutputDebugStringW(L"[ImageBrowser] BuildUi: UI construction complete\n");
         }
 
         bool ApplySyncedThumbStripHeightIfNeeded(bool force = false)
@@ -2488,8 +2499,6 @@ namespace
 
         void NavigateToFolder(const VirtualPath& folder)
         {
-            OutputDebugStringW((L"[ImageBrowser] NavigateToFolder: " + folder.GetDisplayPath() + L"\n").c_str());
-            
             // Check if folder is valid (directory or archive)
             if (!VirtualFileSystem::IsDirectory(folder))
             {
@@ -2561,9 +2570,7 @@ namespace
             }
             else
             {
-                OutputDebugStringW((L"[ImageBrowser] RebuildThumbList: Listing " + m_currentFolder.GetDisplayPath() + L"\n").c_str());
                 auto entries = VirtualFileSystem::ListDirectory(m_currentFolder);
-                OutputDebugStringW((L"[ImageBrowser] RebuildThumbList: Found " + std::to_wstring(entries.size()) + L" entries\n").c_str());
                 
                 for (const auto& entry : entries)
                 {

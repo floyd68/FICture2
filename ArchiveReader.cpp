@@ -70,18 +70,27 @@ public:
 
     std::vector<uint8_t> ExtractToMemory(const std::wstring& entryPath) override
     {
+        OutputDebugStringW((L"[LibArchiveReader] ExtractToMemory: " + entryPath + L"\n").c_str());
+
         auto it = m_entryMap.find(ToLower(entryPath));
         if (it == m_entryMap.end())
+        {
+            OutputDebugStringW(L"[LibArchiveReader] Entry not found in map\n");
             return {};
+        }
 
         const ArchiveEntry& entry = m_entries[it->second];
         if (entry.isDirectory)
+        {
             return {};
+        }
 
         // Open archive for extraction
         struct archive* a = archive_read_new();
         if (!a)
+        {
             return {};
+        }
 
         // Enable only the formats we need
         archive_read_support_format_zip(a);
@@ -104,7 +113,8 @@ public:
 
         std::vector<uint8_t> result;
         struct archive_entry* archiveEntry;
-        std::string targetUtf8 = WideToUtf8(entryPath);
+        // Use the original entry name (with correct case) from m_entries
+        std::string targetUtf8 = WideToUtf8(entry.name);
 
         while (archive_read_next_header(a, &archiveEntry) == ARCHIVE_OK)
         {
@@ -116,10 +126,12 @@ public:
             {
                 // Found the entry, extract it
                 la_int64_t size = archive_entry_size(archiveEntry);
+                
                 if (size > 0 && size < 1024 * 1024 * 1024) // Max 1GB
                 {
                     result.resize(static_cast<size_t>(size));
                     la_ssize_t bytesRead = archive_read_data(a, result.data(), result.size());
+                    
                     if (bytesRead != size)
                     {
                         result.clear();
@@ -149,7 +161,6 @@ private:
         struct archive* a = archive_read_new();
         if (!a)
         {
-            OutputDebugStringW(L"[LibArchiveReader] Failed to create archive object\n");
             return;
         }
 
@@ -165,49 +176,42 @@ private:
         archive_read_support_filter_xz(a);      // 7z XZ
 
         std::string pathUtf8 = WideToUtf8(m_path.wstring());
-        OutputDebugStringW((L"[LibArchiveReader] Opening file: " + m_path.wstring() + L"\n").c_str());
         int r = archive_read_open_filename(a, pathUtf8.c_str(), 10240);
         if (r != ARCHIVE_OK)
         {
             const char* errMsg = archive_error_string(a);
             std::wstring errWide = errMsg ? Utf8ToWide(errMsg) : L"Unknown error";
-            OutputDebugStringW((L"[LibArchiveReader] Failed to open: " + errWide + L"\n").c_str());
+            OutputDebugStringW((L"[LibArchiveReader] ERROR: Failed to open " + m_path.wstring() + L": " + errWide + L"\n").c_str());
             archive_read_free(a);
             return;
         }
-        OutputDebugStringW(L"[LibArchiveReader] Archive opened successfully\n");
 
         // Get format name
         const char* formatName = archive_format_name(a);
         if (formatName)
         {
             m_formatName = Utf8ToWide(formatName);
-            OutputDebugStringW((L"[LibArchiveReader] Format: " + m_formatName + L"\n").c_str());
         }
 
         struct archive_entry* entry;
-        int entryCount = 0;
         while (true)
         {
             int r = archive_read_next_header(a, &entry);
             if (r == ARCHIVE_EOF)
             {
-                OutputDebugStringW(L"[LibArchiveReader] Reached end of archive\n");
                 break;
             }
             if (r != ARCHIVE_OK)
             {
                 const char* errMsg = archive_error_string(a);
                 std::wstring errWide = errMsg ? Utf8ToWide(errMsg) : L"Unknown error";
-                OutputDebugStringW((L"[LibArchiveReader] Error reading header: " + errWide + L"\n").c_str());
+                OutputDebugStringW((L"[LibArchiveReader] ERROR reading header: " + errWide + L"\n").c_str());
                 break;
             }
 
-            entryCount++;
             const char* name = archive_entry_pathname(entry);
             if (!name)
             {
-                OutputDebugStringW(L"[LibArchiveReader] Entry has no name, skipping\n");
                 continue;
             }
 
@@ -218,15 +222,11 @@ private:
             archEntry.isDirectory = (archive_entry_filetype(entry) == AE_IFDIR);
             archEntry.modTime = archive_entry_mtime(entry);
 
-            OutputDebugStringW((L"[LibArchiveReader] Entry " + std::to_wstring(entryCount) + L": " + archEntry.name + 
-                               L" (dir=" + (archEntry.isDirectory ? L"yes" : L"no") + L")\n").c_str());
-
             size_t index = m_entries.size();
             m_entries.push_back(archEntry);
             m_entryMap[ToLower(archEntry.name)] = index;
         }
 
-        OutputDebugStringW((L"[LibArchiveReader] Total entries read: " + std::to_wstring(entryCount) + L"\n").c_str());
         archive_read_free(a);
     }
 };

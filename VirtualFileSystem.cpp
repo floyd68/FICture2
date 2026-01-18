@@ -53,6 +53,7 @@ std::vector<uint8_t> VirtualFileSystem::ReadFile(const VirtualPath& filePath)
         {
             return {};
         }
+        
         return reader->ExtractToMemory(filePath.archiveInnerPath);
     }
     else
@@ -133,7 +134,40 @@ bool VirtualFileSystem::IsDirectory(const VirtualPath& path)
     if (path.IsInArchive())
     {
         // Check if it's a directory within archive
-        // This would require scanning the archive - for now, assume it's a file
+        auto reader = ArchiveReaderFactory::Open(path.hostPath);
+        if (!reader)
+        {
+            return false;
+        }
+
+        std::wstring normalized = NormalizePath(path.archiveInnerPath);
+        
+        // Check if any entry starts with this path followed by '/'
+        // This indicates it's a directory
+        std::wstring searchPrefix = normalized;
+        if (!searchPrefix.empty() && searchPrefix.back() != L'/')
+        {
+            searchPrefix += L'/';
+        }
+
+        auto entries = reader->ListEntries();
+        for (const auto& entry : entries)
+        {
+            std::wstring entryNormalized = NormalizePath(entry.name);
+            
+            // If the entry is exactly this path and is marked as directory
+            if (entryNormalized == normalized && entry.isDirectory)
+            {
+                return true;
+            }
+            
+            // If any entry starts with this path + '/', it's a directory
+            if (StartsWith(entryNormalized, searchPrefix))
+            {
+                return true;
+            }
+        }
+        
         return false;
     }
     else if (path.IsArchiveFile())
@@ -218,12 +252,10 @@ std::vector<VirtualFileEntry> VirtualFileSystem::ListArchiveRoot(const std::file
     auto reader = ArchiveReaderFactory::Open(archivePath);
     if (!reader)
     {
-        OutputDebugStringW((L"[VFS] Failed to open archive: " + archivePath.wstring() + L"\n").c_str());
         return entries;
     }
 
     auto archiveEntries = reader->ListEntries();
-    OutputDebugStringW((L"[VFS] Archive has " + std::to_wstring(archiveEntries.size()) + L" entries\n").c_str());
     std::unordered_set<std::wstring> addedDirs;
 
     for (const auto& archEntry : archiveEntries)
