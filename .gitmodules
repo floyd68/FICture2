@@ -12,3 +12,6 @@
 [submodule "ThumbnailProvider"]
 	path = ThumbnailProvider
 	url = https://github.com/floyd68/FICture2-ThumbnailProvider.git
+[submodule "external/libarchive"]
+	path = external/libarchive
+	url = https://github.com/libarchive/libarchive.git
