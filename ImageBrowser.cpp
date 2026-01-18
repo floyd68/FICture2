@@ -11,6 +11,8 @@
 #include "FD2D/MainImage.h"
 #include "ImageCore/DecoderRegistry.h"
 #include "ImageCore/ImageCore.h"
+#include "VirtualPath.h"
+#include "VirtualFileSystem.h"
 
 #include <algorithm>
 #include <cstdint>
@@ -1899,8 +1901,12 @@ namespace
 
             if (!m_initialFile.empty())
             {
-                m_currentFolder = std::filesystem::path(m_initialFile).parent_path();
-                RebuildThumbList(m_initialFile);
+                auto parsed = VirtualPath::Parse(m_initialFile);
+                if (parsed)
+                {
+                    m_currentFolder = parsed->GetParent();
+                    RebuildThumbList(*parsed);
+                }
             }
             else
             {
@@ -2414,8 +2420,8 @@ namespace
                 return;
             }
 
-            std::filesystem::path parent = m_currentFolder.parent_path();
-            if (parent.empty() || parent == m_currentFolder)
+            VirtualPath parent = m_currentFolder.GetParent();
+            if (parent == m_currentFolder)
             {
                 return;
             }
@@ -2441,15 +2447,16 @@ namespace
             }
         }
 
-        void NavigateToFolder(const std::filesystem::path& folder)
+        void NavigateToFolder(const VirtualPath& folder)
         {
-            if (folder.empty() || !std::filesystem::exists(folder) || !std::filesystem::is_directory(folder))
+            // Check if folder is valid (directory or archive)
+            if (!VirtualFileSystem::IsDirectory(folder))
             {
                 return;
             }
 
             m_currentFolder = folder;
-            RebuildThumbList({});
+            RebuildThumbList(VirtualPath());
 
             if (m_thumbScroll)
             {
@@ -2466,20 +2473,21 @@ namespace
             }
         }
 
-        void NavigateToFile(const std::filesystem::path& filePath)
+        void NavigateToFile(const VirtualPath& filePath)
         {
-            if (filePath.empty() || !std::filesystem::exists(filePath) || !std::filesystem::is_regular_file(filePath))
+            // Check if file exists
+            if (!filePath.Exists())
             {
                 return;
             }
 
-            if (!ImageCore::DecoderRegistry::Instance().IsSupportedPath(filePath.wstring()))
+            if (!ImageCore::DecoderRegistry::Instance().IsSupportedPath(filePath.GetDisplayPath()))
             {
                 return;
             }
 
-            const std::filesystem::path folder = filePath.parent_path();
-            if (folder.empty() || !std::filesystem::exists(folder) || !std::filesystem::is_directory(folder))
+            const VirtualPath folder = filePath.GetParent();
+            if (!VirtualFileSystem::IsDirectory(folder))
             {
                 return;
             }
@@ -2488,7 +2496,7 @@ namespace
             RebuildThumbList(filePath);
         }
 
-        void RebuildThumbList(const std::filesystem::path& preferSelectPath)
+        void RebuildThumbList(const VirtualPath& preferSelectPath)
         {
             if (!m_thumbPanel)
             {
@@ -2499,36 +2507,44 @@ namespace
             m_selectedIndex = static_cast<size_t>(-1);
             m_selectedFocus.reset();
 
-            std::vector<std::filesystem::path> folders;
-            std::vector<std::filesystem::path> files;
+            std::vector<VirtualPath> folders;
+            std::vector<VirtualPath> files;
 
-            if (!m_currentFolder.empty() && std::filesystem::exists(m_currentFolder))
+            // Use VirtualFileSystem to list directory contents
+            if (m_currentFolder.hostPath.empty())
             {
-                for (auto& entry : std::filesystem::directory_iterator(m_currentFolder))
+                // No current folder set
+            }
+            else
+            {
+                auto entries = VirtualFileSystem::ListDirectory(m_currentFolder);
+                
+                for (const auto& entry : entries)
                 {
-                    const std::filesystem::path p = entry.path();
-                    if (entry.is_directory())
+                    if (entry.isDirectory || entry.path.IsArchiveFile())
                     {
-                        folders.push_back(p);
+                        // Directories and archives (which act as directories)
+                        folders.push_back(entry.path);
                     }
-                    else if (entry.is_regular_file())
+                    else
                     {
-                        if (ImageCore::DecoderRegistry::Instance().IsSupportedPath(p.wstring()))
+                        // Check if it's a supported image file
+                        if (ImageCore::DecoderRegistry::Instance().IsSupportedPath(entry.path.GetDisplayPath()))
                         {
-                            files.push_back(p);
+                            files.push_back(entry.path);
                         }
                     }
                 }
             }
 
-            std::sort(folders.begin(), folders.end(), [](const std::filesystem::path& a, const std::filesystem::path& b)
+            std::sort(folders.begin(), folders.end(), [](const VirtualPath& a, const VirtualPath& b)
             {
-                return a.filename().wstring() < b.filename().wstring();
+                return a.GetFilename() < b.GetFilename();
             });
 
-            std::sort(files.begin(), files.end(), [](const std::filesystem::path& a, const std::filesystem::path& b)
+            std::sort(files.begin(), files.end(), [](const VirtualPath& a, const VirtualPath& b)
             {
-                return a.filename().wstring() < b.filename().wstring();
+                return a.GetFilename() < b.GetFilename();
             });
 
             int tileId = 0;
@@ -2551,10 +2567,10 @@ namespace
 
             if (m_showNavItems)
             {
-                std::filesystem::path parent = m_currentFolder.parent_path();
-                if (!parent.empty() && parent != m_currentFolder)
+                VirtualPath parent = m_currentFolder.GetParent();
+                if (parent != m_currentFolder)
                 {
-                    std::wstring name = MakeStableThumbName(L"nav_up", parent);
+                    std::wstring name = MakeStableThumbName(L"nav_up", parent.hostPath);
                     auto tile = std::dynamic_pointer_cast<ThumbNavTile>(getExistingChild(name));
                     if (!tile)
                     {
@@ -3060,10 +3076,10 @@ namespace
         void RunDeferredAction()
         {
             const DeferredActionKind kind = m_deferredKind;
-            const std::filesystem::path path = m_deferredPath;
+            const VirtualPath path = m_deferredPath;
             const std::wstring text = m_deferredText;
             m_deferredKind = DeferredActionKind::None;
-            m_deferredPath.clear();
+            m_deferredPath = VirtualPath();
             m_deferredText.clear();
 
             switch (kind)
@@ -3134,7 +3150,7 @@ namespace
             }
         }
 
-        void InsertHorizontalWithPathAfterName(const std::wstring& afterName, const std::filesystem::path& path)
+        void InsertHorizontalWithPathAfterName(const std::wstring& afterName, const VirtualPath& path)
         {
             if (g_rootHorizontalHostBrowser != nullptr && g_rootHorizontalHostBrowser != this)
             {
@@ -3212,9 +3228,9 @@ namespace
             }
         }
 
-        void SplitHorizontalWithFile(const std::filesystem::path& filePath)
+        void SplitHorizontalWithFile(const VirtualPath& filePath)
         {
-            if (filePath.empty())
+            if (filePath.hostPath.empty())
             {
                 return;
             }
@@ -3337,7 +3353,7 @@ namespace
         ULONGLONG m_lastKeyNavMs { 0 };
         int m_thumbWheelRemainder { 0 };
 
-        std::filesystem::path m_currentFolder {};
+        VirtualPath m_currentFolder {};
         bool m_showNavItems { true };
         float m_thumbW { 128.0f };
         float m_thumbH { 128.0f };
@@ -3346,7 +3362,7 @@ namespace
         float m_thumbOuterSpacing { 8.0f }; // spacing between thumbnail "items" in the horizontal strip
 
         DeferredActionKind m_deferredKind { DeferredActionKind::None };
-        std::filesystem::path m_deferredPath {};
+        VirtualPath m_deferredPath {};
         std::wstring m_deferredText {};
 
         std::wstring m_initialFile {};
