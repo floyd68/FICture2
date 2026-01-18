@@ -1515,7 +1515,8 @@ namespace
                 return true;
             }
 
-            if (VirtualFileSystem::IsDirectory(*vp))
+            // Check if dropped path is a directory or archive file
+            if (VirtualFileSystem::IsDirectory(*vp) || vp->IsArchiveFile())
             {
                 QueueDeferredAction(DeferredActionKind::NavigateToFolder, *vp);
                 return true;
