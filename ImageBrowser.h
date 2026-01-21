@@ -10,7 +10,7 @@ namespace FD2D
 
 // Core viewer component: single main image per ImageBrowser.
 // paneCount is kept for compatibility and is currently ignored (always 1).
-std::shared_ptr<FD2D::Wnd> CreateImageBrowser(const std::wstring& name, int paneCount = 1, const std::wstring& initialFile = L"");
+std::shared_ptr<FD2D::Wnd> CreateImageBrowser(const std::wstring& name, const std::wstring& initialFile = L"");
 
 // IPC hook:
 // Called by the first instance when a second launch sends a file path.

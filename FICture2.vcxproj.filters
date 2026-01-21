@@ -36,6 +36,27 @@
     <ClInclude Include="ImageBrowser.h">
       <Filter>헤더 파일</Filter>
     </ClInclude>
+    <ClInclude Include="ImageBrowserMainPane.h">
+      <Filter>헤더 파일</Filter>
+    </ClInclude>
+    <ClInclude Include="ImageBrowserDragOverlay.h">
+      <Filter>헤더 파일</Filter>
+    </ClInclude>
+    <ClInclude Include="ImageBrowserDragDrop.h">
+      <Filter>헤더 파일</Filter>
+    </ClInclude>
+    <ClInclude Include="ImageBrowserThumbTypes.h">
+      <Filter>헤더 파일</Filter>
+    </ClInclude>
+    <ClInclude Include="ImageBrowserThumbStripController.h">
+      <Filter>헤더 파일</Filter>
+    </ClInclude>
+    <ClInclude Include="ImageBrowserInputController.h">
+      <Filter>헤더 파일</Filter>
+    </ClInclude>
+    <ClInclude Include="ImageBrowserNavigation.h">
+      <Filter>헤더 파일</Filter>
+    </ClInclude>
     <ClInclude Include="IpcCompareRequest.h">
       <Filter>헤더 파일</Filter>
     </ClInclude>
@@ -69,6 +90,24 @@
       <Filter>소스 파일</Filter>
     </ClCompile>
     <ClCompile Include="ImageBrowser.cpp">
+      <Filter>소스 파일</Filter>
+    </ClCompile>
+    <ClCompile Include="ImageBrowserMainPane.cpp">
+      <Filter>소스 파일</Filter>
+    </ClCompile>
+    <ClCompile Include="ImageBrowserDragOverlay.cpp">
+      <Filter>소스 파일</Filter>
+    </ClCompile>
+    <ClCompile Include="ImageBrowserDragDrop.cpp">
+      <Filter>소스 파일</Filter>
+    </ClCompile>
+    <ClCompile Include="ImageBrowserThumbStripController.cpp">
+      <Filter>소스 파일</Filter>
+    </ClCompile>
+    <ClCompile Include="ImageBrowserInputController.cpp">
+      <Filter>소스 파일</Filter>
+    </ClCompile>
+    <ClCompile Include="ImageBrowserNavigation.cpp">
       <Filter>소스 파일</Filter>
     </ClCompile>
     <ClCompile Include="ThumbImageTile.cpp">

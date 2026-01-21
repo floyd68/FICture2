@@ -308,7 +308,7 @@ int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
         });
 
         // Core viewer: supports 1..4 panes (we start with 1 by default).
-        backplate->AddWnd(CreateImageBrowser(L"viewer", 1, initialFile));
+        backplate->AddWnd(CreateImageBrowser(L"viewer", initialFile));
 
         // Restore last window position/size (per-user INI).
         FICture2App::LoadWindowPlacement(backplate->Window());

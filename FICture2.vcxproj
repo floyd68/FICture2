@@ -155,6 +155,7 @@
       <LinkTimeCodeGeneration>UseLinkTimeCodeGeneration</LinkTimeCodeGeneration>
       <AdditionalDependencies>archive.lib;d2d1.lib;dwrite.lib;windowscodecs.lib;d3d11.lib;dxgi.lib;d3dcompiler.lib;%(AdditionalDependencies)</AdditionalDependencies>
       <AdditionalLibraryDirectories>$(SolutionDir)external\libarchive\build-minimal\libarchive\Release;$(OutDir);%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
+      <IgnoreSpecificDefaultLibraries>libcmt</IgnoreSpecificDefaultLibraries>
     </Link>
   </ItemDefinitionGroup>
   <ItemGroup>
@@ -167,6 +168,13 @@
     <ClInclude Include="Ficture2Backplate.h" />
     <ClInclude Include="framework.h" />
     <ClInclude Include="ImageBrowser.h" />
+    <ClInclude Include="ImageBrowserMainPane.h" />
+    <ClInclude Include="ImageBrowserDragOverlay.h" />
+    <ClInclude Include="ImageBrowserDragDrop.h" />
+    <ClInclude Include="ImageBrowserThumbTypes.h" />
+    <ClInclude Include="ImageBrowserThumbStripController.h" />
+    <ClInclude Include="ImageBrowserInputController.h" />
+    <ClInclude Include="ImageBrowserNavigation.h" />
     <ClInclude Include="IpcCompareRequest.h" />
     <ClInclude Include="Resource.h" />
     <ClInclude Include="targetver.h" />
@@ -182,6 +190,12 @@
     <ClCompile Include="FICture2.cpp" />
     <ClCompile Include="Ficture2Backplate.cpp" />
     <ClCompile Include="ImageBrowser.cpp" />
+    <ClCompile Include="ImageBrowserMainPane.cpp" />
+    <ClCompile Include="ImageBrowserDragOverlay.cpp" />
+    <ClCompile Include="ImageBrowserDragDrop.cpp" />
+    <ClCompile Include="ImageBrowserThumbStripController.cpp" />
+    <ClCompile Include="ImageBrowserInputController.cpp" />
+    <ClCompile Include="ImageBrowserNavigation.cpp" />
     <ClCompile Include="ThumbImageTile.cpp" />
     <ClCompile Include="ThumbNavTile.cpp" />
   </ItemGroup>
