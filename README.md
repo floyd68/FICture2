@@ -162,6 +162,8 @@ This repository is the “app shell” that wires the UI and decode pipeline tog
 - **Drag & drop** (main image region):
   - **Left 3/4** drop zone: replace the current `ImageBrowser` folder/image with the dropped path (**red overlay** while dragging)
   - **Right 1/4** drop zone: insert a new `ImageBrowser` to the right and open the dropped path there (**green overlay** while dragging)
+  - **Multi-select drag & drop**: drop multiple images/folders/archives to open up to 4 viewers side-by-side
+  - **Unsupported files** show an X cursor and cannot be dropped
 - **First-run file association prompt** (per-user / HKCU only)
 
 ## Hotkeys
@@ -200,6 +202,8 @@ This repository is the “app shell” that wires the UI and decode pipeline tog
 - Drag an image file/folder onto a main image view:
   - **Left 3/4**: replace current view (folder/image) — red overlay while dragging
   - **Right 1/4**: insert a new `ImageBrowser` on the right and open there — green overlay while dragging
+- Multiple files/folders/archives can be dropped at once (up to 4 viewers total)
+- Unsupported files show an X cursor and are rejected
 
 ## Command line
 
