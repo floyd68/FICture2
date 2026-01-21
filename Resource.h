@@ -1,4 +1,4 @@
-﻿//{{NO_DEPENDENCIES}}
+//{{NO_DEPENDENCIES}}
 // Microsoft Visual C++에서 생성한 포함 파일입니다.
 // FICture2.rc에서 사용되고 있습니다.
 //
@@ -16,6 +16,7 @@
 #define IDM_CTX_TOGGLE_ALPHA            32776
 #define IDM_CTX_TOGGLE_DIRECTORIES      32777
 #define IDM_CTX_FOCUSED_BACKGROUND_COLOR 32778
+#define IDM_CTX_TOGGLE_SAMPLING         32779
 #define IDC_STATIC                      -1
 
 // Next default values for new objects

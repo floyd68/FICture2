@@ -37,6 +37,7 @@ public:
         std::function<void()> toggleAlphaCheckerboard;
         std::function<void()> fitToScreen;
         std::function<void()> pickBackgroundColor;
+        std::function<void()> toggleSamplingQuality;
         std::function<void()> closeHorizontalThisBrowser;
         std::function<void()> openFileReplace;
         std::function<void()> openFileSplit;

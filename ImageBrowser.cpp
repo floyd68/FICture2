@@ -15,6 +15,7 @@
 #include "Ficture2Backplate.h"
 
 #include "FD2D/FD2D.h"
+#include "FD2D/Core.h"
 #include "FD2D/MainImage.h"
 #include "ImageCore/DecoderRegistry.h"
 #include "ImageCore/ImageCore.h"
@@ -290,6 +291,23 @@ namespace
         }
 
         return L"";
+    }
+
+    static std::wstring SamplingLabel(bool highQuality, FD2D::Backplate* backplate)
+    {
+        const bool usingD3D = (backplate != nullptr && backplate->D3DDevice() != nullptr);
+        if (usingD3D)
+        {
+            return highQuality ? L"D3D11 Anisotropic" : L"D3D11 Point";
+        }
+
+        const FD2D::D2DVersion d2dVersion = FD2D::Core::GetSupportedD2DVersion();
+        if (highQuality)
+        {
+            return (d2dVersion >= FD2D::D2DVersion::D2D1_1) ? L"D2D HQ Cubic" : L"D2D Linear";
+        }
+
+        return (d2dVersion >= FD2D::D2DVersion::D2D1_1) ? L"D2D Nearest" : L"D2D Linear";
     }
 
     static int DxgiBitsPerPixel(DXGI_FORMAT fmt)
@@ -825,6 +843,14 @@ namespace
 
             g_contextMenuBrowser = this;
 
+            if (m_mainImage)
+            {
+                auto vt = m_mainImage->GetViewTransform();
+                vt.targetZoomScale = vt.zoomScale;
+                vt.zoomVelocity = 0.0f;
+                m_mainImage->SetViewTransform(vt, false /*notify*/);
+            }
+
             const HINSTANCE instance = reinterpret_cast<HINSTANCE>(GetWindowLongPtrW(hwnd, GWLP_HINSTANCE));
             HMENU hMenu = LoadMenuW(instance, MAKEINTRESOURCEW(IDR_MENU_IMAGEBROWSER_CONTEXT));
             if (hMenu != nullptr)
@@ -853,12 +879,22 @@ namespace
                         IDM_CTX_TOGGLE_DIRECTORIES,
                             g_showNavItems ? L"Hide Directories\tN" : L"Show Directories\tN");
 
-                        ModifyMenuW(
-                            hPopup,
-                            IDM_CTX_TOGGLE_ALPHA,
-                            MF_BYCOMMAND | MF_STRING,
-                            IDM_CTX_TOGGLE_ALPHA,
-                            g_showAlpha ? L"Hide Alpha\tA" : L"Show Alpha\tA");
+                    ModifyMenuW(
+                        hPopup,
+                        IDM_CTX_TOGGLE_ALPHA,
+                        MF_BYCOMMAND | MF_STRING,
+                        IDM_CTX_TOGGLE_ALPHA,
+                        g_showAlpha ? L"Hide Alpha\tA" : L"Show Alpha\tA");
+
+                    auto mainImage = ActiveMainImage();
+                    const bool highQuality = mainImage ? mainImage->HighQualitySampling() : true;
+                    const std::wstring samplingLabel = SamplingLabel(highQuality, backplate);
+                    ModifyMenuW(
+                        hPopup,
+                        IDM_CTX_TOGGLE_SAMPLING,
+                        MF_BYCOMMAND | MF_STRING,
+                        IDM_CTX_TOGGLE_SAMPLING,
+                        (std::wstring(L"Sampling: ") + samplingLabel + L"\tQ").c_str());
 
                     POINT ptScreen = pt;
                     ClientToScreen(hwnd, &ptScreen);
@@ -991,6 +1027,15 @@ namespace
             ctx.pickBackgroundColor = [this]()
             {
                 PickAndApplyBackgroundColor();
+            };
+            ctx.toggleSamplingQuality = [this]()
+            {
+                RequestFocus();
+                if (m_mainImage)
+                {
+                    m_mainImage->ToggleSamplingQuality();
+                    RefreshInfoPanel();
+                }
             };
             ctx.closeHorizontalThisBrowser = [this]()
             {
@@ -1770,6 +1815,11 @@ namespace
                     text += L" | ";
                     text += archiveLabel;
                 }
+                if (m_mainImage)
+                {
+                    text += L" | ";
+                    text += SamplingLabel(m_mainImage->HighQualitySampling(), BackplateRef());
+                }
             }
 
             const std::wstring zoomText = std::to_wstring(zoomPct) + L"%";
@@ -2372,6 +2422,14 @@ namespace
                 break;
             case IDM_CTX_TOGGLE_ALPHA:
                 ToggleAlphaCheckerboard();
+                break;
+            case IDM_CTX_TOGGLE_SAMPLING:
+                RequestFocus();
+                if (m_mainImage)
+                {
+                    m_mainImage->ToggleSamplingQuality();
+                    RefreshInfoPanel();
+                }
                 break;
             default:
                 // Show/Hide Alpha is implemented in a later step.

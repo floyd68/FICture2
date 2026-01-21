@@ -62,11 +62,14 @@ public:
     EventBus& Bus() { return *m_eventBus; }
     const EventBus& Bus() const { return *m_eventBus; }
 
+    void UpdateTitleBarInfo() override;
+
 private:
     std::shared_ptr<EventBus> m_eventBus { std::make_shared<EventBus>() };
 
 protected:
     FD2D::Wnd* FindTargetWnd(const POINT& ptClient) override;
+    bool HandleMessage(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam, LRESULT& result) override;
 
 private:
     FD2D::Wnd* FindImageBrowserTarget(const POINT& ptClient) const;

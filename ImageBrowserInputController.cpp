@@ -196,6 +196,13 @@ bool ImageBrowserInputController::HandleKeyUp(const KeyContext& ctx, UINT messag
             ctx.pickBackgroundColor();
         }
         return true;
+    case 'Q':
+    case 'q':
+        if (ctx.toggleSamplingQuality)
+        {
+            ctx.toggleSamplingQuality();
+        }
+        return true;
     case VK_RETURN:
         if (ctx.items && !ctx.items->empty() && ctx.selectedIndex < ctx.items->size())
         {
