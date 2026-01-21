@@ -70,6 +70,7 @@ private:
 protected:
     FD2D::Wnd* FindTargetWnd(const POINT& ptClient) override;
     bool HandleMessage(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam, LRESULT& result) override;
+    bool HandleFileDropPaths(const std::vector<std::wstring>& paths, const POINT& ptClient) override;
 
 private:
     FD2D::Wnd* FindImageBrowserTarget(const POINT& ptClient) const;

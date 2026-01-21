@@ -11,6 +11,16 @@ namespace
             pt.y >= r.top &&
             pt.y <= r.bottom;
     }
+
+    bool IsSupportedDropPath(const VirtualPath& path)
+    {
+        if (VirtualFileSystem::IsDirectory(path) || path.IsArchiveFile())
+        {
+            return true;
+        }
+
+        return VirtualFileSystem::IsImageFile(path);
+    }
 }
 
 bool ImageBrowserDragDrop::HandleFileDrop(
@@ -31,6 +41,11 @@ bool ImageBrowserDragDrop::HandleFileDrop(
 
     auto vp = VirtualPath::Parse(path);
     if (!vp)
+    {
+        return false;
+    }
+
+    if (!IsSupportedDropPath(*vp))
     {
         return false;
     }
@@ -69,6 +84,17 @@ bool ImageBrowserDragDrop::HandleFileDrag(
     }
 
     if (!RectContainsPoint(mainRect, clientPt))
+    {
+        return false;
+    }
+
+    auto vp = VirtualPath::Parse(path);
+    if (!vp)
+    {
+        return false;
+    }
+
+    if (!IsSupportedDropPath(*vp))
     {
         return false;
     }

@@ -2,6 +2,7 @@
 
 #include <memory>
 #include <string>
+#include <vector>
 
 namespace FD2D
 {
@@ -25,4 +26,13 @@ bool ImageBrowser_TryRestoreSessionFromIni(const std::wstring& iniFile);
 
 // Used for startup fallback behavior (e.g., open first image in Pictures folder when no session exists).
 void ImageBrowser_OpenFileInRoot(const std::wstring& filePath);
+
+// Opens additional files in new side-by-side ImageBrowsers (up to 4 total).
+void ImageBrowser_OpenAdditionalFilesSideBySide(const std::vector<std::wstring>& filePaths);
+
+// Opens additional files after the specified ImageBrowser (by name).
+// When afterName is empty, files are appended at the end.
+void ImageBrowser_OpenAdditionalFilesSideBySideAfter(
+    const std::vector<std::wstring>& filePaths,
+    const std::wstring& afterName);
 

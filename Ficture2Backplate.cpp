@@ -1,6 +1,9 @@
 #include "Ficture2Backplate.h"
 
 #include "FD2D/Core.h"
+#include "ImageBrowser.h"
+#include "VirtualFileSystem.h"
+#include "VirtualPath.h"
 
 #include <algorithm>
 #include <shellapi.h>
@@ -122,6 +125,92 @@ FD2D::Wnd* Ficture2Backplate::FindTargetWnd(const POINT& ptClient)
     return FindImageBrowserTarget(ptClient);
 }
 
+bool Ficture2Backplate::HandleFileDropPaths(const std::vector<std::wstring>& paths, const POINT& ptClient)
+{
+    if (paths.empty())
+    {
+        return false;
+    }
+
+    std::vector<std::wstring> supported;
+    supported.reserve(paths.size());
+    for (const auto& path : paths)
+    {
+        auto vp = VirtualPath::Parse(path);
+        if (!vp)
+        {
+            continue;
+        }
+
+        if (VirtualFileSystem::IsDirectory(*vp) || vp->IsArchiveFile() || VirtualFileSystem::IsImageFile(*vp))
+        {
+            supported.push_back(path);
+        }
+    }
+
+    if (supported.empty())
+    {
+        return false;
+    }
+
+    if (supported.size() > 1)
+    {
+        FD2D::Wnd* target = FindTargetWnd(ptClient);
+        const std::wstring targetName = target ? target->Name() : L"";
+        bool insertMode = false;
+
+        if (target != nullptr)
+        {
+            const D2D1_RECT_F r = target->LayoutRect();
+            const float w = (std::max)(1.0f, r.right - r.left);
+            const float relX = (static_cast<float>(ptClient.x) - r.left) / w;
+            insertMode = (relX >= 0.75f);
+        }
+
+        if (insertMode)
+        {
+            ImageBrowser_OpenAdditionalFilesSideBySideAfter(supported, targetName);
+            return true;
+        }
+
+        bool handled = false;
+        if (target != nullptr)
+        {
+            handled = target->OnFileDrop(supported.front(), ptClient);
+        }
+
+        if (!handled)
+        {
+            // Route to UI tree: hit-test top-level children and allow Wnd overrides to handle.
+            for (auto& pair : m_children)
+            {
+                if (pair.second && pair.second->OnFileDrop(supported.front(), ptClient))
+                {
+                    handled = true;
+                    break;
+                }
+            }
+        }
+
+        std::vector<std::wstring> remaining(supported.begin() + 1, supported.end());
+        ImageBrowser_OpenAdditionalFilesSideBySideAfter(remaining, targetName);
+        return true;
+    }
+
+    const std::wstring& path = supported.front();
+
+    // Route to UI tree: hit-test top-level children and allow Wnd overrides to handle.
+    for (auto& pair : m_children)
+    {
+        if (pair.second && pair.second->OnFileDrop(path, ptClient))
+        {
+            return true;
+        }
+    }
+
+    return false;
+}
+
 bool Ficture2Backplate::HandleMessage(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam, LRESULT& result)
 {
     UNREFERENCED_PARAMETER(hWnd);
@@ -157,25 +246,27 @@ bool Ficture2Backplate::HandleMessage(HWND hWnd, UINT message, WPARAM wParam, LP
         POINT pt {};
         (void)DragQueryPoint(hDrop, &pt); // client coordinates
 
-        const UINT cch = DragQueryFileW(hDrop, 0, pathBuf, static_cast<UINT>(std::size(pathBuf)));
+        std::vector<std::wstring> dropped;
+        dropped.reserve(fileCount);
+        for (UINT i = 0; i < fileCount; ++i)
+        {
+            const UINT cch = DragQueryFileW(hDrop, i, pathBuf, static_cast<UINT>(std::size(pathBuf)));
+            if (cch == 0)
+            {
+                continue;
+            }
+            dropped.emplace_back(pathBuf);
+        }
+
         DragFinish(hDrop);
 
-        if (cch == 0)
+        if (dropped.empty())
         {
             result = 0;
             return true;
         }
 
-        const std::wstring path(pathBuf);
-
-        // Route to UI tree: hit-test top-level children and allow Wnd overrides to handle.
-        for (auto& pair : m_children)
-        {
-            if (pair.second && pair.second->OnFileDrop(path, pt))
-            {
-                break;
-            }
-        }
+        (void)HandleFileDropPaths(dropped, pt);
 
         result = 0;
         return true;

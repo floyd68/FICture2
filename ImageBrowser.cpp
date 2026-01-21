@@ -1327,6 +1327,68 @@ namespace
             (void)ApplySyncedThumbStripHeightIfNeeded(true);
         }
 
+        void OpenAdditionalFileInHorizontalSplit(const VirtualPath& filePath)
+        {
+            if (VirtualFileSystem::IsDirectory(filePath) || filePath.IsArchiveFile())
+            {
+                InsertHorizontalWithPathAfterName(L"", filePath);
+            }
+            else
+            {
+                SplitHorizontalWithFile(filePath);
+            }
+        }
+
+        void OpenAdditionalFilesSideBySideAfterName(
+            const std::vector<std::wstring>& filePaths,
+            const std::wstring& afterName)
+        {
+            if (filePaths.empty())
+            {
+                return;
+            }
+
+            if (g_rootHorizontalHostBrowser != nullptr && g_rootHorizontalHostBrowser != this)
+            {
+                g_rootHorizontalHostBrowser->OpenAdditionalFilesSideBySideAfterName(filePaths, afterName);
+                return;
+            }
+
+            EnsureHorizontalHost();
+            if (m_hPanes.empty())
+            {
+                return;
+            }
+
+            auto insertPath = [this, &afterName](const std::wstring& path)
+            {
+                if (path.empty())
+                {
+                    return;
+                }
+                if (static_cast<int>(m_hPanes.size()) >= 4)
+                {
+                    return;
+                }
+                InsertHorizontalWithPathAfterName(afterName, VirtualPath::FromFilesystem(path));
+            };
+
+            if (afterName.empty())
+            {
+                for (const auto& path : filePaths)
+                {
+                    insertPath(path);
+                }
+            }
+            else
+            {
+                for (auto it = filePaths.rbegin(); it != filePaths.rend(); ++it)
+                {
+                    insertPath(*it);
+                }
+            }
+        }
+
     private:
         static constexpr ULONGLONG kKeyRepeatMinIntervalMs = 60;
         static constexpr UINT WM_FIC2_DEFERRED_ACTION = WM_APP + 0x7A11;
@@ -3017,6 +3079,43 @@ void ImageBrowser_OpenFileInRoot(const std::wstring& filePath)
         return;
     }
     g_rootHorizontalHostBrowser->RestoreOpenFile(filePath);
+}
+
+void ImageBrowser_OpenAdditionalFilesSideBySide(const std::vector<std::wstring>& filePaths)
+{
+    if (g_rootHorizontalHostBrowser == nullptr || filePaths.empty())
+    {
+        return;
+    }
+
+    size_t existing = g_rootHorizontalHostBrowser->ImageBrowsersSnapshot().size();
+    for (const auto& path : filePaths)
+    {
+        if (path.empty())
+        {
+            continue;
+        }
+
+        if (existing >= 4)
+        {
+            break;
+        }
+
+        g_rootHorizontalHostBrowser->OpenAdditionalFileInHorizontalSplit(VirtualPath::FromFilesystem(path));
+        existing = g_rootHorizontalHostBrowser->ImageBrowsersSnapshot().size();
+    }
+}
+
+void ImageBrowser_OpenAdditionalFilesSideBySideAfter(
+    const std::vector<std::wstring>& filePaths,
+    const std::wstring& afterName)
+{
+    if (g_rootHorizontalHostBrowser == nullptr || filePaths.empty())
+    {
+        return;
+    }
+
+    g_rootHorizontalHostBrowser->OpenAdditionalFilesSideBySideAfterName(filePaths, afterName);
 }
 
 void ImageBrowser_SaveSessionToIni(const std::wstring& iniFile)
