@@ -142,6 +142,7 @@ This repository is the “app shell” that wires the UI and decode pipeline tog
 
 - **Thumbnail strip + main image** optimized for DDS-heavy folders
 - **Folder navigation** inside the thumbnail strip (includes `..` “up” item)
+- **Archive browsing**: ZIP / 7Z / RAR / BA2 (images and folders)
 - **Compare / multi-view**: open up to **4** viewers side-by-side (equal widths)
 - **Sync mode (when 2+ viewers exist)**:
   - selecting an image propagates to other viewers (by filename match within their current folder)
@@ -149,7 +150,7 @@ This repository is the “app shell” that wires the UI and decode pipeline tog
 - **Mouse pan + smooth zoom**:
   - zoom is critically-damped spring animated
   - pointer-based zoom (the point under the mouse stays fixed)
-- **High quality filtering** for scaled image display (D2D + D3D11 path)
+- **Sampling quality toggle** for scaled image display (D2D + D3D11 paths)
 - **Session persistence** (per-user INI):
   - window placement (auto-saved during move/resize)
   - open viewers + folders + selected image
@@ -181,6 +182,7 @@ This repository is the “app shell” that wires the UI and decode pipeline tog
 - **Backspace**: navigate up (same as `..`)
 - **Alt + Up**: navigate up (Explorer-style)
 - **N**: toggle navigation items visibility **globally** (folders + `..`) across all `ImageBrowser` instances
+- **Q**: toggle sampling quality (low/high)
 - **Ctrl + O**: open file dialog, replace current viewer image/folder context
 - **Ctrl + Shift + O**: open file dialog, create a new viewer on the right (up to 4 total), equal widths
 
@@ -191,6 +193,7 @@ This repository is the “app shell” that wires the UI and decode pipeline tog
   - **Wheel**: ±50% per notch
   - Zoom is **pointer-based**: the pixel under the mouse stays fixed during zoom.
 - **Left mouse drag**: pan
+- **Max zoom**: 5000%
 
 ## Drag & drop (main image)
 
