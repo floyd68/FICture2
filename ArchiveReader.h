@@ -6,8 +6,8 @@
 #include <vector>
 #include <span>
 
-// Archive file reader interface for ZIP, 7-Zip, and RAR formats
-// Uses libarchive for unified access to compressed archives
+// Archive file reader interface for ZIP, 7-Zip, RAR, and BA2 formats
+// Uses libarchive for ZIP/7z/RAR, plus custom BA2 parsing
 
 struct ArchiveEntry
 {

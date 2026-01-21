@@ -3,6 +3,7 @@
 ## Overview
 
 FICture2 uses libarchive to support reading image files from compressed archives (ZIP, 7-Zip, RAR).
+BA2 archives are handled by a custom reader.
 
 ## Build Configuration
 
@@ -54,6 +55,7 @@ Build script: `external/libarchive/build-minimal.ps1`
 | **ZIP** | ✅ | ❌ | gzip (deflate) |
 | **7-Zip** | ✅ | ❌ | LZMA, LZMA2, XZ |
 | **RAR** | ✅ | ❌ | Built-in decoder |
+| **BA2** | ✅ (zlib) | ❌ | zlib/deflate (custom reader) |
 
 ### Compression Filters
 
@@ -158,7 +160,7 @@ if (ArchiveReaderFactory::IsArchiveFile(path))
 ```cpp
 std::vector<std::wstring> exts = 
     ArchiveReaderFactory::GetSupportedExtensions();
-// Returns: { L".zip", L".7z", L".rar" }
+// Returns: { L".zip", L".7z", L".rar", L".ba2" }
 ```
 
 ## Size Impact
@@ -198,8 +200,8 @@ By using specific filters instead of `archive_read_support_filter_all()`:
 
 1. **BA2 Format Support**
    - Bethesda Archive 2 (Fallout 4, Starfield)
-   - Requires custom parser (not in libarchive)
-   - GNRL (general) and DX10 (texture) types
+   - Custom parser with GNRL/DX10 support
+   - Zlib-compressed entries are supported
 
 2. **VirtualPath System**
    - Treat archives as virtual directories

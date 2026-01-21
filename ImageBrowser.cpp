@@ -243,6 +243,55 @@ namespace
         }
     }
 
+    static std::wstring ToLowerString(std::wstring value)
+    {
+        std::transform(value.begin(), value.end(), value.begin(),
+            [](wchar_t c)
+            {
+                return static_cast<wchar_t>(towlower(c));
+            });
+        return value;
+    }
+
+    static std::wstring ArchiveFormatLabelForPath(const std::wstring& path)
+    {
+        if (path.empty())
+        {
+            return L"";
+        }
+
+        auto vpath = VirtualPath::Parse(path);
+        if (!vpath)
+        {
+            return L"";
+        }
+
+        if (!vpath->IsInArchive() && !vpath->IsArchiveFile())
+        {
+            return L"";
+        }
+
+        const std::wstring ext = ToLowerString(vpath->hostPath.extension().wstring());
+        if (ext == L".zip")
+        {
+            return L"ZIP";
+        }
+        if (ext == L".7z")
+        {
+            return L"7Z";
+        }
+        if (ext == L".rar")
+        {
+            return L"RAR";
+        }
+        if (ext == L".ba2")
+        {
+            return L"BA2";
+        }
+
+        return L"";
+    }
+
     static int DxgiBitsPerPixel(DXGI_FORMAT fmt)
     {
         switch (fmt)
@@ -1660,12 +1709,14 @@ namespace
             }
 
             const std::wstring pathDisp = displayedFullPath.empty() ? L"-" : displayedFullPath;
+            const bool isFolderSelected = (m_selectedIndex < m_items.size() &&
+                (m_items[m_selectedIndex].kind == ThumbItemKind::Folder || m_items[m_selectedIndex].kind == ThumbItemKind::Up));
+            const std::wstring archiveLabel = ArchiveFormatLabelForPath(pathDisp);
 
             uint32_t w = 0;
             uint32_t h = 0;
             DXGI_FORMAT fmt = DXGI_FORMAT_UNKNOWN;
-            if (m_selectedIndex < m_items.size() &&
-                (m_items[m_selectedIndex].kind == ThumbItemKind::Folder || m_items[m_selectedIndex].kind == ThumbItemKind::Up))
+            if (isFolderSelected)
             {
                 w = 0;
                 h = 0;
@@ -1686,7 +1737,7 @@ namespace
             }
 
             std::wstring dim;
-            if (w > 0 && h > 0)
+            if (!isFolderSelected && w > 0 && h > 0)
             {
                 const int bpp = DxgiBitsPerPixel(fmt);
                 if (bpp > 0)
@@ -1705,9 +1756,21 @@ namespace
 
             std::wstring text;
             text.reserve(256);
-            text += dim;
-            text += L" | ";
-            text += DxgiFormatToString(fmt);
+            if (isFolderSelected)
+            {
+                text = archiveLabel.empty() ? L"-" : archiveLabel;
+            }
+            else
+            {
+                text += dim;
+                text += L" | ";
+                text += DxgiFormatToString(fmt);
+                if (!archiveLabel.empty())
+                {
+                    text += L" | ";
+                    text += archiveLabel;
+                }
+            }
 
             const std::wstring zoomText = std::to_wstring(zoomPct) + L"%";
             m_mainPane->UpdateInfo(pathDisp, text, zoomText);

@@ -51,10 +51,16 @@ std::vector<uint8_t> VirtualFileSystem::ReadFile(const VirtualPath& filePath)
         auto reader = ArchiveReaderFactory::Open(filePath.hostPath);
         if (!reader)
         {
+            OutputDebugStringW(L"[VFS] Failed to open archive reader.\n");
             return {};
         }
         
-        return reader->ExtractToMemory(filePath.archiveInnerPath);
+        auto data = reader->ExtractToMemory(filePath.archiveInnerPath);
+        if (data.empty())
+        {
+            OutputDebugStringW(L"[VFS] Archive entry read returned empty data.\n");
+        }
+        return data;
     }
     else
     {

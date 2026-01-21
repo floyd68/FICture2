@@ -2,7 +2,7 @@
 
 ## Overview
 
-The VirtualPath system provides a unified abstraction for accessing files both on the filesystem and inside compressed archives (ZIP, 7-Zip, RAR). It allows treating archives as virtual directories, enabling seamless navigation and file access.
+The VirtualPath system provides a unified abstraction for accessing files both on the filesystem and inside compressed archives (ZIP, 7-Zip, RAR, BA2). It allows treating archives as virtual directories, enabling seamless navigation and file access.
 
 ## Core Concepts
 
@@ -273,8 +273,8 @@ auto result = ImageCore::ImageDecodeDispatcher::Decode(request, input);
    - Modify archive contents
 
 4. **BA2 format**
-   - Bethesda Archive 2 support
-   - GNRL and DX10 types
+   - Bethesda Archive 2 support (GNRL/DX10)
+   - Zlib-compressed entries supported
    - Texture-specific optimizations
 
 5. **Streaming**
