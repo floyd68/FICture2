@@ -13,6 +13,7 @@
 #include "ImageBrowserInputController.h"
 #include "IpcCompareRequest.h"
 #include "Ficture2Backplate.h"
+#include "AppSetup.h"
 
 #include "FD2D/FD2D.h"
 #include "FD2D/Core.h"
@@ -895,6 +896,16 @@ namespace
                         MF_BYCOMMAND | MF_STRING,
                         IDM_CTX_TOGGLE_SAMPLING,
                         (std::wstring(L"Sampling: ") + samplingLabel + L"\tQ").c_str());
+
+                    const bool thumbRegistered = FICture2App::IsThumbnailProviderRegistered();
+                    ModifyMenuW(
+                        hPopup,
+                        IDM_CTX_REGISTER_THUMBNAIL_PROVIDER,
+                        MF_BYCOMMAND | MF_STRING,
+                        thumbRegistered ? IDM_CTX_UNREGISTER_THUMBNAIL_PROVIDER : IDM_CTX_REGISTER_THUMBNAIL_PROVIDER,
+                        thumbRegistered
+                            ? L"Unregister &Thumbnail Provider (Admin)..."
+                            : L"Register &Thumbnail Provider (Admin)...");
 
                     POINT ptScreen = pt;
                     ClientToScreen(hwnd, &ptScreen);
@@ -2465,6 +2476,27 @@ namespace
                     {
                         QueueInsertHorizontalWithPathAfterThis(VirtualPath::FromFilesystem(chosen));
                     }
+                }
+                break;
+            case IDM_CTX_REGISTER_ASSOCIATIONS:
+                {
+                    FD2D::Backplate* bp = BackplateRef();
+                    HWND hwnd = bp ? bp->Window() : nullptr;
+                    FICture2App::RegisterSupportedFileAssociations(hwnd);
+                }
+                break;
+            case IDM_CTX_REGISTER_THUMBNAIL_PROVIDER:
+                {
+                    FD2D::Backplate* bp = BackplateRef();
+                    HWND hwnd = bp ? bp->Window() : nullptr;
+                    FICture2App::RegisterThumbnailProvider(hwnd, false);
+                }
+                break;
+            case IDM_CTX_UNREGISTER_THUMBNAIL_PROVIDER:
+                {
+                    FD2D::Backplate* bp = BackplateRef();
+                    HWND hwnd = bp ? bp->Window() : nullptr;
+                    FICture2App::RegisterThumbnailProvider(hwnd, true);
                 }
                 break;
             case IDM_CTX_CLOSE:

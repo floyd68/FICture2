@@ -270,6 +270,24 @@ namespace
 
 namespace FICture2App
 {
+    namespace
+    {
+        std::vector<std::wstring> GetSupportedImageExtensions()
+        {
+            return {
+                L".png",
+                L".jpg",
+                L".jpeg",
+                L".bmp",
+                L".tif",
+                L".tiff",
+                L".gif",
+                L".dds",
+                L".tga",
+            };
+        }
+    }
+
     std::wstring GetIniFilePath()
     {
         wchar_t iniPath[MAX_PATH] {};
@@ -305,18 +323,7 @@ namespace FICture2App
             wchar_t exePath[MAX_PATH] {};
             GetModuleFileNameW(nullptr, exePath, static_cast<DWORD>(std::size(exePath)));
 
-            const std::vector<std::wstring> exts =
-            {
-                L".png",
-                L".jpg",
-                L".jpeg",
-                L".bmp",
-                L".tif",
-                L".tiff",
-                L".gif",
-                L".dds",
-                L".tga",
-            };
+            const std::vector<std::wstring> exts = GetSupportedImageExtensions();
 
             enabled = RegisterPerUserFileAssociations(exePath, exts);
 
@@ -332,8 +339,141 @@ namespace FICture2App
             }
         }
 
+        const int thumbChoice = MessageBoxW(
+            nullptr,
+            L"Register the DDS thumbnail provider for Windows Explorer?\n"
+            L"(Requires Administrator approval.)\n\n"
+            L"Do you want to apply this now?",
+            L"FICture2 - Thumbnail Provider",
+            MB_ICONQUESTION | MB_YESNO);
+        if (thumbChoice == IDYES)
+        {
+            RegisterThumbnailProvider(nullptr, false);
+        }
+
         // Create the INI so we don't ask again on the next run.
         EnsureIniFileExists(iniFile, enabled);
+    }
+
+    void RegisterSupportedFileAssociations(HWND owner)
+    {
+        const wchar_t* msg =
+            L"Register FICture2 as the default image viewer for supported types?\n"
+            L"(This will configure per-user (HKCU) associations only, not system-wide.)\n\n"
+            L"Extensions:\n"
+            L".png .jpg .jpeg .bmp .tif .tiff .gif .dds .tga\n\n"
+            L"Do you want to apply this now?";
+
+        const int choice = MessageBoxW(
+            owner,
+            msg,
+            L"FICture2 - File Associations",
+            MB_ICONQUESTION | MB_YESNO);
+        if (choice != IDYES)
+        {
+            return;
+        }
+
+        wchar_t exePath[MAX_PATH] {};
+        GetModuleFileNameW(nullptr, exePath, static_cast<DWORD>(std::size(exePath)));
+
+        const std::vector<std::wstring> exts = GetSupportedImageExtensions();
+        const bool enabled = RegisterPerUserFileAssociations(exePath, exts);
+
+        const std::wstring iniFile = GetIniFilePath();
+        if (!iniFile.empty())
+        {
+            WriteIniInt(iniFile, L"General", L"AskedAssociations", 1);
+            WriteIniInt(iniFile, L"General", L"AssociationsEnabled", enabled ? 1 : 0);
+        }
+
+        if (!enabled)
+        {
+            MessageBoxW(
+                owner,
+                L"Failed to configure file associations.\n\n"
+                L"Depending on your Windows version/policy, apps may not be able to set default apps automatically.\n"
+                L"If needed, set FICture2 manually in Windows Settings > Default apps.",
+                L"FICture2",
+                MB_OK | MB_ICONWARNING);
+            return;
+        }
+
+        MessageBoxW(
+            owner,
+            L"File associations updated successfully.",
+            L"FICture2",
+            MB_OK | MB_ICONINFORMATION);
+    }
+
+    void RegisterThumbnailProvider(HWND owner, bool unregister)
+    {
+        wchar_t exePath[MAX_PATH] {};
+        GetModuleFileNameW(nullptr, exePath, static_cast<DWORD>(std::size(exePath)));
+
+        std::filesystem::path dllPath = std::filesystem::path(exePath).parent_path() / L"ThumbnailProvider.dll";
+        if (!std::filesystem::exists(dllPath))
+        {
+            std::wstring msg = L"ThumbnailProvider.dll not found.\n\nExpected location:\n";
+            msg += dllPath.wstring();
+            MessageBoxW(owner, msg.c_str(), L"FICture2", MB_OK | MB_ICONWARNING);
+            return;
+        }
+
+        std::wstring args;
+        if (unregister)
+        {
+            args = L"/u \"" + dllPath.wstring() + L"\"";
+        }
+        else
+        {
+            args = L"\"" + dllPath.wstring() + L"\"";
+        }
+
+        const HINSTANCE result = ShellExecuteW(
+            owner,
+            L"runas",
+            L"regsvr32.exe",
+            args.c_str(),
+            nullptr,
+            SW_SHOWNORMAL);
+
+        if (reinterpret_cast<intptr_t>(result) <= 32)
+        {
+            MessageBoxW(
+                owner,
+                L"Failed to launch regsvr32 with elevation.\n\nPlease run as Administrator.",
+                L"FICture2",
+                MB_OK | MB_ICONWARNING);
+        }
+    }
+
+    bool IsThumbnailProviderRegistered()
+    {
+        const wchar_t* kShellExtKey = L"Software\\Classes\\.dds\\ShellEx\\{b824b49d-22ac-4161-ac8a-9916e8fa3f7f}";
+        const wchar_t* kProviderClsid = L"{8b0a3d42-7022-4e35-b45f-7321b3e93c16}";
+
+        auto hasProvider = [kShellExtKey, kProviderClsid](HKEY root) -> bool
+        {
+            wchar_t value[128] {};
+            DWORD valueBytes = sizeof(value);
+            const LONG rc = RegGetValueW(
+                root,
+                kShellExtKey,
+                nullptr,
+                RRF_RT_REG_SZ,
+                nullptr,
+                value,
+                &valueBytes);
+            if (rc != ERROR_SUCCESS)
+            {
+                return false;
+            }
+
+            return _wcsicmp(value, kProviderClsid) == 0;
+        };
+
+        return hasProvider(HKEY_CURRENT_USER) || hasProvider(HKEY_LOCAL_MACHINE);
     }
 
     void LoadWindowPlacement(HWND hwnd)
