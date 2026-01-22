@@ -164,6 +164,8 @@ This repository is the “app shell” that wires the UI and decode pipeline tog
   - **Right 1/4** drop zone: insert a new `ImageBrowser` to the right and open the dropped path there (**green overlay** while dragging)
   - **Multi-select drag & drop**: drop multiple images/folders/archives to open up to 4 viewers side-by-side
   - **Unsupported files** show an X cursor and cannot be dropped
+- **File associations**: register supported image types from the context menu (per-user / HKCU only)
+- **Explorer DDS thumbnails**: register/unregister the thumbnail provider from the context menu (admin prompt)
 - **First-run file association prompt** (per-user / HKCU only)
 
 ## Hotkeys
@@ -204,6 +206,12 @@ This repository is the “app shell” that wires the UI and decode pipeline tog
   - **Right 1/4**: insert a new `ImageBrowser` on the right and open there — green overlay while dragging
 - Multiple files/folders/archives can be dropped at once (up to 4 viewers total)
 - Unsupported files show an X cursor and are rejected
+
+## File associations & thumbnails
+
+- **Register file associations**: right-click the main image area and choose **Register File Associations** (per-user / HKCU)
+- **Register DDS thumbnails**: choose **Register Thumbnail Provider (Admin)** (prompts for elevation)
+- If already registered, the menu shows **Unregister Thumbnail Provider (Admin)**
 
 ## Command line
 

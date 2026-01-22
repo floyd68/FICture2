@@ -35,4 +35,3 @@ void ImageBrowser_OpenAdditionalFilesSideBySide(const std::vector<std::wstring>&
 void ImageBrowser_OpenAdditionalFilesSideBySideAfter(
     const std::vector<std::wstring>& filePaths,
     const std::wstring& afterName);
-
