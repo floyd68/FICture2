@@ -143,6 +143,7 @@ This repository is the “app shell” that wires the UI and decode pipeline tog
 - **Thumbnail strip + main image** optimized for DDS-heavy folders
 - **Folder navigation** inside the thumbnail strip (includes `..` “up” item)
 - **Archive browsing**: ZIP / 7Z / RAR / BA2 (images and folders)
+- **Supported image formats**: DDS, PNG, JPG/JPEG, BMP, GIF, TIF/TIFF, TGA
 - **Compare / multi-view**: open up to **4** viewers side-by-side (equal widths)
 - **Sync mode (when 2+ viewers exist)**:
   - selecting an image propagates to other viewers (by filename match within their current folder)
@@ -206,6 +207,11 @@ This repository is the “app shell” that wires the UI and decode pipeline tog
   - **Right 1/4**: insert a new `ImageBrowser` on the right and open there — green overlay while dragging
 - Multiple files/folders/archives can be dropped at once (up to 4 viewers total)
 - Unsupported files show an X cursor and are rejected
+
+## Supported formats
+
+- **Images**: `.dds`, `.png`, `.jpg`, `.jpeg`, `.bmp`, `.gif`, `.tif`, `.tiff`, `.tga`
+- **Archives**: `.zip`, `.7z`, `.rar`, `.ba2` (browse images + folders)
 
 ## File associations & thumbnails
 
