@@ -16,7 +16,7 @@ git submodule add https://github.com/libarchive/libarchive.git external/libarchi
 
 ### Minimal Build
 
-Build script: `external/libarchive/build-minimal.ps1`
+Build script: `build-libarchive-minimal.ps1`
 
 **CMake Configuration:**
 ```cmake

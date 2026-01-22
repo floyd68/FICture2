@@ -106,6 +106,7 @@ This repository is the “app shell” that wires the UI and decode pipeline tog
 - **`FD2D/` (submodule)**: lightweight Win32 UI framework using Direct2D/DirectWrite (and optional D3D11 swapchain renderer)
 - **`ImageCore/` (submodule)**: async image decode pipeline (WIC + DirectXTex)
 - **`external/DirectXTex/` (submodule)**: DirectXTex library (external dependency)
+- **`external/libarchive/` (submodule)**: ZIP/7Z/RAR archive support (built as a minimal static library)
 
 ## Installation & running
 
@@ -122,6 +123,20 @@ This repository is the “app shell” that wires the UI and decode pipeline tog
 2. Open `FICture2.slnx` in Visual Studio
 3. Select **Release x64**
 4. Build `FICture2` project
+
+### libarchive (required for archive browsing)
+
+FICture2 expects a locally built, minimal libarchive static library in:
+
+- `external/libarchive/build-minimal/libarchive/Debug/archive.lib`
+- `external/libarchive/build-minimal/libarchive/Release/archive.lib`
+
+We keep the submodule clean and **do not commit libarchive build outputs or local patches**, so you must build it yourself:
+
+1. Ensure the submodule exists: `git submodule update --init --recursive`
+2. Run the script: `build-libarchive-minimal.ps1`
+
+For details and the exact CMake flags used, see `docs/libarchive_integration.md`.
 
 ### Run
 
