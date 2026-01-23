@@ -124,6 +124,66 @@ This repository is the “app shell” that wires the UI and decode pipeline tog
 3. Select **Release x64**
 4. Build `FICture2` project
 
+### Build (CMake)
+
+1. Clone repo with submodules:
+   - `git clone --recurse-submodules https://github.com/floyd68/FICture2.git`
+2. Configure:
+   - `cmake -S . -B build -G "Visual Studio 18 2026" -A x64`
+3. Build:
+   - `cmake --build build --config Release`
+4. Run:
+   - `build\Release\FICture2.exe`
+
+Notes:
+- CMake builds libarchive from source by default (`FICTURE2_USE_LIBARCHIVE_CMAKE=ON`).
+- Local zlib/xz submodules are used by default (`FICTURE2_USE_LOCAL_ARCHIVE_DEPS=ON`).
+
+### CMake options
+
+Top-level options:
+- `FICTURE2_BUILD_THUMBNAIL_PROVIDER` (default: `ON`): build the `ThumbnailProvider` DLL.
+- `FICTURE2_USE_LIBARCHIVE_CMAKE` (default: `ON`): build `external/libarchive` via CMake and link `archive_static`.
+- `FICTURE2_USE_LOCAL_ARCHIVE_DEPS` (default: `ON`): build `external/zlib` and `external/xz` locally and wire them into libarchive.
+
+DirectXTex (forced in root CMake):
+- `BUILD_TOOLS=OFF`: do not build `texconv/texdiag` tools.
+- `BUILD_SAMPLE=OFF`: do not build DirectXTex sample projects.
+- `BUILD_SHARED_LIBS=OFF`: build DirectXTex as a static library.
+
+libarchive (forced in root CMake):
+- Compression deps:
+  - `ENABLE_ZLIB=ON`: ZIP/deflate support.
+  - `ENABLE_LZMA=ON`: 7z/XZ support (via liblzma).
+  - `ENABLE_BZip2=OFF`, `ENABLE_ZSTD=OFF`, `ENABLE_LZ4=OFF`, `ENABLE_LZO=OFF`: disabled to minimize size.
+- Crypto backends:
+  - `ENABLE_CNG=ON`: use Windows CNG (`bcrypt`) for hashes.
+  - `ENABLE_OPENSSL=OFF`, `ENABLE_MBEDTLS=OFF`, `ENABLE_NETTLE=OFF`: disabled.
+- Tools and extras:
+  - `ENABLE_TAR=OFF`, `ENABLE_CPIO=OFF`, `ENABLE_CAT=OFF`, `ENABLE_UNZIP=OFF`: no CLI utilities.
+  - `ENABLE_XATTR=OFF`, `ENABLE_ACL=OFF`, `ENABLE_ICONV=OFF`: disabled to reduce surface area.
+  - `ENABLE_PCREPOSIX=OFF`, `ENABLE_PCRE2POSIX=OFF`: disable regex backends.
+  - `ENABLE_TEST=OFF`, `ENABLE_INSTALL=OFF`: no tests/install targets.
+- `POSIX_REGEX_LIB=LIBC`: prefer libc regex if available.
+
+zlib (forced when `FICTURE2_USE_LOCAL_ARCHIVE_DEPS=ON`):
+- `ZLIB_BUILD_STATIC=ON`: static zlib.
+- `ZLIB_BUILD_SHARED=OFF`: no shared zlib.
+- `ZLIB_BUILD_TESTING=OFF`: no zlib tests.
+- `ZLIB_INSTALL=OFF`: no zlib install step.
+
+xz/liblzma (forced when `FICTURE2_USE_LOCAL_ARCHIVE_DEPS=ON`):
+- `BUILD_SHARED_LIBS=OFF`: static liblzma.
+- `XZ_NLS=OFF`: no gettext-based translations.
+- `XZ_DOC=OFF`, `XZ_DOXYGEN=OFF`: no docs.
+- `XZ_TOOL_XZ=OFF`, `XZ_TOOL_XZDEC=OFF`, `XZ_TOOL_LZMADEC=OFF`,
+  `XZ_TOOL_LZMAINFO=OFF`, `XZ_TOOL_SCRIPTS=OFF`,
+  `XZ_TOOL_SYMLINKS=OFF`, `XZ_TOOL_SYMLINKS_LZMA=OFF`: no CLI tools or symlinks.
+
+Override options on configure, for example:
+- `cmake -S . -B build -G "Visual Studio 18 2026" -A x64 -DFICTURE2_BUILD_THUMBNAIL_PROVIDER=OFF`
+- `cmake -S . -B build -G "Visual Studio 18 2026" -A x64 -DFICTURE2_USE_LOCAL_ARCHIVE_DEPS=OFF`
+
 ### libarchive (required for archive browsing)
 
 FICture2 expects a locally built, minimal libarchive static library in:
