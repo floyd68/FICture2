@@ -15,3 +15,9 @@
 [submodule "external/libarchive"]
 	path = external/libarchive
 	url = https://github.com/libarchive/libarchive.git
+[submodule "external/zlib"]
+	path = external/zlib
+	url = https://github.com/madler/zlib.git
+[submodule "external/xz"]
+	path = external/xz
+	url = https://github.com/tukaani-project/xz.git
