@@ -35,6 +35,14 @@ if(FICTURE2_USE_LIBARCHIVE_CMAKE)
         set(XZ_TOOL_SYMLINKS_LZMA OFF CACHE BOOL "Disable xz lzma symlinks" FORCE)
         set(BUILD_SHARED_LIBS OFF CACHE BOOL "Static xz" FORCE)
         add_subdirectory(external/xz)
+        set(_liblzma_config_dir "${CMAKE_BINARY_DIR}/_liblzma_config")
+        file(MAKE_DIRECTORY "${_liblzma_config_dir}")
+        file(WRITE "${_liblzma_config_dir}/LibLZMAConfig.cmake"
+            "set(LIBLZMA_FOUND TRUE)\n"
+            "set(LIBLZMA_INCLUDE_DIRS \"${CMAKE_CURRENT_SOURCE_DIR}/external/xz/src/liblzma/api\")\n"
+            "set(LIBLZMA_LIBRARIES liblzma)\n")
+        file(WRITE "${_liblzma_config_dir}/liblzma-config.cmake"
+            "include(\"${_liblzma_config_dir}/LibLZMAConfig.cmake\")\n")
     endif()
 
     set(POSIX_REGEX_LIB LIBC CACHE STRING "Use libc regex" FORCE)
@@ -55,7 +63,7 @@ if(FICTURE2_USE_LIBARCHIVE_CMAKE)
     set(ENABLE_PCREPOSIX OFF CACHE BOOL "Disable libarchive pcreposix" FORCE)
     set(ENABLE_PCRE2POSIX OFF CACHE BOOL "Disable libarchive pcre2posix" FORCE)
     set(ENABLE_LIBGCC OFF CACHE BOOL "Disable libarchive libgcc" FORCE)
-    set(ENABLE_CNG OFF CACHE BOOL "Disable libarchive CNG" FORCE)
+    set(ENABLE_CNG ON CACHE BOOL "Enable libarchive CNG" FORCE)
     set(ENABLE_TAR OFF CACHE BOOL "Disable libarchive tar" FORCE)
     set(ENABLE_CPIO OFF CACHE BOOL "Disable libarchive cpio" FORCE)
     set(ENABLE_CAT OFF CACHE BOOL "Disable libarchive cat" FORCE)
@@ -73,7 +81,7 @@ if(FICTURE2_USE_LIBARCHIVE_CMAKE)
             "${CMAKE_CURRENT_SOURCE_DIR}/external/zlib;${CMAKE_BINARY_DIR}/external/zlib"
             CACHE STRING "Use local zlib includes" FORCE)
         set(LibLZMA_DIR
-            "${CMAKE_BINARY_DIR}/external/xz"
+            "${CMAKE_BINARY_DIR}/_liblzma_config"
             CACHE PATH "Use local liblzma config" FORCE)
         set(CMAKE_FIND_PACKAGE_PREFER_CONFIG ON CACHE BOOL "Prefer config packages" FORCE)
         list(APPEND CMAKE_PREFIX_PATH "${CMAKE_BINARY_DIR}/external/xz")
@@ -156,5 +164,12 @@ else()
 endif()
 
 if(MSVC)
+    set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} /MP")
+    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} /MP")
+    set(CMAKE_C_FLAGS_RELEASE "${CMAKE_C_FLAGS_RELEASE} /arch:SSE2")
+    set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} /arch:SSE2")
+    set(CMAKE_C_FLAGS_MINSIZEREL "${CMAKE_C_FLAGS_MINSIZEREL} /arch:SSE2 /Os /GL /Oy")
+    set(CMAKE_CXX_FLAGS_MINSIZEREL "${CMAKE_CXX_FLAGS_MINSIZEREL} /arch:SSE2 /Os /GL /Oy")
+    set(CMAKE_EXE_LINKER_FLAGS_MINSIZEREL "${CMAKE_EXE_LINKER_FLAGS_MINSIZEREL} /LTCG")
     target_compile_options(FICture2 PRIVATE /permissive-)
 endif()
