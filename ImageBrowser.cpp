@@ -1,4 +1,5 @@
 #include "ImageBrowser.h"
+#include "Version.h"
 
 #include "framework.h"
 #include "Resource.h"
@@ -35,7 +36,9 @@
 #include <wincodec.h>
 #include <windowsx.h>
 #include <shlobj.h>
+#include <shellapi.h>
 #include <commdlg.h>
+#include <commctrl.h>
 
 namespace
 {
@@ -292,6 +295,48 @@ namespace
         }
 
         return L"";
+    }
+
+    static HRESULT CALLBACK AboutDialogCallback(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, LONG_PTR)
+    {
+        if (msg == TDN_HYPERLINK_CLICKED)
+        {
+            const wchar_t* link = reinterpret_cast<const wchar_t*>(lParam);
+            ShellExecuteW(hwnd, L"open", link, nullptr, nullptr, SW_SHOWNORMAL);
+            return S_OK;
+        }
+
+        return S_OK;
+    }
+
+    static void ShowAboutDialog(HWND hwnd)
+    {
+        INITCOMMONCONTROLSEX icc {};
+        icc.dwSize = sizeof(icc);
+        icc.dwICC = ICC_STANDARD_CLASSES;
+        InitCommonControlsEx(&icc);
+
+        const HINSTANCE instance = GetModuleHandleW(nullptr);
+        const HICON appIcon = static_cast<HICON>(
+            LoadImageW(instance, MAKEINTRESOURCEW(IDI_FICTURE2), IMAGE_ICON, 0, 0, LR_DEFAULTSIZE));
+
+        const wchar_t* taskDialogContent =
+            L"Version: " FICTURE2_VERSION_STRING_W L"\n"
+            L"Author: floyd Lee <a href=\"mailto:floydles@gmail.com\">floydles@gmail.com</a>\n"
+            L"GitHub: <a href=\"https://github.com/floyd68/FICture2\">https://github.com/floyd68/FICture2</a>";
+
+        TASKDIALOGCONFIG config {};
+        config.cbSize = sizeof(config);
+        config.hwndParent = hwnd;
+        config.dwFlags = TDF_ENABLE_HYPERLINKS | TDF_ALLOW_DIALOG_CANCELLATION | TDF_USE_HICON_MAIN;
+        config.pszWindowTitle = L"About FICture2";
+        config.pszMainInstruction = L"FICture2";
+        config.pszContent = taskDialogContent;
+        config.dwCommonButtons = TDCBF_OK_BUTTON;
+        config.pfCallback = AboutDialogCallback;
+        config.hMainIcon = appIcon;
+
+        TaskDialogIndirect(&config, nullptr, nullptr, nullptr);
     }
 
     static std::wstring SamplingLabel(bool highQuality, FD2D::Backplate* backplate)
@@ -906,6 +951,9 @@ namespace
                         thumbRegistered
                             ? L"Unregister &Thumbnail Provider (Admin)..."
                             : L"Register &Thumbnail Provider (Admin)...");
+
+                    AppendMenuW(hPopup, MF_SEPARATOR, 0, nullptr);
+                    AppendMenuW(hPopup, MF_STRING, IDM_CTX_ABOUT, L"&About...");
 
                     POINT ptScreen = pt;
                     ClientToScreen(hwnd, &ptScreen);
@@ -2531,6 +2579,13 @@ namespace
                 {
                     m_mainImage->ToggleSamplingQuality();
                     RefreshInfoPanel();
+                }
+                break;
+            case IDM_CTX_ABOUT:
+                {
+                    FD2D::Backplate* bp = BackplateRef();
+                    HWND hwnd = bp ? bp->Window() : nullptr;
+                    ShowAboutDialog(hwnd);
                 }
                 break;
             default:

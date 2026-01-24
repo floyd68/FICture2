@@ -11,6 +11,39 @@ set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
+set(FICTURE2_VERSION_MAJOR 1)
+set(FICTURE2_VERSION_MINOR 1)
+set(FICTURE2_VERSION_COMMITCOUNT 0)
+set(FICTURE2_VERSION_BUILD 0)
+
+execute_process(
+    COMMAND git rev-list --count HEAD
+    WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+    RESULT_VARIABLE FICTURE2_GIT_COUNT_RESULT
+    OUTPUT_VARIABLE FICTURE2_GIT_COUNT_OUTPUT
+    OUTPUT_STRIP_TRAILING_WHITESPACE
+)
+if(FICTURE2_GIT_COUNT_RESULT EQUAL 0 AND FICTURE2_GIT_COUNT_OUTPUT)
+    set(FICTURE2_VERSION_COMMITCOUNT ${FICTURE2_GIT_COUNT_OUTPUT})
+endif()
+
+if(DEFINED ENV{BUILD_NUMBER})
+    set(FICTURE2_VERSION_BUILD $ENV{BUILD_NUMBER})
+elseif(DEFINED ENV{GITHUB_RUN_NUMBER})
+    set(FICTURE2_VERSION_BUILD $ENV{GITHUB_RUN_NUMBER})
+elseif(DEFINED ENV{CI_PIPELINE_IID})
+    set(FICTURE2_VERSION_BUILD $ENV{CI_PIPELINE_IID})
+endif()
+
+set(FICTURE2_VERSION_STRING
+    "${FICTURE2_VERSION_MAJOR}.${FICTURE2_VERSION_MINOR}.${FICTURE2_VERSION_COMMITCOUNT}.${FICTURE2_VERSION_BUILD}"
+)
+configure_file(
+    ${CMAKE_CURRENT_SOURCE_DIR}/Version.h.in
+    ${CMAKE_CURRENT_BINARY_DIR}/Version.h
+    @ONLY
+)
+
 function(set_cache_bool name value description)
     set(${name} ${value} CACHE BOOL "${description}" FORCE)
 endfunction()
@@ -21,6 +54,25 @@ endfunction()
 
 function(set_cache_path name value description)
     set(${name} ${value} CACHE PATH "${description}" FORCE)
+endfunction()
+
+function(set_cache_bools_from_pairs pairs_list description_prefix)
+    foreach(entry IN LISTS ${pairs_list})
+        string(REPLACE "=" ";" parts "${entry}")
+        list(LENGTH parts parts_len)
+        if(parts_len LESS 2)
+            message(FATAL_ERROR "Expected NAME=VALUE pair, got: ${entry}")
+        endif()
+        list(GET parts 0 name)
+        list(GET parts 1 value)
+        set_cache_bool(${name} ${value} "${description_prefix} ${name}")
+    endforeach()
+endfunction()
+
+function(set_cache_bools_off names_list description_prefix)
+    foreach(name IN LISTS ${names_list})
+        set_cache_bool(${name} OFF "${description_prefix} ${name}")
+    endforeach()
 endfunction()
 
 # DirectXTex
@@ -59,9 +111,7 @@ if(FICTURE2_ENABLE_LIBARCHIVE_COMMON_ARCHIVES)
         XZ_TOOL_SYMLINKS
         XZ_TOOL_SYMLINKS_LZMA
     )
-    foreach(opt IN LISTS _xz_bool_options)
-        set_cache_bool(${opt} OFF "Disable ${opt}")
-    endforeach()
+    set_cache_bools_off(_xz_bool_options "Disable xz")
     set_cache_bool(BUILD_SHARED_LIBS OFF "Static xz")
     add_subdirectory(external/xz)
     set(_liblzma_config_dir "${CMAKE_BINARY_DIR}/_liblzma_config")
@@ -103,12 +153,7 @@ if(FICTURE2_ENABLE_LIBARCHIVE_COMMON_ARCHIVES)
         ENABLE_INSTALL=OFF
         BUILD_SHARED_LIBS=OFF
     )
-    foreach(entry IN LISTS _libarchive_cache_bools)
-        string(REPLACE "=" ";" parts "${entry}")
-        list(GET parts 0 name)
-        list(GET parts 1 value)
-        set_cache_bool(${name} ${value} "libarchive ${name}")
-    endforeach()
+    set_cache_bools_from_pairs(_libarchive_cache_bools "libarchive")
 
     set_cache_path(LibLZMA_DIR "${CMAKE_BINARY_DIR}/_liblzma_config" "Use local liblzma config")
     set_cache_bool(CMAKE_FIND_PACKAGE_PREFER_CONFIG ON "Prefer config packages")
@@ -150,6 +195,7 @@ target_sources(FICture2 PRIVATE
     ThumbNavTile.cpp
     VirtualFileSystem.cpp
     VirtualPath.cpp
+    app.manifest
     FICture2.rc
 )
 
@@ -167,6 +213,7 @@ target_include_directories(FICture2 PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}
     ${CMAKE_CURRENT_SOURCE_DIR}/FD2D
     ${CMAKE_CURRENT_SOURCE_DIR}/ImageCore
+    ${CMAKE_CURRENT_BINARY_DIR}
 )
 
 target_compile_definitions(FICture2 PRIVATE
@@ -182,8 +229,10 @@ target_link_libraries(FICture2 PRIVATE
     FD2D
     ImageCore
     DirectXTex
+    comctl32
     d2d1
     dwrite
+    shell32
     windowscodecs
     d3d11
     dxgi

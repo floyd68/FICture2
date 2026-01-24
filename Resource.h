@@ -20,6 +20,7 @@
 #define IDM_CTX_REGISTER_ASSOCIATIONS   32780
 #define IDM_CTX_REGISTER_THUMBNAIL_PROVIDER 32781
 #define IDM_CTX_UNREGISTER_THUMBNAIL_PROVIDER 32782
+#define IDM_CTX_ABOUT                   32783
 #define IDC_STATIC                      -1
 
 // Next default values for new objects
