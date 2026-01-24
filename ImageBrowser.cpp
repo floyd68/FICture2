@@ -1674,8 +1674,16 @@ namespace
                 auto parsed = VirtualPath::Parse(m_initialFile);
                 if (parsed)
                 {
-                    m_currentFolder = parsed->GetParent();
-                    RebuildThumbList(*parsed);
+                    if (parsed->IsArchiveFile() && !parsed->IsInArchive())
+                    {
+                        m_currentFolder = *parsed;
+                        RebuildThumbList(VirtualPath());
+                    }
+                    else
+                    {
+                        m_currentFolder = parsed->GetParent();
+                        RebuildThumbList(*parsed);
+                    }
                 }
             }
             else
