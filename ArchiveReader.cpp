@@ -1,7 +1,5 @@
 #include "ArchiveReader.h"
 
-#include <archive.h>
-#include <archive_entry.h>
 #include <algorithm>
 #include <array>
 #include <cwctype>
@@ -11,6 +9,15 @@
 #include <unordered_map>
 #include <Windows.h>
 #include <dxgiformat.h>
+
+#ifndef FICTURE2_ENABLE_LIBARCHIVE_COMMON_ARCHIVES
+#define FICTURE2_ENABLE_LIBARCHIVE_COMMON_ARCHIVES 1
+#endif
+
+#if FICTURE2_ENABLE_LIBARCHIVE_COMMON_ARCHIVES
+#include <archive.h>
+#include <archive_entry.h>
+#endif
 
 #if __has_include(<zlib.h>)
 #include <zlib.h>
@@ -856,6 +863,7 @@ private:
     }
 };
 
+#if FICTURE2_ENABLE_LIBARCHIVE_COMMON_ARCHIVES
 class LibArchiveReader : public IArchiveReader
 {
     std::filesystem::path m_path;
@@ -901,6 +909,7 @@ public:
             return {};
         }
 
+#if FICTURE2_ENABLE_LIBARCHIVE_COMMON_ARCHIVES
         // Enable only the formats we need
         archive_read_support_format_zip(a);
         archive_read_support_format_7zip(a);
@@ -911,6 +920,7 @@ public:
         archive_read_support_filter_gzip(a);    // ZIP deflate/gzip
         archive_read_support_filter_lzma(a);    // 7z LZMA
         archive_read_support_filter_xz(a);      // 7z XZ
+#endif
 
         std::string pathUtf8 = WideToUtf8(m_path.wstring());
         int r = archive_read_open_filename(a, pathUtf8.c_str(), 10240);
@@ -973,6 +983,7 @@ private:
             return;
         }
 
+#if FICTURE2_ENABLE_LIBARCHIVE_COMMON_ARCHIVES
         // Enable only the formats we need
         archive_read_support_format_zip(a);
         archive_read_support_format_7zip(a);
@@ -983,6 +994,7 @@ private:
         archive_read_support_filter_gzip(a);    // ZIP deflate/gzip
         archive_read_support_filter_lzma(a);    // 7z LZMA
         archive_read_support_filter_xz(a);      // 7z XZ
+#endif
 
         std::string pathUtf8 = WideToUtf8(m_path.wstring());
         int r = archive_read_open_filename(a, pathUtf8.c_str(), 10240);
@@ -1039,6 +1051,7 @@ private:
         archive_read_free(a);
     }
 };
+#endif
 
 // ArchiveReaderFactory implementation
 
@@ -1068,6 +1081,7 @@ std::unique_ptr<IArchiveReader> ArchiveReaderFactory::Open(const std::filesystem
             return reader;
         }
 
+#if FICTURE2_ENABLE_LIBARCHIVE_COMMON_ARCHIVES
         auto reader = std::make_unique<LibArchiveReader>(path);
         if (reader->ListEntries().empty())
         {
@@ -1075,6 +1089,9 @@ std::unique_ptr<IArchiveReader> ArchiveReaderFactory::Open(const std::filesystem
         }
 
         return reader;
+#else
+        return nullptr;
+#endif
     }
     catch (...)
     {
@@ -1091,7 +1108,10 @@ bool ArchiveReaderFactory::HasArchiveExtension(const std::wstring& filename)
     ext = ToLower(ext);
 
     static const std::vector<std::wstring> supportedExts = {
-        L".zip", L".7z", L".rar", L".ba2"
+#if FICTURE2_ENABLE_LIBARCHIVE_COMMON_ARCHIVES
+        L".zip", L".7z", L".rar",
+#endif
+        L".ba2"
     };
 
     return std::find(supportedExts.begin(), supportedExts.end(), ext) != supportedExts.end();
@@ -1099,5 +1119,11 @@ bool ArchiveReaderFactory::HasArchiveExtension(const std::wstring& filename)
 
 std::vector<std::wstring> ArchiveReaderFactory::GetSupportedExtensions()
 {
-    return { L".zip", L".7z", L".rar", L".ba2" };
+    std::vector<std::wstring> exts = {
+#if FICTURE2_ENABLE_LIBARCHIVE_COMMON_ARCHIVES
+        L".zip", L".7z", L".rar",
+#endif
+        L".ba2"
+    };
+    return exts;
 }
