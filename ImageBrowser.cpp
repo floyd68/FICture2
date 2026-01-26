@@ -321,7 +321,7 @@ namespace
             LoadImageW(instance, MAKEINTRESOURCEW(IDI_FICTURE2), IMAGE_ICON, 0, 0, LR_DEFAULTSIZE));
 
         const wchar_t* taskDialogContent =
-            L"Version: " FICTURE2_VERSION_STRING_W L"\n"
+            L"Version: " FICTURE2_VERSION_STRING_W L" (" FICTURE2_BUILD_FLAVOR_W L")\n"
             L"Author: floyd Lee <a href=\"mailto:floydles@gmail.com\">floydles@gmail.com</a>\n"
             L"GitHub: <a href=\"https://github.com/floyd68/FICture2\">https://github.com/floyd68/FICture2</a>";
 
@@ -942,6 +942,7 @@ namespace
                         IDM_CTX_TOGGLE_SAMPLING,
                         (std::wstring(L"Sampling: ") + samplingLabel + L"\tQ").c_str());
 
+#if FICTURE2_ENABLE_REGISTRATION_MENU
                     const bool thumbRegistered = FICture2App::IsThumbnailProviderRegistered();
                     ModifyMenuW(
                         hPopup,
@@ -951,6 +952,11 @@ namespace
                         thumbRegistered
                             ? L"Unregister &Thumbnail Provider (Admin)..."
                             : L"Register &Thumbnail Provider (Admin)...");
+#else
+                    DeleteMenu(hPopup, IDM_CTX_REGISTER_ASSOCIATIONS, MF_BYCOMMAND);
+                    DeleteMenu(hPopup, IDM_CTX_REGISTER_THUMBNAIL_PROVIDER, MF_BYCOMMAND);
+                    DeleteMenu(hPopup, IDM_CTX_UNREGISTER_THUMBNAIL_PROVIDER, MF_BYCOMMAND);
+#endif
 
                     AppendMenuW(hPopup, MF_SEPARATOR, 0, nullptr);
                     AppendMenuW(hPopup, MF_STRING, IDM_CTX_ABOUT, L"&About...");
@@ -2534,6 +2540,7 @@ namespace
                     }
                 }
                 break;
+#if FICTURE2_ENABLE_REGISTRATION_MENU
             case IDM_CTX_REGISTER_ASSOCIATIONS:
                 {
                     FD2D::Backplate* bp = BackplateRef();
@@ -2555,6 +2562,7 @@ namespace
                     FICture2App::RegisterThumbnailProvider(hwnd, true);
                 }
                 break;
+#endif
             case IDM_CTX_CLOSE:
                 QueueCloseHorizontalThisBrowser();
                 break;

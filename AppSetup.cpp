@@ -308,6 +308,11 @@ namespace FICture2App
             return;
         }
 
+#if !FICTURE2_ENABLE_FIRST_RUN_PROMPTS
+        EnsureIniFileExists(iniFile, false);
+        return;
+#endif
+
         const wchar_t* msg =
             L"Set FICture2 as your default image viewer?\n"
             L"(This will configure per-user (HKCU) associations only, not system-wide.)\n\n"

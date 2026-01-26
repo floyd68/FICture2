@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Package xmlns="http://schemas.microsoft.com/appx/manifest/foundation/windows10"
+         xmlns:uap="http://schemas.microsoft.com/appx/manifest/uap/windows10"
+         xmlns:rescap="http://schemas.microsoft.com/appx/manifest/foundation/windows10/restrictedcapabilities"
+         IgnorableNamespaces="uap rescap">
+  <Identity Name="@FICTURE2_APPX_IDENTITY_NAME@"
+            Publisher="@FICTURE2_APPX_PUBLISHER@"
+            Version="@FICTURE2_VERSION_STRING@" />
+  <Properties>
+    <DisplayName>@FICTURE2_APPX_DISPLAY_NAME@</DisplayName>
+    <PublisherDisplayName>@FICTURE2_APPX_PUBLISHER@</PublisherDisplayName>
+    <Logo>@FICTURE2_APPX_LOGO_PATH@</Logo>
+  </Properties>
+  <Resources>
+    <Resource Language="en-us" />
+  </Resources>
+  <Applications>
+    <Application Id="FICture2"
+                 Executable="@FICTURE2_APPX_EXECUTABLE@"
+                 EntryPoint="Windows.FullTrustApplication">
+      <uap:VisualElements
+        DisplayName="@FICTURE2_APPX_DISPLAY_NAME@"
+        Description="@FICTURE2_APPX_DISPLAY_NAME@"
+        BackgroundColor="transparent"
+        Square150x150Logo="@FICTURE2_APPX_LOGO_PATH@"
+        Square44x44Logo="@FICTURE2_APPX_LOGO_PATH@" />
+      <Extensions>
+        <uap:Extension Category="windows.fileTypeAssociation">
+          <uap:FileTypeAssociation Name="@FICTURE2_APPX_FILETYPE_GROUP@">
+            <uap:SupportedFileTypes>
+@FICTURE2_APPX_FILETYPE_ENTRIES@            </uap:SupportedFileTypes>
+          </uap:FileTypeAssociation>
+        </uap:Extension>
+      </Extensions>
+    </Application>
+  </Applications>
+  <Capabilities>
+    <rescap:Capability Name="runFullTrust" />
+  </Capabilities>
+</Package>

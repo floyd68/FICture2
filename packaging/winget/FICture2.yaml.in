@@ -1,0 +1,14 @@
+PackageIdentifier: @FICTURE2_WINGET_PACKAGE_ID@
+PackageVersion: @FICTURE2_VERSION_STRING@
+PackageName: FICture2
+Publisher: @FICTURE2_INNO_PUBLISHER@
+InstallerType: inno
+Installers:
+  - Architecture: x64
+    InstallerUrl: @FICTURE2_WINGET_INSTALLER_URL@
+    InstallerSha256: @FICTURE2_WINGET_INSTALLER_SHA256@
+    InstallerSwitches:
+      Silent: @FICTURE2_WINGET_SILENT_SWITCH@
+      SilentWithProgress: @FICTURE2_WINGET_SILENT_SWITCH@
+ManifestType: installer
+ManifestVersion: 1.6.0

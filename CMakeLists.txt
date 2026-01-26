@@ -2,7 +2,44 @@ cmake_minimum_required(VERSION 3.21)
 
 project(FICture2 LANGUAGES CXX RC)
 
-option(FICTURE2_BUILD_THUMBNAIL_PROVIDER "Build ThumbnailProvider DLL" ON)
+set(FICTURE2_DISTRIBUTION_CHANNEL "nexus_github" CACHE STRING "Distribution channel: nexus_github, windows_store, winget")
+set_property(
+    CACHE FICTURE2_DISTRIBUTION_CHANNEL
+    PROPERTY STRINGS "nexus_github" "windows_store" "winget"
+)
+
+set(_default_build_thumbnail_provider ON)
+set(_default_enable_first_run_prompts ON)
+set(_default_enable_registration_menu ON)
+set(_default_enable_msix_packaging OFF)
+set(_default_enable_inno_setup OFF)
+if(FICTURE2_DISTRIBUTION_CHANNEL STREQUAL "windows_store")
+    set(_default_build_thumbnail_provider OFF)
+    set(_default_enable_first_run_prompts OFF)
+    set(_default_enable_registration_menu OFF)
+    set(_default_enable_msix_packaging ON)
+elseif(FICTURE2_DISTRIBUTION_CHANNEL STREQUAL "winget")
+    set(_default_enable_first_run_prompts OFF)
+    set(_default_enable_registration_menu OFF)
+    set(_default_enable_inno_setup ON)
+endif()
+
+if(NOT DEFINED FICTURE2_BUILD_THUMBNAIL_PROVIDER)
+    set(FICTURE2_BUILD_THUMBNAIL_PROVIDER ${_default_build_thumbnail_provider} CACHE BOOL "Build ThumbnailProvider DLL")
+endif()
+if(NOT DEFINED FICTURE2_ENABLE_FIRST_RUN_PROMPTS)
+    set(FICTURE2_ENABLE_FIRST_RUN_PROMPTS ${_default_enable_first_run_prompts} CACHE BOOL "Enable first-run association prompts")
+endif()
+if(NOT DEFINED FICTURE2_ENABLE_REGISTRATION_MENU)
+    set(FICTURE2_ENABLE_REGISTRATION_MENU ${_default_enable_registration_menu} CACHE BOOL "Enable registration menu actions")
+endif()
+if(NOT DEFINED FICTURE2_ENABLE_MSIX_PACKAGING)
+    set(FICTURE2_ENABLE_MSIX_PACKAGING ${_default_enable_msix_packaging} CACHE BOOL "Enable MSIX packaging helpers")
+endif()
+if(NOT DEFINED FICTURE2_ENABLE_INNO_SETUP)
+    set(FICTURE2_ENABLE_INNO_SETUP ${_default_enable_inno_setup} CACHE BOOL "Enable Inno Setup script generation")
+endif()
+
 option(FICTURE2_USE_DIRECTXTEX_OPENMP "Enable OpenMP for DirectXTex" OFF)
 option(FICTURE2_ENABLE_LIBARCHIVE_COMMON_ARCHIVES "Enable ZIP/7z/RAR via libarchive" ON)
 
@@ -38,11 +75,92 @@ endif()
 set(FICTURE2_VERSION_STRING
     "${FICTURE2_VERSION_MAJOR}.${FICTURE2_VERSION_MINOR}.${FICTURE2_VERSION_COMMITCOUNT}.${FICTURE2_VERSION_BUILD}"
 )
+
+set(FICTURE2_BUILD_FLAVOR "standalone")
+if(FICTURE2_DISTRIBUTION_CHANNEL STREQUAL "windows_store")
+    set(FICTURE2_BUILD_FLAVOR "store")
+elseif(FICTURE2_DISTRIBUTION_CHANNEL STREQUAL "winget")
+    set(FICTURE2_BUILD_FLAVOR "winget")
+endif()
 configure_file(
     ${CMAKE_CURRENT_SOURCE_DIR}/Version.h.in
     ${CMAKE_CURRENT_BINARY_DIR}/Version.h
     @ONLY
 )
+
+if(FICTURE2_ENABLE_MSIX_PACKAGING)
+    set(FICTURE2_APPX_IDENTITY_NAME "FICture2" CACHE STRING "MSIX identity name")
+    set(FICTURE2_APPX_PUBLISHER "CN=FICture2" CACHE STRING "MSIX publisher")
+    set(FICTURE2_APPX_DISPLAY_NAME "FICture2" CACHE STRING "MSIX display name")
+    set(FICTURE2_APPX_EXECUTABLE "FICture2.exe" CACHE STRING "MSIX executable")
+    set(FICTURE2_APPX_LOGO_PATH "assets\\StoreLogo.png" CACHE STRING "MSIX store logo path")
+    set(FICTURE2_APPX_FILETYPE_GROUP "FICture2.Image" CACHE STRING "MSIX file type group name")
+    set(FICTURE2_APPX_SUPPORTED_FILE_TYPES
+        ".png;.jpg;.jpeg;.bmp;.tif;.tiff;.gif;.dds;.tga;.ico"
+        CACHE STRING "MSIX supported file types (semicolon separated)"
+    )
+
+    set(_appx_filetype_entries "")
+    foreach(ext IN LISTS FICTURE2_APPX_SUPPORTED_FILE_TYPES)
+        string(APPEND _appx_filetype_entries "          <uap:FileType>${ext}</uap:FileType>\n")
+    endforeach()
+    set(FICTURE2_APPX_FILETYPE_ENTRIES "${_appx_filetype_entries}")
+
+    configure_file(
+        ${CMAKE_CURRENT_SOURCE_DIR}/packaging/AppxManifest.xml.in
+        ${CMAKE_CURRENT_BINARY_DIR}/AppxManifest.xml
+        @ONLY
+    )
+    set(FICTURE2_APPX_MANIFEST_PATH "${CMAKE_CURRENT_BINARY_DIR}/AppxManifest.xml" CACHE PATH "Generated Appx manifest")
+endif()
+
+if(FICTURE2_ENABLE_INNO_SETUP)
+    set(FICTURE2_INNO_APP_NAME "FICture2" CACHE STRING "Inno Setup app name")
+    set(FICTURE2_INNO_PUBLISHER "floyd68" CACHE STRING "Inno Setup publisher")
+    set(FICTURE2_INNO_EXE_NAME "FICture2.exe" CACHE STRING "Inno Setup executable name")
+    set(
+        FICTURE2_INNO_OUTPUT_NAME
+        "FICture2-Setup-${FICTURE2_VERSION_MAJOR}.${FICTURE2_VERSION_MINOR}"
+        CACHE STRING "Inno Setup output filename"
+    )
+    set(FICTURE2_INNO_ICON_PATH "${CMAKE_CURRENT_SOURCE_DIR}/F2.ico" CACHE STRING "Inno Setup icon path")
+    set(FICTURE2_INNO_BUILD_CONFIG "MinSizeRel" CACHE STRING "Inno Setup build config")
+    set(
+        FICTURE2_INNO_EXE_PATH
+        "${CMAKE_BINARY_DIR}/bin/${FICTURE2_INNO_BUILD_CONFIG}/${FICTURE2_INNO_EXE_NAME}"
+    )
+    set(
+        FICTURE2_INNO_THUMBNAIL_PROVIDER_PATH
+        "${CMAKE_BINARY_DIR}/bin/${FICTURE2_INNO_BUILD_CONFIG}/ThumbnailProvider.dll"
+    )
+    file(TO_NATIVE_PATH "${FICTURE2_INNO_ICON_PATH}" FICTURE2_INNO_ICON_PATH)
+    file(TO_NATIVE_PATH "${FICTURE2_INNO_EXE_PATH}" FICTURE2_INNO_EXE_PATH)
+    file(TO_NATIVE_PATH "${FICTURE2_INNO_THUMBNAIL_PROVIDER_PATH}" FICTURE2_INNO_THUMBNAIL_PROVIDER_PATH)
+    if(FICTURE2_BUILD_THUMBNAIL_PROVIDER)
+        set(FICTURE2_INNO_INSTALL_THUMBNAIL_PROVIDER "True")
+    else()
+        set(FICTURE2_INNO_INSTALL_THUMBNAIL_PROVIDER "False")
+    endif()
+    configure_file(
+        ${CMAKE_CURRENT_SOURCE_DIR}/packaging/FICture2.iss.in
+        ${CMAKE_CURRENT_BINARY_DIR}/FICture2.iss
+        @ONLY
+    )
+    set(FICTURE2_INNO_SCRIPT_PATH "${CMAKE_CURRENT_BINARY_DIR}/FICture2.iss" CACHE PATH "Generated Inno Setup script")
+endif()
+
+if(FICTURE2_DISTRIBUTION_CHANNEL STREQUAL "winget")
+    set(FICTURE2_WINGET_PACKAGE_ID "floyd68.FICture2" CACHE STRING "winget package identifier")
+    set(FICTURE2_WINGET_INSTALLER_URL "" CACHE STRING "winget installer URL")
+    set(FICTURE2_WINGET_INSTALLER_SHA256 "" CACHE STRING "winget installer SHA256")
+    set(FICTURE2_WINGET_SILENT_SWITCH "/VERYSILENT" CACHE STRING "winget silent install switch")
+    configure_file(
+        ${CMAKE_CURRENT_SOURCE_DIR}/packaging/winget/FICture2.yaml.in
+        ${CMAKE_CURRENT_BINARY_DIR}/FICture2.winget.yaml
+        @ONLY
+    )
+    set(FICTURE2_WINGET_MANIFEST_PATH "${CMAKE_CURRENT_BINARY_DIR}/FICture2.winget.yaml" CACHE PATH "Generated winget manifest")
+endif()
 
 function(set_cache_bool name value description)
     set(${name} ${value} CACHE BOOL "${description}" FORCE)
@@ -221,6 +339,10 @@ target_compile_definitions(FICture2 PRIVATE
     UNICODE
     _UNICODE
     _WINDOWS
+    $<$<BOOL:${FICTURE2_ENABLE_FIRST_RUN_PROMPTS}>:FICTURE2_ENABLE_FIRST_RUN_PROMPTS=1>
+    $<$<NOT:$<BOOL:${FICTURE2_ENABLE_FIRST_RUN_PROMPTS}>>:FICTURE2_ENABLE_FIRST_RUN_PROMPTS=0>
+    $<$<BOOL:${FICTURE2_ENABLE_REGISTRATION_MENU}>:FICTURE2_ENABLE_REGISTRATION_MENU=1>
+    $<$<NOT:$<BOOL:${FICTURE2_ENABLE_REGISTRATION_MENU}>>:FICTURE2_ENABLE_REGISTRATION_MENU=0>
     $<$<BOOL:${FICTURE2_ENABLE_LIBARCHIVE_COMMON_ARCHIVES}>:FICTURE2_ENABLE_LIBARCHIVE_COMMON_ARCHIVES=1>
     $<$<NOT:$<BOOL:${FICTURE2_ENABLE_LIBARCHIVE_COMMON_ARCHIVES}>>:FICTURE2_ENABLE_LIBARCHIVE_COMMON_ARCHIVES=0>
 )
