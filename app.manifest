@@ -20,4 +20,11 @@
       <ws2:dpiAwareness>permonitorv2</ws2:dpiAwareness>
     </asmv3:windowsSettings>
   </asmv3:application>
+  <trustInfo xmlns="urn:schemas-microsoft-com:asm.v3">
+    <security>
+      <requestedPrivileges>
+        <requestedExecutionLevel level="asInvoker" uiAccess="false"/>
+      </requestedPrivileges>
+    </security>
+  </trustInfo>
 </assembly>

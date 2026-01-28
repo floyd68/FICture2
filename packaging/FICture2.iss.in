@@ -3,61 +3,57 @@ AppName=@FICTURE2_INNO_APP_NAME@
 AppVersion=@FICTURE2_VERSION_STRING@
 AppPublisher=@FICTURE2_INNO_PUBLISHER@
 AppId={{FICture2}}
-DefaultDirName={autopf}\@FICTURE2_INNO_APP_NAME@
+DefaultDirName={pf64}\@FICTURE2_INNO_APP_NAME@
 DefaultGroupName=@FICTURE2_INNO_APP_NAME@
 OutputBaseFilename=@FICTURE2_INNO_OUTPUT_NAME@
 SetupIconFile=@FICTURE2_INNO_ICON_PATH@
+UninstallDisplayIcon={app}\@FICTURE2_INNO_EXE_NAME@
 Compression=lzma2
 SolidCompression=yes
+PrivilegesRequired=admin
+PrivilegesRequiredOverridesAllowed=dialog
 
 [Tasks]
 Name: "fileassoc"; Description: "Register file associations"
-Name: "thumbprovider"; Description: "Register thumbnail provider"; Check: CanRegisterThumbnailProvider
+Name: "thumbprovider"; Description: "Register thumbnail provider"; Check: ShouldInstallThumbnailProvider
 Name: "startmenu"; Description: "Create Start Menu shortcuts"
 
 [Files]
 Source: "@FICTURE2_INNO_EXE_PATH@"; DestDir: "{app}"; Flags: ignoreversion
-Source: "@FICTURE2_INNO_THUMBNAIL_PROVIDER_PATH@"; DestDir: "{app}"; Flags: ignoreversion; Check: ShouldRegisterThumbnailProvider
+Source: "@FICTURE2_INNO_THUMBNAIL_PROVIDER_PATH@"; DestDir: "{app}"; Flags: ignoreversion; Check: ShouldInstallThumbnailProvider
 
 [Icons]
 Name: "{group}\@FICTURE2_INNO_APP_NAME@"; Filename: "{app}\@FICTURE2_INNO_EXE_NAME@"; Tasks: startmenu
 Name: "{group}\Uninstall @FICTURE2_INNO_APP_NAME@"; Filename: "{uninstallexe}"; Tasks: startmenu
 
 [Registry]
-Root: HKCU; Subkey: "Software\Classes\FICture2.Image"; ValueType: string; ValueName: ""; ValueData: "FICture2 Image"; Tasks: fileassoc; Flags: uninsdeletekey
-Root: HKCU; Subkey: "Software\Classes\FICture2.Image\DefaultIcon"; ValueType: string; ValueName: ""; ValueData: "{app}\@FICTURE2_INNO_EXE_NAME@,0"; Tasks: fileassoc; Flags: uninsdeletekey
-Root: HKCU; Subkey: "Software\Classes\FICture2.Image\shell\open\command"; ValueType: string; ValueName: ""; ValueData: """{app}\@FICTURE2_INNO_EXE_NAME@"" ""%1"""; Tasks: fileassoc; Flags: uninsdeletekey
+; ProgID registration (system-wide for winget/Store builds)
+Root: HKLM; Subkey: "Software\Classes\FICture2.Image"; ValueType: string; ValueName: ""; ValueData: "FICture2 Image"; Tasks: fileassoc; Flags: uninsdeletekey
+Root: HKLM; Subkey: "Software\Classes\FICture2.Image\DefaultIcon"; ValueType: string; ValueName: ""; ValueData: "{app}\@FICTURE2_INNO_EXE_NAME@,0"; Tasks: fileassoc; Flags: uninsdeletekey
+Root: HKLM; Subkey: "Software\Classes\FICture2.Image\shell\open\command"; ValueType: string; ValueName: ""; ValueData: """{app}\@FICTURE2_INNO_EXE_NAME@"" ""%1"""; Tasks: fileassoc; Flags: uninsdeletekey
 
-Root: HKCU; Subkey: "Software\Classes\.png"; ValueType: string; ValueName: ""; ValueData: "FICture2.Image"; Tasks: fileassoc; Flags: uninsdeletevalue
-Root: HKCU; Subkey: "Software\Classes\.jpg"; ValueType: string; ValueName: ""; ValueData: "FICture2.Image"; Tasks: fileassoc; Flags: uninsdeletevalue
-Root: HKCU; Subkey: "Software\Classes\.jpeg"; ValueType: string; ValueName: ""; ValueData: "FICture2.Image"; Tasks: fileassoc; Flags: uninsdeletevalue
-Root: HKCU; Subkey: "Software\Classes\.bmp"; ValueType: string; ValueName: ""; ValueData: "FICture2.Image"; Tasks: fileassoc; Flags: uninsdeletevalue
-Root: HKCU; Subkey: "Software\Classes\.tif"; ValueType: string; ValueName: ""; ValueData: "FICture2.Image"; Tasks: fileassoc; Flags: uninsdeletevalue
-Root: HKCU; Subkey: "Software\Classes\.tiff"; ValueType: string; ValueName: ""; ValueData: "FICture2.Image"; Tasks: fileassoc; Flags: uninsdeletevalue
-Root: HKCU; Subkey: "Software\Classes\.gif"; ValueType: string; ValueName: ""; ValueData: "FICture2.Image"; Tasks: fileassoc; Flags: uninsdeletevalue
-Root: HKCU; Subkey: "Software\Classes\.dds"; ValueType: string; ValueName: ""; ValueData: "FICture2.Image"; Tasks: fileassoc; Flags: uninsdeletevalue
-Root: HKCU; Subkey: "Software\Classes\.tga"; ValueType: string; ValueName: ""; ValueData: "FICture2.Image"; Tasks: fileassoc; Flags: uninsdeletevalue
-Root: HKCU; Subkey: "Software\Classes\.ico"; ValueType: string; ValueName: ""; ValueData: "FICture2.Image"; Tasks: fileassoc; Flags: uninsdeletevalue
+; Modern Capabilities registration (system-wide for LaunchAdvancedAssociationUI to work)
+Root: HKLM; Subkey: "Software\FICture2\Capabilities"; ValueType: string; ValueName: "ApplicationName"; ValueData: "FICture2"; Tasks: fileassoc; Flags: uninsdeletekey
+Root: HKLM; Subkey: "Software\FICture2\Capabilities"; ValueType: string; ValueName: "ApplicationDescription"; ValueData: "FICture2 Image Viewer"; Tasks: fileassoc; Flags: uninsdeletekey
+Root: HKLM; Subkey: "Software\RegisteredApplications"; ValueType: string; ValueName: "FICture2"; ValueData: "Software\FICture2\Capabilities"; Tasks: fileassoc; Flags: uninsdeletevalue
 
-Root: HKCU; Subkey: "Software\Classes\Applications\@FICTURE2_INNO_EXE_NAME@\shell\open\command"; ValueType: string; ValueName: ""; ValueData: """{app}\@FICTURE2_INNO_EXE_NAME@"" ""%1"""; Tasks: fileassoc; Flags: uninsdeletekey
-Root: HKCU; Subkey: "Software\Classes\Applications\@FICTURE2_INNO_EXE_NAME@\DefaultIcon"; ValueType: string; ValueName: ""; ValueData: "{app}\@FICTURE2_INNO_EXE_NAME@,0"; Tasks: fileassoc; Flags: uninsdeletekey
-Root: HKCU; Subkey: "Software\Classes\Applications\@FICTURE2_INNO_EXE_NAME@"; ValueType: string; ValueName: "FriendlyAppName"; ValueData: "@FICTURE2_INNO_APP_NAME@"; Tasks: fileassoc; Flags: uninsdeletekey
-Root: HKCU; Subkey: "Software\Classes\Applications\@FICTURE2_INNO_EXE_NAME@\SupportedTypes\.png"; Tasks: fileassoc; Flags: uninsdeletekey
-Root: HKCU; Subkey: "Software\Classes\Applications\@FICTURE2_INNO_EXE_NAME@\SupportedTypes\.jpg"; Tasks: fileassoc; Flags: uninsdeletekey
-Root: HKCU; Subkey: "Software\Classes\Applications\@FICTURE2_INNO_EXE_NAME@\SupportedTypes\.jpeg"; Tasks: fileassoc; Flags: uninsdeletekey
-Root: HKCU; Subkey: "Software\Classes\Applications\@FICTURE2_INNO_EXE_NAME@\SupportedTypes\.bmp"; Tasks: fileassoc; Flags: uninsdeletekey
-Root: HKCU; Subkey: "Software\Classes\Applications\@FICTURE2_INNO_EXE_NAME@\SupportedTypes\.tif"; Tasks: fileassoc; Flags: uninsdeletekey
-Root: HKCU; Subkey: "Software\Classes\Applications\@FICTURE2_INNO_EXE_NAME@\SupportedTypes\.tiff"; Tasks: fileassoc; Flags: uninsdeletekey
-Root: HKCU; Subkey: "Software\Classes\Applications\@FICTURE2_INNO_EXE_NAME@\SupportedTypes\.gif"; Tasks: fileassoc; Flags: uninsdeletekey
-Root: HKCU; Subkey: "Software\Classes\Applications\@FICTURE2_INNO_EXE_NAME@\SupportedTypes\.dds"; Tasks: fileassoc; Flags: uninsdeletekey
-Root: HKCU; Subkey: "Software\Classes\Applications\@FICTURE2_INNO_EXE_NAME@\SupportedTypes\.tga"; Tasks: fileassoc; Flags: uninsdeletekey
-Root: HKCU; Subkey: "Software\Classes\Applications\@FICTURE2_INNO_EXE_NAME@\SupportedTypes\.ico"; Tasks: fileassoc; Flags: uninsdeletekey
+Root: HKLM; Subkey: "Software\FICture2\Capabilities\FileAssociations"; ValueType: string; ValueName: ".png"; ValueData: "FICture2.Image"; Tasks: fileassoc; Flags: uninsdeletekey
+Root: HKLM; Subkey: "Software\FICture2\Capabilities\FileAssociations"; ValueType: string; ValueName: ".jpg"; ValueData: "FICture2.Image"; Tasks: fileassoc; Flags: uninsdeletekey
+Root: HKLM; Subkey: "Software\FICture2\Capabilities\FileAssociations"; ValueType: string; ValueName: ".jpeg"; ValueData: "FICture2.Image"; Tasks: fileassoc; Flags: uninsdeletekey
+Root: HKLM; Subkey: "Software\FICture2\Capabilities\FileAssociations"; ValueType: string; ValueName: ".bmp"; ValueData: "FICture2.Image"; Tasks: fileassoc; Flags: uninsdeletekey
+Root: HKLM; Subkey: "Software\FICture2\Capabilities\FileAssociations"; ValueType: string; ValueName: ".tif"; ValueData: "FICture2.Image"; Tasks: fileassoc; Flags: uninsdeletekey
+Root: HKLM; Subkey: "Software\FICture2\Capabilities\FileAssociations"; ValueType: string; ValueName: ".tiff"; ValueData: "FICture2.Image"; Tasks: fileassoc; Flags: uninsdeletekey
+Root: HKLM; Subkey: "Software\FICture2\Capabilities\FileAssociations"; ValueType: string; ValueName: ".gif"; ValueData: "FICture2.Image"; Tasks: fileassoc; Flags: uninsdeletekey
+Root: HKLM; Subkey: "Software\FICture2\Capabilities\FileAssociations"; ValueType: string; ValueName: ".dds"; ValueData: "FICture2.Image"; Tasks: fileassoc; Flags: uninsdeletekey
+Root: HKLM; Subkey: "Software\FICture2\Capabilities\FileAssociations"; ValueType: string; ValueName: ".tga"; ValueData: "FICture2.Image"; Tasks: fileassoc; Flags: uninsdeletekey
+Root: HKLM; Subkey: "Software\FICture2\Capabilities\FileAssociations"; ValueType: string; ValueName: ".ico"; ValueData: "FICture2.Image"; Tasks: fileassoc; Flags: uninsdeletekey
 
 [Run]
 Filename: "regsvr32.exe"; Parameters: "/s ""{app}\ThumbnailProvider.dll"""; Tasks: thumbprovider; Check: ShouldInstallThumbnailProvider
+Filename: "{app}\@FICTURE2_INNO_EXE_NAME@"; Description: "Launch @FICTURE2_INNO_APP_NAME@"; Flags: nowait postinstall skipifsilent
 
 [UninstallRun]
-Filename: "regsvr32.exe"; Parameters: "/s /u ""{app}\ThumbnailProvider.dll"""; Tasks: thumbprovider; Check: ShouldInstallThumbnailProvider
+Filename: "regsvr32.exe"; Parameters: "/s /u ""{app}\ThumbnailProvider.dll"""; RunOnceId: "UnregisterThumbnailProvider"; Tasks: thumbprovider; Check: ShouldInstallThumbnailProvider
 
 [UninstallDelete]
 Type: filesandordirs; Name: "{app}"

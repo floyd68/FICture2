@@ -6,6 +6,7 @@
 #include <vector>
 
 #include <shlobj.h>
+#include <shobjidl.h>
 #include <shellapi.h>
 #include <winreg.h>
 
@@ -111,6 +112,120 @@ namespace
         return rc2 == ERROR_SUCCESS;
     }
 
+    void LaunchAssociationUiForApp(const std::wstring& appName)
+    {
+        if (appName.empty())
+        {
+            return;
+        }
+
+        bool comInitedHere = false;
+
+        const HRESULT hrInit = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
+        if (SUCCEEDED(hrInit))
+        {
+            comInitedHere = true;
+        }
+        else if (hrInit != RPC_E_CHANGED_MODE)
+        {
+            return;
+        }
+        IApplicationAssociationRegistrationUI* ui = nullptr;
+        HRESULT hr = CoCreateInstance(
+            CLSID_ApplicationAssociationRegistrationUI,
+            nullptr,
+            CLSCTX_INPROC_SERVER,
+            IID_PPV_ARGS(&ui));
+        if (SUCCEEDED(hr) && ui)
+        {
+            #ifdef _DEBUG
+            wchar_t dbgBuf[256];
+            swprintf_s(dbgBuf, L"[FICture2] Calling LaunchAdvancedAssociationUI with: '%s'\n", appName.c_str());
+            OutputDebugStringW(dbgBuf);
+            #endif
+            
+            ShellExecuteW(nullptr, L"open",
+                L"ms-settings:apps-defaults?app=FICture2",
+
+                nullptr, nullptr, SW_SHOWNORMAL);
+
+            // auto _appName = std::wstring(L"ImageGlass");
+            // hr = ui->LaunchAdvancedAssociationUI(_appName.c_str());
+            
+            #ifdef _DEBUG
+            if (FAILED(hr))
+            {
+                wchar_t buf[256];
+                swprintf_s(buf, L"[FICture2] LaunchAdvancedAssociationUI failed: HRESULT = 0x%08X (%d)\n", hr, HRESULT_CODE(hr));
+                OutputDebugStringW(buf);
+            }
+            else
+            {
+                OutputDebugStringW(L"[FICture2] LaunchAdvancedAssociationUI succeeded\n");
+            }
+            #endif
+            
+            ui->Release();
+        }
+        #ifdef _DEBUG
+        else
+        {
+            wchar_t buf[256];
+            swprintf_s(buf, L"[FICture2] CoCreateInstance failed: HRESULT = 0x%08X\n", hr);
+            OutputDebugStringW(buf);
+        }
+        #endif
+
+        if (comInitedHere)
+            CoUninitialize();
+    }
+
+    void CleanupLegacyRegistrations(const std::wstring& exeName)
+    {
+#if FICTURE2_BUILD_FLAVOR_STANDALONE
+        // For Standalone builds, clean up modern Capabilities registration (if exists from previous versions)
+        RegDeleteTreeW(HKEY_CURRENT_USER, L"Software\\FICture2\\Capabilities");
+        
+        HKEY regAppsKey = nullptr;
+        if (RegOpenKeyExW(HKEY_CURRENT_USER, L"Software\\RegisteredApplications", 0, KEY_SET_VALUE, &regAppsKey) == ERROR_SUCCESS)
+        {
+            RegDeleteValueW(regAppsKey, L"FICture2");
+            RegCloseKey(regAppsKey);
+        }
+#else
+        // For Store/Winget builds, clean up old Applications registration that causes duplicate entries
+        if (!exeName.empty())
+        {
+            RegDeleteTreeW(HKEY_CURRENT_USER, (L"Software\\Classes\\Applications\\" + exeName).c_str());
+        }
+
+        // Remove direct extension mappings (no longer used with Capabilities)
+        const std::vector<std::wstring> exts = {
+            L".png", L".jpg", L".jpeg", L".bmp", L".tif", L".tiff",
+            L".gif", L".dds", L".tga", L".ico"
+        };
+        
+        for (const auto& ext : exts)
+        {
+            HKEY key = nullptr;
+            if (RegOpenKeyExW(HKEY_CURRENT_USER, (L"Software\\Classes\\" + ext).c_str(), 0, KEY_READ | KEY_WRITE, &key) == ERROR_SUCCESS)
+            {
+                wchar_t value[256] = {};
+                DWORD size = sizeof(value);
+                if (RegQueryValueExW(key, nullptr, nullptr, nullptr, reinterpret_cast<BYTE*>(value), &size) == ERROR_SUCCESS)
+                {
+                    if (std::wstring(value) == L"FICture2.Image")
+                    {
+                        // Only delete our own registration
+                        RegDeleteValueW(key, nullptr);
+                    }
+                }
+                RegCloseKey(key);
+            }
+        }
+#endif
+    }
+
     bool RegisterPerUserFileAssociations(const std::wstring& exePath, const std::vector<std::wstring>& extensions)
     {
         if (exePath.empty() || extensions.empty())
@@ -118,18 +233,25 @@ namespace
             return false;
         }
 
+        const std::wstring appName = L"FICture2";
+        std::wstring exeName = std::filesystem::path(exePath).filename().wstring();
+
+        // Clean up legacy registrations that cause duplicate entries in Default Apps
+        CleanupLegacyRegistrations(exeName);
+
+        bool ok = true;
         const std::wstring progId = L"FICture2.Image";
         const std::wstring cmd = L"\"" + exePath + L"\" \"%1\"";
         const std::wstring icon = L"\"" + exePath + L"\",0";
 
-        // ProgID registration (HKCU only).
-        bool ok = true;
+        // Always register ProgID (HKCU only)
         ok = ok && SetRegSzValue(HKEY_CURRENT_USER, L"Software\\Classes\\" + progId, nullptr, L"FICture2 Image");
         ok = ok && SetRegSzValue(HKEY_CURRENT_USER, L"Software\\Classes\\" + progId + L"\\DefaultIcon", nullptr, icon);
         ok = ok && SetRegSzValue(HKEY_CURRENT_USER, L"Software\\Classes\\" + progId + L"\\shell\\open\\command", nullptr, cmd);
 
-        // Application registration (helps Windows discover supported types; still HKCU).
-        std::wstring exeName = std::filesystem::path(exePath).filename().wstring();
+#if FICTURE2_BUILD_FLAVOR_STANDALONE
+        // Standalone/Nexus: Use legacy Applications registration + direct extension mapping
+        // This works without admin rights and doesn't require HKLM
         if (!exeName.empty())
         {
             ok = ok && SetRegSzValue(HKEY_CURRENT_USER, L"Software\\Classes\\Applications\\" + exeName + L"\\shell\\open\\command", nullptr, cmd);
@@ -138,12 +260,32 @@ namespace
 
             for (const auto& ext : extensions)
             {
-                // Presence indicates support.
+                if (ext.empty() || ext[0] != L'.')
+                {
+                    continue;
+                }
+                // SupportedTypes
                 (void)SetRegSzValue(HKEY_CURRENT_USER, L"Software\\Classes\\Applications\\" + exeName + L"\\SupportedTypes\\" + ext, nullptr, L"");
             }
         }
 
-        // Extension -> ProgID mapping (HKCU only).
+        // Direct extension mapping for immediate file opening
+        for (const auto& ext : extensions)
+        {
+            if (ext.empty() || ext[0] != L'.')
+            {
+                continue;
+            }
+            ok = ok && SetRegSzValue(HKEY_CURRENT_USER, L"Software\\Classes\\" + ext, nullptr, progId);
+        }
+#else
+        // Store/Winget: Use modern Capabilities registration
+        // Installer should handle HKLM registration for these builds
+        const std::wstring capabilitiesKey = L"Software\\" + appName + L"\\Capabilities";
+        ok = ok && SetRegSzValue(HKEY_CURRENT_USER, capabilitiesKey, L"ApplicationName", L"FICture2");
+        ok = ok && SetRegSzValue(HKEY_CURRENT_USER, capabilitiesKey, L"ApplicationDescription", L"FICture2 Image Viewer");
+        ok = ok && SetRegSzValue(HKEY_CURRENT_USER, L"Software\\RegisteredApplications", appName.c_str(), L"Software\\" + appName + L"\\Capabilities");
+
         for (const auto& ext : extensions)
         {
             if (ext.empty() || ext[0] != L'.')
@@ -151,12 +293,17 @@ namespace
                 continue;
             }
 
-            ok = ok && SetRegSzValue(HKEY_CURRENT_USER, L"Software\\Classes\\" + ext, nullptr, progId);
-            (void)SetRegSzValue(HKEY_CURRENT_USER, L"Software\\Classes\\" + ext, L"PerceivedType", L"image");
+            ok = ok && SetRegSzValue(
+                HKEY_CURRENT_USER,
+                capabilitiesKey + L"\\FileAssociations",
+                ext.c_str(),
+                progId);
         }
+#endif
 
         // Notify Explorer that associations changed.
         SHChangeNotify(SHCNE_ASSOCCHANGED, SHCNF_IDLIST, nullptr, nullptr);
+
         return ok;
     }
 
@@ -312,7 +459,8 @@ namespace FICture2App
         EnsureIniFileExists(iniFile, false);
         return;
 #endif
-
+        bool enabled = RegisterSupportedFileAssociations(NULL);
+        /*
         const wchar_t* msg =
             L"Set FICture2 as your default image viewer?\n"
             L"(This will configure per-user (HKCU) associations only, not system-wide.)\n\n"
@@ -343,6 +491,7 @@ namespace FICture2App
                     MB_OK | MB_ICONWARNING);
             }
         }
+        */
 
         const int thumbChoice = MessageBoxW(
             nullptr,
@@ -360,14 +509,52 @@ namespace FICture2App
         EnsureIniFileExists(iniFile, enabled);
     }
 
-    void RegisterSupportedFileAssociations(HWND owner)
+    bool RegisterSupportedFileAssociations(HWND owner)
     {
+#if !FICTURE2_BUILD_FLAVOR_STANDALONE
+        // For winget/Store builds, check if already registered by installer (HKLM)
+        HKEY key = nullptr;
+        if (RegOpenKeyExW(HKEY_LOCAL_MACHINE, L"Software\\RegisteredApplications", 0, KEY_QUERY_VALUE, &key) == ERROR_SUCCESS)
+        {
+            wchar_t value[512] = {};
+            DWORD size = sizeof(value);
+            if (RegQueryValueExW(key, L"FICture2", nullptr, nullptr, reinterpret_cast<BYTE*>(value), &size) == ERROR_SUCCESS)
+            {
+                RegCloseKey(key);
+                
+                // Already registered system-wide by installer
+                MessageBoxW(
+                    owner,
+                    L"FICture2 is already registered with Windows.\n\n"
+                    L"To set FICture2 as your default image viewer:\n"
+                    L"1. Open Windows Settings\n"
+                    L"2. Go to Apps > Default apps\n"
+                    L"3. Search for 'FICture2'\n"
+                    L"4. Set it as default for image file types",
+                    L"FICture2 - File Associations",
+                    MB_OK | MB_ICONINFORMATION);
+                return true;
+            }
+            RegCloseKey(key);
+        }
+#endif
+
+#if FICTURE2_BUILD_FLAVOR_STANDALONE
         const wchar_t* msg =
             L"Register FICture2 as the default image viewer for supported types?\n"
-            L"(This will configure per-user (HKCU) associations only, not system-wide.)\n\n"
+            L"(This will configure per-user associations.)\n\n"
             L"Extensions:\n"
             L".png .jpg .jpeg .bmp .tif .tiff .gif .dds .tga\n\n"
             L"Do you want to apply this now?";
+#else
+        const wchar_t* msg =
+            L"Register FICture2 capabilities with Windows.\n\n"
+            L"After registration, you can set FICture2 as default for image files in:\n"
+            L"Windows Settings > Apps > Default apps\n\n"
+            L"Extensions:\n"
+            L".png .jpg .jpeg .bmp .tif .tiff .gif .dds .tga\n\n"
+            L"Do you want to register now?";
+#endif
 
         const int choice = MessageBoxW(
             owner,
@@ -376,7 +563,7 @@ namespace FICture2App
             MB_ICONQUESTION | MB_YESNO);
         if (choice != IDYES)
         {
-            return;
+            return false;
         }
 
         wchar_t exePath[MAX_PATH] {};
@@ -397,18 +584,35 @@ namespace FICture2App
             MessageBoxW(
                 owner,
                 L"Failed to configure file associations.\n\n"
-                L"Depending on your Windows version/policy, apps may not be able to set default apps automatically.\n"
-                L"If needed, set FICture2 manually in Windows Settings > Default apps.",
+                L"Please check Windows Settings > Apps > Default apps to set FICture2 manually.",
                 L"FICture2",
                 MB_OK | MB_ICONWARNING);
-            return;
+            return false;
         }
 
+#if FICTURE2_BUILD_FLAVOR_STANDALONE
+        // Standalone: Direct registration works immediately
         MessageBoxW(
             owner,
-            L"File associations updated successfully.",
+            L"File associations updated successfully.\n\n"
+            L"FICture2 is now registered for supported image formats.",
             L"FICture2",
             MB_OK | MB_ICONINFORMATION);
+#else
+        // Store/Winget: User needs to set manually in Windows Settings
+        MessageBoxW(
+            owner,
+            L"File associations registered successfully.\n\n"
+            L"To set FICture2 as your default image viewer:\n"
+            L"1. Open Windows Settings\n"
+            L"2. Go to Apps > Default apps\n"
+            L"3. Search for 'FICture2'\n"
+            L"4. Set it as default for image file types",
+            L"FICture2",
+            MB_OK | MB_ICONINFORMATION);
+#endif
+
+        return enabled;
     }
 
     void RegisterThumbnailProvider(HWND owner, bool unregister)

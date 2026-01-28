@@ -17,7 +17,7 @@ namespace FICture2App
     void RunFirstRunAssociationPromptIfNeeded();
 
     // Manual action: prompt and register per-user (HKCU) file associations.
-    void RegisterSupportedFileAssociations(HWND owner);
+    bool RegisterSupportedFileAssociations(HWND owner);
 
     // Manual action: elevate and register the ThumbnailProvider DLL via regsvr32.
     void RegisterThumbnailProvider(HWND owner, bool unregister);
