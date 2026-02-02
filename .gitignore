@@ -378,3 +378,14 @@ landscape/
 
 # Agent/tool outputs
 agent-tools/
+
+# Winget packaging artifacts
+installer_info.txt
+winget-pkgs/
+
+# Root directory build artifacts
+/*.exe
+/*.dll
+/*.pdb
+before.txt
+after.txt

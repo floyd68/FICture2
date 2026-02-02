@@ -1,0 +1,36 @@
+# Created using winget-create
+# yaml-language-server: $schema=https://aka.ms/winget-manifest.installer.1.6.0.schema.json
+
+PackageIdentifier: @FICTURE2_WINGET_PACKAGE_ID@
+PackageVersion: @FICTURE2_VERSION_STRING@
+Platform:
+- Windows.Desktop
+MinimumOSVersion: 10.0.0.0
+InstallerType: inno
+Scope: machine
+InstallModes:
+- interactive
+- silent
+- silentWithProgress
+InstallerSwitches:
+  Silent: /VERYSILENT /SUPPRESSMSGBOXES /NORESTART
+  SilentWithProgress: /SILENT /SUPPRESSMSGBOXES /NORESTART
+UpgradeBehavior: install
+FileExtensions:
+- png
+- jpg
+- jpeg
+- bmp
+- tif
+- tiff
+- gif
+- dds
+- tga
+- ico
+ReleaseDate: @FICTURE2_RELEASE_DATE@
+Installers:
+- Architecture: x64
+  InstallerUrl: @FICTURE2_WINGET_INSTALLER_URL@
+  InstallerSha256: @FICTURE2_WINGET_INSTALLER_SHA256@
+ManifestType: installer
+ManifestVersion: 1.6.0

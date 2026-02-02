@@ -3,7 +3,7 @@ AppName=@FICTURE2_INNO_APP_NAME@
 AppVersion=@FICTURE2_VERSION_STRING@
 AppPublisher=@FICTURE2_INNO_PUBLISHER@
 AppId={{FICture2}}
-DefaultDirName={pf64}\@FICTURE2_INNO_APP_NAME@
+DefaultDirName={autopf}\@FICTURE2_INNO_APP_NAME@
 DefaultGroupName=@FICTURE2_INNO_APP_NAME@
 OutputBaseFilename=@FICTURE2_INNO_OUTPUT_NAME@
 SetupIconFile=@FICTURE2_INNO_ICON_PATH@
@@ -12,6 +12,8 @@ Compression=lzma2
 SolidCompression=yes
 PrivilegesRequired=admin
 PrivilegesRequiredOverridesAllowed=dialog
+ArchitecturesInstallIn64BitMode=x64compatible
+ArchitecturesAllowed=x64compatible
 
 [Tasks]
 Name: "fileassoc"; Description: "Register file associations"

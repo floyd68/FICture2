@@ -48,6 +48,13 @@ set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
+# Use static runtime library (/MT) to eliminate VC Redistributable dependency
+# This reduces network activity from Windows validating VC Runtime DLLs
+# and removes the need to install VC Redistributable separately
+if(MSVC)
+    set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+endif()
+
 set(FICTURE2_VERSION_MAJOR 1)
 set(FICTURE2_VERSION_MINOR 1)
 set(FICTURE2_VERSION_COMMITCOUNT 0)
@@ -74,6 +81,7 @@ endif()
 
 set(FICTURE2_VERSION_STRING
     "${FICTURE2_VERSION_MAJOR}.${FICTURE2_VERSION_MINOR}.${FICTURE2_VERSION_COMMITCOUNT}.${FICTURE2_VERSION_BUILD}"
+    CACHE STRING "FICture2 version string"
 )
 
 set(FICTURE2_BUILD_FLAVOR "standalone")
@@ -153,13 +161,27 @@ if(FICTURE2_DISTRIBUTION_CHANNEL STREQUAL "winget")
     set(FICTURE2_WINGET_PACKAGE_ID "floyd68.FICture2" CACHE STRING "winget package identifier")
     set(FICTURE2_WINGET_INSTALLER_URL "" CACHE STRING "winget installer URL")
     set(FICTURE2_WINGET_INSTALLER_SHA256 "" CACHE STRING "winget installer SHA256")
-    set(FICTURE2_WINGET_SILENT_SWITCH "/VERYSILENT" CACHE STRING "winget silent install switch")
+    
+    # Get current date for release date
+    string(TIMESTAMP FICTURE2_RELEASE_DATE "%Y-%m-%d" UTC)
+    
+    # Generate all three manifest files required by winget
     configure_file(
         ${CMAKE_CURRENT_SOURCE_DIR}/packaging/winget/FICture2.yaml.in
-        ${CMAKE_CURRENT_BINARY_DIR}/FICture2.winget.yaml
+        ${CMAKE_CURRENT_BINARY_DIR}/winget_manifests/${FICTURE2_WINGET_PACKAGE_ID}.yaml
         @ONLY
     )
-    set(FICTURE2_WINGET_MANIFEST_PATH "${CMAKE_CURRENT_BINARY_DIR}/FICture2.winget.yaml" CACHE PATH "Generated winget manifest")
+    configure_file(
+        ${CMAKE_CURRENT_SOURCE_DIR}/packaging/winget/FICture2.installer.yaml.in
+        ${CMAKE_CURRENT_BINARY_DIR}/winget_manifests/${FICTURE2_WINGET_PACKAGE_ID}.installer.yaml
+        @ONLY
+    )
+    configure_file(
+        ${CMAKE_CURRENT_SOURCE_DIR}/packaging/winget/FICture2.locale.en-US.yaml.in
+        ${CMAKE_CURRENT_BINARY_DIR}/winget_manifests/${FICTURE2_WINGET_PACKAGE_ID}.locale.en-US.yaml
+        @ONLY
+    )
+    set(FICTURE2_WINGET_MANIFEST_DIR "${CMAKE_CURRENT_BINARY_DIR}/winget_manifests" CACHE PATH "Generated winget manifests directory")
 endif()
 
 function(set_cache_bool name value description)

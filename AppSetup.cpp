@@ -6,7 +6,6 @@
 #include <vector>
 
 #include <shlobj.h>
-#include <shobjidl.h>
 #include <shellapi.h>
 #include <winreg.h>
 
@@ -110,74 +109,6 @@ namespace
             bytes);
         RegCloseKey(key);
         return rc2 == ERROR_SUCCESS;
-    }
-
-    void LaunchAssociationUiForApp(const std::wstring& appName)
-    {
-        if (appName.empty())
-        {
-            return;
-        }
-
-        bool comInitedHere = false;
-
-        const HRESULT hrInit = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
-        if (SUCCEEDED(hrInit))
-        {
-            comInitedHere = true;
-        }
-        else if (hrInit != RPC_E_CHANGED_MODE)
-        {
-            return;
-        }
-        IApplicationAssociationRegistrationUI* ui = nullptr;
-        HRESULT hr = CoCreateInstance(
-            CLSID_ApplicationAssociationRegistrationUI,
-            nullptr,
-            CLSCTX_INPROC_SERVER,
-            IID_PPV_ARGS(&ui));
-        if (SUCCEEDED(hr) && ui)
-        {
-            #ifdef _DEBUG
-            wchar_t dbgBuf[256];
-            swprintf_s(dbgBuf, L"[FICture2] Calling LaunchAdvancedAssociationUI with: '%s'\n", appName.c_str());
-            OutputDebugStringW(dbgBuf);
-            #endif
-            
-            ShellExecuteW(nullptr, L"open",
-                L"ms-settings:apps-defaults?app=FICture2",
-
-                nullptr, nullptr, SW_SHOWNORMAL);
-
-            // auto _appName = std::wstring(L"ImageGlass");
-            // hr = ui->LaunchAdvancedAssociationUI(_appName.c_str());
-            
-            #ifdef _DEBUG
-            if (FAILED(hr))
-            {
-                wchar_t buf[256];
-                swprintf_s(buf, L"[FICture2] LaunchAdvancedAssociationUI failed: HRESULT = 0x%08X (%d)\n", hr, HRESULT_CODE(hr));
-                OutputDebugStringW(buf);
-            }
-            else
-            {
-                OutputDebugStringW(L"[FICture2] LaunchAdvancedAssociationUI succeeded\n");
-            }
-            #endif
-            
-            ui->Release();
-        }
-        #ifdef _DEBUG
-        else
-        {
-            wchar_t buf[256];
-            swprintf_s(buf, L"[FICture2] CoCreateInstance failed: HRESULT = 0x%08X\n", hr);
-            OutputDebugStringW(buf);
-        }
-        #endif
-
-        if (comInitedHere)
-            CoUninitialize();
     }
 
     void CleanupLegacyRegistrations(const std::wstring& exeName)
@@ -456,43 +387,13 @@ namespace FICture2App
         }
 
 #if !FICTURE2_ENABLE_FIRST_RUN_PROMPTS
+        // For winget/Store builds: just create INI file and skip all prompts
         EnsureIniFileExists(iniFile, false);
         return;
-#endif
-        bool enabled = RegisterSupportedFileAssociations(NULL);
-        /*
-        const wchar_t* msg =
-            L"Set FICture2 as your default image viewer?\n"
-            L"(This will configure per-user (HKCU) associations only, not system-wide.)\n\n"
-            L"Extensions:\n"
-            L".png .jpg .jpeg .bmp .tif .tiff .gif .dds .tga\n\n"
-            L"Do you want to apply this now?";
-
-        const int choice = MessageBoxW(nullptr, msg, L"FICture2 - File Associations", MB_ICONQUESTION | MB_YESNO);
-
-        bool enabled = false;
-        if (choice == IDYES)
-        {
-            wchar_t exePath[MAX_PATH] {};
-            GetModuleFileNameW(nullptr, exePath, static_cast<DWORD>(std::size(exePath)));
-
-            const std::vector<std::wstring> exts = GetSupportedImageExtensions();
-
-            enabled = RegisterPerUserFileAssociations(exePath, exts);
-
-            if (!enabled)
-            {
-                MessageBoxW(
-                    nullptr,
-                    L"Failed to configure file associations.\n\n"
-                    L"Depending on your Windows version/policy, apps may not be able to set default apps automatically.\n"
-                    L"If needed, set FICture2 manually in Windows Settings > Default apps.",
-                    L"FICture2",
-                    MB_OK | MB_ICONWARNING);
-            }
-        }
-        */
-
+#else
+        // For standalone builds: show prompts on first run
+        
+        // Thumbnail provider prompt
         const int thumbChoice = MessageBoxW(
             nullptr,
             L"Register the DDS thumbnail provider for Windows Explorer?\n"
@@ -505,8 +406,9 @@ namespace FICture2App
             RegisterThumbnailProvider(nullptr, false);
         }
 
-        // Create the INI so we don't ask again on the next run.
-        EnsureIniFileExists(iniFile, enabled);
+        // Create the INI so we don't ask again on the next run
+        EnsureIniFileExists(iniFile, false);
+#endif
     }
 
     bool RegisterSupportedFileAssociations(HWND owner)

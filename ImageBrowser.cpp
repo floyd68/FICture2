@@ -297,18 +297,6 @@ namespace
         return L"";
     }
 
-    static HRESULT CALLBACK AboutDialogCallback(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam, LONG_PTR)
-    {
-        if (msg == TDN_HYPERLINK_CLICKED)
-        {
-            const wchar_t* link = reinterpret_cast<const wchar_t*>(lParam);
-            ShellExecuteW(hwnd, L"open", link, nullptr, nullptr, SW_SHOWNORMAL);
-            return S_OK;
-        }
-
-        return S_OK;
-    }
-
     static void ShowAboutDialog(HWND hwnd)
     {
         INITCOMMONCONTROLSEX icc {};
@@ -320,20 +308,20 @@ namespace
         const HICON appIcon = static_cast<HICON>(
             LoadImageW(instance, MAKEINTRESOURCEW(IDI_FICTURE2), IMAGE_ICON, 0, 0, LR_DEFAULTSIZE));
 
+        // Plain text version without hyperlinks to avoid network connection attempts
         const wchar_t* taskDialogContent =
             L"Version: " FICTURE2_VERSION_STRING_W L" (" FICTURE2_BUILD_FLAVOR_W L")\n"
-            L"Author: floyd Lee <a href=\"mailto:floydles@gmail.com\">floydles@gmail.com</a>\n"
-            L"GitHub: <a href=\"https://github.com/floyd68/FICture2\">https://github.com/floyd68/FICture2</a>";
+            L"Author: floyd Lee (floydles@gmail.com)\n"
+            L"GitHub: https://github.com/floyd68/FICture2";
 
         TASKDIALOGCONFIG config {};
         config.cbSize = sizeof(config);
         config.hwndParent = hwnd;
-        config.dwFlags = TDF_ENABLE_HYPERLINKS | TDF_ALLOW_DIALOG_CANCELLATION | TDF_USE_HICON_MAIN;
+        config.dwFlags = TDF_ALLOW_DIALOG_CANCELLATION | TDF_USE_HICON_MAIN;
         config.pszWindowTitle = L"About FICture2";
         config.pszMainInstruction = L"FICture2";
         config.pszContent = taskDialogContent;
         config.dwCommonButtons = TDCBF_OK_BUTTON;
-        config.pfCallback = AboutDialogCallback;
         config.hMainIcon = appIcon;
 
         TaskDialogIndirect(&config, nullptr, nullptr, nullptr);

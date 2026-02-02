@@ -401,3 +401,31 @@ Copyright (c) 2024 EunSuk, Lee (이은석, floyd)
 - **Submodules are empty / missing files**: run `git submodule update --init --recursive`.
 - **Build fails due to locked exe**: close the running `FICture2.exe` instance.
 - **DDS decode performance**: see `ImageCore/README.md` for pipeline details and tuning points.
+
+## Network Activity
+
+**Does FICture2 connect to the internet?**
+
+**FICture2 itself does NOT initiate any network connections.** The application code contains no network APIs, HTTP requests, or telemetry.
+
+However, Windows may make network requests when FICture2 runs due to system-level security features:
+
+- **Certificate Validation**: Windows validates digital signatures of system components (WIC, COM, DirectX)
+- **SmartScreen Filter**: Windows checks application reputation
+- **Windows Defender**: Real-time cloud-based protection
+- **Windows Update**: Component update checks
+
+### Reducing Network Activity (v1.1+)
+
+FICture2 v1.1+ uses **static runtime linking (`/MT`)** to eliminate dependency on VC Runtime DLLs (`vcruntime140.dll`, `msvcp140.dll`). This reduces one major source of Windows certificate validation network requests.
+
+**Optimized app.manifest:**
+- Minimal dependencies
+- Windows 10/11 compatibility declarations
+- Modern heap allocation (SegmentHeap)
+
+Remaining network activity comes from **Windows system services only** (WIC, DirectX, Common Controls validation). This is **standard behavior for all Windows applications** using system imaging components.
+
+**For advanced users** who need to further reduce network activity (e.g., air-gapped systems), see:
+- 📄 **[docs/network_activity_faq.md](docs/network_activity_faq.md)** - Why it happens
+- 📄 **[docs/disable_network_validation.md](docs/disable_network_validation.md)** - How to disable (advanced)
