@@ -69,23 +69,22 @@ processorArchitecture="*"  →  processorArchitecture="amd64"
 
 ---
 
-### 3. SegmentHeap Allocation
+### 3. ~~SegmentHeap Allocation~~ (REMOVED)
 
-**Change:**
+**Previously Added:**
 ```xml
 <ws2:heapType>SegmentHeap</ws2:heapType>
 ```
 
-**Benefits:**
-- Modern heap implementation (Windows 10 2004+)
-- Better memory efficiency
-- Reduced fragmentation
-- Slightly faster allocations
+**Why Removed:**
+- SegmentHeap requires **Windows 10 version 2004 (20H1)** or later
+- Causes **"side-by-side configuration error"** on older Windows versions
+- Not worth compatibility issues for marginal benefit
 
-**Impact:** 
-- Memory usage: ~5-10% reduction
-- Performance: Marginal improvement
-- Compatibility: Gracefully degrades on older Windows
+**Trade-off Decision:**
+- Benefit: ~5-10% memory reduction (marginal)
+- Cost: Breaks compatibility with Windows 10 1809-1909
+- **Decision: Removed for better compatibility**
 
 ---
 
@@ -240,7 +239,7 @@ netstat -ano | findstr FICture2
 - Static linking (`/MT`) → eliminates VC Runtime validation
 - Explicit x64 targeting → reduces arch checks
 - Windows 10/11 compatibility → disables legacy emulation
-- SegmentHeap → modern memory management
+- ~~SegmentHeap~~ → Removed (compatibility issues)
 
 ❌ **What We Can't Control:**
 - WIC/DirectX validation (system components)

@@ -422,7 +422,7 @@ FICture2 v1.1+ uses **static runtime linking (`/MT`)** to eliminate dependency o
 **Optimized app.manifest:**
 - Minimal dependencies
 - Windows 10/11 compatibility declarations
-- Modern heap allocation (SegmentHeap)
+- Maximum compatibility (Windows 10 1809+)
 
 Remaining network activity comes from **Windows system services only** (WIC, DirectX, Common Controls validation). This is **standard behavior for all Windows applications** using system imaging components.
 
