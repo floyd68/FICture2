@@ -198,9 +198,7 @@ if errorlevel 1 (
 echo Creating pull request...
 gh pr create --repo microsoft/winget-pkgs ^
     --title "New version: %PACKAGE_ID% version %VERSION%" ^
-    --body "- Tested installation and uninstallation^
-
-Release: https://github.com/floyd68/FICture2/releases/tag/v%VERSION%"
+    --body "- Tested installation and uninstallation - Release: https://github.com/floyd68/FICture2/releases/tag/v%VERSION%"
 
 if errorlevel 1 (
     echo Error: Failed to create PR
