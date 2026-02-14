@@ -1,5 +1,6 @@
 #include "VirtualFileSystem.h"
 #include "ArchiveReader.h"
+#include "ImageCore/ImageDecodeDispatcher.h"
 #include <algorithm>
 #include <cwctype>
 #include <fstream>
@@ -21,6 +22,11 @@ namespace
         if (str.length() < prefix.length())
             return false;
         return str.compare(0, prefix.length(), prefix) == 0;
+    }
+
+    std::vector<std::wstring> GetSupportedImageExtensions()
+    {
+        return ImageCore::ImageDecodeDispatcher::GetSupportedExtensions();
     }
 }
 
@@ -96,13 +102,8 @@ bool VirtualFileSystem::IsImageFile(const std::wstring& filename)
         return false;
 
     ext = ext.substr(dotPos);
-
-    static const std::unordered_set<std::wstring> imageExts = {
-        L".dds", L".png", L".jpg", L".jpeg", L".bmp", L".tga", L".tif", L".tiff",
-        L".gif", L".webp", L".hdr", L".exr", L".psd"
-    };
-
-    return imageExts.find(ext) != imageExts.end();
+    const auto imageExts = GetSupportedImageExtensions();
+    return std::find(imageExts.begin(), imageExts.end(), ext) != imageExts.end();
 }
 
 bool VirtualFileSystem::IsImageFile(const VirtualPath& path)
@@ -112,10 +113,7 @@ bool VirtualFileSystem::IsImageFile(const VirtualPath& path)
 
 std::vector<std::wstring> VirtualFileSystem::GetImageExtensions()
 {
-    return {
-        L".dds", L".png", L".jpg", L".jpeg", L".bmp", L".tga", L".tif", L".tiff",
-        L".gif", L".webp", L".hdr", L".exr", L".psd"
-    };
+    return GetSupportedImageExtensions();
 }
 
 std::vector<VirtualFileEntry> VirtualFileSystem::FilterImageEntries(const std::vector<VirtualFileEntry>& entries)

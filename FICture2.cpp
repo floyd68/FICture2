@@ -12,6 +12,7 @@
 #include "IpcCompareRequest.h"
 
 #include "ImageCore/ImageCore.h"
+#include "ImageCore/ImageDecodeDispatcher.h"
 
 #include <algorithm>
 #include <cwctype>
@@ -19,6 +20,7 @@
 #include <shellapi.h>
 #include <ole2.h>
 #include <vector>
+#include <unordered_set>
 #include <knownfolders.h>
 #include <shlobj_core.h>
 
@@ -99,6 +101,14 @@ namespace
             return s;
         };
 
+        std::unordered_set<std::wstring> supportedExts {};
+        const std::vector<std::wstring> supportedExtList = ImageCore::ImageDecodeDispatcher::GetSupportedExtensions();
+        supportedExts.reserve(supportedExtList.size());
+        for (const auto& extRaw : supportedExtList)
+        {
+            supportedExts.insert(toLower(extRaw));
+        }
+
         auto hasSupportedExt = [&](const std::wstring& fileName) -> bool
         {
             const size_t dot = fileName.find_last_of(L'.');
@@ -107,16 +117,7 @@ namespace
                 return false;
             }
             const std::wstring ext = toLower(fileName.substr(dot));
-            return ext == L".png"
-                || ext == L".jpg"
-                || ext == L".jpeg"
-                || ext == L".bmp"
-                || ext == L".tif"
-                || ext == L".tiff"
-                || ext == L".gif"
-                || ext == L".dds"
-                || ext == L".tga"
-                || ext == L".ico";
+            return supportedExts.find(ext) != supportedExts.end();
         };
 
         auto fileNameOnly = [](const std::wstring& full) -> std::wstring

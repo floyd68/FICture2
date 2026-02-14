@@ -1,8 +1,10 @@
 #include "AppSetup.h"
+#include "ImageCore/ImageDecodeDispatcher.h"
 
 #include "framework.h"
 
 #include <filesystem>
+#include <sstream>
 #include <vector>
 
 #include <shlobj.h>
@@ -11,6 +13,20 @@
 
 namespace
 {
+    std::wstring BuildExtensionPromptLine(const std::vector<std::wstring>& exts)
+    {
+        std::wostringstream oss {};
+        for (size_t i = 0; i < exts.size(); ++i)
+        {
+            if (i != 0)
+            {
+                oss << L' ';
+            }
+            oss << exts[i];
+        }
+        return oss.str();
+    }
+
     void WriteIniDefaults(const std::wstring& iniFile)
     {
         if (iniFile.empty())
@@ -131,10 +147,7 @@ namespace
         }
 
         // Remove direct extension mappings (no longer used with Capabilities)
-        const std::vector<std::wstring> exts = {
-            L".png", L".jpg", L".jpeg", L".bmp", L".tif", L".tiff",
-            L".gif", L".dds", L".tga", L".ico"
-        };
+        const std::vector<std::wstring> exts = ImageCore::ImageDecodeDispatcher::GetSupportedExtensions();
         
         for (const auto& ext : exts)
         {
@@ -350,24 +363,6 @@ namespace
 
 namespace FICture2App
 {
-    namespace
-    {
-        std::vector<std::wstring> GetSupportedImageExtensions()
-        {
-            return {
-                L".png",
-                L".jpg",
-                L".jpeg",
-                L".bmp",
-                L".tif",
-                L".tiff",
-                L".gif",
-                L".dds",
-                L".tga",
-            };
-        }
-    }
-
     std::wstring GetIniFilePath()
     {
         wchar_t iniPath[MAX_PATH] {};
@@ -444,25 +439,29 @@ namespace FICture2App
 #endif
 
 #if FICTURE2_BUILD_FLAVOR_STANDALONE
-        const wchar_t* msg =
+        const std::vector<std::wstring> extsForPrompt = ImageCore::ImageDecodeDispatcher::GetSupportedExtensions();
+        const std::wstring extLine = BuildExtensionPromptLine(extsForPrompt);
+        const std::wstring msg =
             L"Register FICture2 as the default image viewer for supported types?\n"
             L"(This will configure per-user associations.)\n\n"
-            L"Extensions:\n"
-            L".png .jpg .jpeg .bmp .tif .tiff .gif .dds .tga\n\n"
-            L"Do you want to apply this now?";
+            L"Extensions:\n" +
+            extLine +
+            L"\n\nDo you want to apply this now?";
 #else
-        const wchar_t* msg =
+        const std::vector<std::wstring> extsForPrompt = ImageCore::ImageDecodeDispatcher::GetSupportedExtensions();
+        const std::wstring extLine = BuildExtensionPromptLine(extsForPrompt);
+        const std::wstring msg =
             L"Register FICture2 capabilities with Windows.\n\n"
             L"After registration, you can set FICture2 as default for image files in:\n"
             L"Windows Settings > Apps > Default apps\n\n"
-            L"Extensions:\n"
-            L".png .jpg .jpeg .bmp .tif .tiff .gif .dds .tga\n\n"
-            L"Do you want to register now?";
+            L"Extensions:\n" +
+            extLine +
+            L"\n\nDo you want to register now?";
 #endif
 
         const int choice = MessageBoxW(
             owner,
-            msg,
+            msg.c_str(),
             L"FICture2 - File Associations",
             MB_ICONQUESTION | MB_YESNO);
         if (choice != IDYES)
@@ -473,7 +472,7 @@ namespace FICture2App
         wchar_t exePath[MAX_PATH] {};
         GetModuleFileNameW(nullptr, exePath, static_cast<DWORD>(std::size(exePath)));
 
-        const std::vector<std::wstring> exts = GetSupportedImageExtensions();
+        const std::vector<std::wstring> exts = ImageCore::ImageDecodeDispatcher::GetSupportedExtensions();
         const bool enabled = RegisterPerUserFileAssociations(exePath, exts);
 
         const std::wstring iniFile = GetIniFilePath();
