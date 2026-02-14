@@ -42,6 +42,7 @@ endif()
 
 option(FICTURE2_USE_DIRECTXTEX_OPENMP "Enable OpenMP for DirectXTex" OFF)
 option(FICTURE2_ENABLE_LIBARCHIVE_COMMON_ARCHIVES "Enable ZIP/7z/RAR via libarchive" ON)
+option(FICTURE2_ENABLE_PROFILING "Enable profiler-friendly compiler/linker flags" OFF)
 
 set(BUILD_TESTING OFF CACHE BOOL "Disable tests by default" FORCE)
 set(CMAKE_CXX_STANDARD 20)
@@ -56,7 +57,7 @@ if(MSVC)
 endif()
 
 set(FICTURE2_VERSION_MAJOR 1)
-set(FICTURE2_VERSION_MINOR 2)
+set(FICTURE2_VERSION_MINOR 3)
 set(FICTURE2_VERSION_COMMITCOUNT 0)
 set(FICTURE2_VERSION_BUILD 0)
 
@@ -411,5 +412,29 @@ if(MSVC)
     set(CMAKE_C_FLAGS_MINSIZEREL "${CMAKE_C_FLAGS_MINSIZEREL} /arch:SSE2 /Os /GL /Oy")
     set(CMAKE_CXX_FLAGS_MINSIZEREL "${CMAKE_CXX_FLAGS_MINSIZEREL} /arch:SSE2 /Os /GL /Oy")
     set(CMAKE_EXE_LINKER_FLAGS_MINSIZEREL "${CMAKE_EXE_LINKER_FLAGS_MINSIZEREL} /LTCG")
+
+    if(FICTURE2_ENABLE_PROFILING)
+        # Profiling-friendly setup:
+        # - keep frame pointers for reliable sampled callstacks
+        # - emit full debug symbols (PDB)
+        # - disable LTCG/whole-program optimization in MinSizeRel for clearer attribution
+        string(REPLACE "/GL" "" CMAKE_C_FLAGS_MINSIZEREL "${CMAKE_C_FLAGS_MINSIZEREL}")
+        string(REPLACE "/GL" "" CMAKE_CXX_FLAGS_MINSIZEREL "${CMAKE_CXX_FLAGS_MINSIZEREL}")
+        string(REPLACE "/LTCG" "" CMAKE_EXE_LINKER_FLAGS_MINSIZEREL "${CMAKE_EXE_LINKER_FLAGS_MINSIZEREL}")
+        string(REPLACE "/Oy" "" CMAKE_C_FLAGS_MINSIZEREL "${CMAKE_C_FLAGS_MINSIZEREL}")
+        string(REPLACE "/Oy" "" CMAKE_CXX_FLAGS_MINSIZEREL "${CMAKE_CXX_FLAGS_MINSIZEREL}")
+        string(REPLACE "/Oy" "" CMAKE_C_FLAGS_RELWITHDEBINFO "${CMAKE_C_FLAGS_RELWITHDEBINFO}")
+        string(REPLACE "/Oy" "" CMAKE_CXX_FLAGS_RELWITHDEBINFO "${CMAKE_CXX_FLAGS_RELWITHDEBINFO}")
+
+        add_compile_options(
+            $<$<CONFIG:MinSizeRel>:/Zi /Oy->
+            $<$<CONFIG:RelWithDebInfo>:/Zi /Oy->
+        )
+        add_link_options(
+            $<$<CONFIG:MinSizeRel>:/DEBUG:FULL>
+            $<$<CONFIG:RelWithDebInfo>:/DEBUG:FULL>
+        )
+    endif()
+
     target_compile_options(FICture2 PRIVATE /permissive-)
 endif()

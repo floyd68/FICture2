@@ -2,6 +2,7 @@
 #include "FD2D/Backplate.h"
 
 #include "framework.h"
+#include <algorithm>
 #include <cmath>
 
 ThumbImageTile::ThumbImageTile(const std::wstring& name)
@@ -210,6 +211,53 @@ void ThumbImageTile::OnRender(ID2D1RenderTarget* target)
         return;
     }
 
+    // Skip rendering when the tile is completely outside the current backplate viewport.
+    // This reduces startup/render spikes when many offscreen thumbnails exist.
+    FD2D::Backplate* bp = BackplateRef();
+    if (bp != nullptr)
+    {
+        const D2D1_SIZE_U client = bp->ClientSize();
+        if (client.width > 0 && client.height > 0)
+        {
+            const D2D1_RECT_F localRect = LayoutRect();
+            D2D1_MATRIX_3X2_F transform {};
+            target->GetTransform(&transform);
+
+            const auto tx = [&](float x, float y) -> D2D1_POINT_2F
+            {
+                return D2D1::Point2F(
+                    transform._11 * x + transform._21 * y + transform._31,
+                    transform._12 * x + transform._22 * y + transform._32);
+            };
+
+            const D2D1_POINT_2F p0 = tx(localRect.left, localRect.top);
+            const D2D1_POINT_2F p1 = tx(localRect.right, localRect.top);
+            const D2D1_POINT_2F p2 = tx(localRect.left, localRect.bottom);
+            const D2D1_POINT_2F p3 = tx(localRect.right, localRect.bottom);
+
+            const float minX = (std::min)((std::min)(p0.x, p1.x), (std::min)(p2.x, p3.x));
+            const float maxX = (std::max)((std::max)(p0.x, p1.x), (std::max)(p2.x, p3.x));
+            const float minY = (std::min)((std::min)(p0.y, p1.y), (std::min)(p2.y, p3.y));
+            const float maxY = (std::max)((std::max)(p0.y, p1.y), (std::max)(p2.y, p3.y));
+
+            const float viewportL = 0.0f;
+            const float viewportT = 0.0f;
+            const float viewportR = static_cast<float>(client.width);
+            const float viewportB = static_cast<float>(client.height);
+
+            const bool intersects =
+                (maxX >= viewportL) &&
+                (maxY >= viewportT) &&
+                (minX <= viewportR) &&
+                (minY <= viewportB);
+
+            if (!intersects)
+            {
+                return;
+            }
+        }
+    }
+
     // Check if bitmap size changed (in variable width mode) and request layout if needed
     if (m_useVariableWidth && m_image)
     {
@@ -224,10 +272,12 @@ void ThumbImageTile::OnRender(ID2D1RenderTarget* target)
             // Force parent container to re-layout
             // Note: RequestLayout during rendering will set m_renderRequested flag
             // and the layout will be updated in the next render loop iteration
-            FD2D::Backplate* bp = BackplateRef();
             if (bp != nullptr)
             {
-                bp->RequestLayout();
+                if (!bp->IsInSizeMove())
+                {
+                    bp->RequestLayout();
+                }
             }
         }
     }
