@@ -20,6 +20,7 @@
 #include "FD2D/Core.h"
 #include "FD2D/MainImage.h"
 #include "ImageCore/DecoderRegistry.h"
+#include "ImageCore/ImageDecodeDispatcher.h"
 #include "ImageCore/ImageCore.h"
 #include "VirtualPath.h"
 #include "VirtualFileSystem.h"
@@ -31,6 +32,7 @@
 #include <memory>
 #include <unordered_set>
 #include <vector>
+#include <sstream>
 #include <cwctype>
 #include <wrl/client.h>
 #include <wincodec.h>
@@ -157,6 +159,43 @@ namespace
     {
         return NormalizePathLowerForCompare(a.hostPath) == NormalizePathLowerForCompare(b.hostPath) &&
             NormalizeInnerPathLowerForCompare(a.archiveInnerPath) == NormalizeInnerPathLowerForCompare(b.archiveInnerPath);
+    }
+
+    static std::vector<std::wstring> GetSupportedImageExtensions()
+    {
+        return ImageCore::ImageDecodeDispatcher::GetSupportedExtensions();
+    }
+
+    static std::wstring BuildSupportedImageDialogFilter()
+    {
+        const std::vector<std::wstring> exts = GetSupportedImageExtensions();
+        std::wostringstream patternBuilder {};
+        for (size_t i = 0; i < exts.size(); ++i)
+        {
+            if (i != 0)
+            {
+                patternBuilder << L";";
+            }
+            patternBuilder << L"*" << exts[i];
+        }
+        std::wstring wildcardPattern = patternBuilder.str();
+        if (wildcardPattern.empty())
+        {
+            wildcardPattern = L"*.*";
+        }
+
+        std::wstring filter {};
+        filter.reserve(256 + wildcardPattern.size() * 2);
+        filter += L"Supported images (" + wildcardPattern + L")";
+        filter.push_back(L'\0');
+        filter += wildcardPattern;
+        filter.push_back(L'\0');
+        filter += L"All files (*.*)";
+        filter.push_back(L'\0');
+        filter += L"*.*";
+        filter.push_back(L'\0');
+        filter.push_back(L'\0');
+        return filter;
     }
 
     static bool TryGetIniFilePath(std::wstring& outIniFile)
@@ -2513,19 +2552,14 @@ namespace
         {
             wchar_t fileName[MAX_PATH] {};
 
-            // Filter format: "Desc\0pattern\0Desc\0pattern\0\0"
-            const wchar_t* filter =
-                L"Supported images (*.png;*.jpg;*.jpeg;*.bmp;*.tif;*.tiff;*.gif;*.dds;*.tga)\0"
-                L"*.png;*.jpg;*.jpeg;*.bmp;*.tif;*.tiff;*.gif;*.dds;*.tga\0"
-                L"All files (*.*)\0"
-                L"*.*\0\0";
+            const std::wstring filter = BuildSupportedImageDialogFilter();
 
             OPENFILENAMEW ofn {};
             ofn.lStructSize = sizeof(ofn);
             ofn.hwndOwner = BackplateRef() ? BackplateRef()->Window() : nullptr;
             ofn.lpstrFile = fileName;
             ofn.nMaxFile = static_cast<DWORD>(std::size(fileName));
-            ofn.lpstrFilter = filter;
+            ofn.lpstrFilter = filter.c_str();
             ofn.nFilterIndex = 1;
             ofn.Flags = OFN_FILEMUSTEXIST | OFN_PATHMUSTEXIST | OFN_EXPLORER | OFN_HIDEREADONLY;
             ofn.lpstrTitle = L"Open Image";
@@ -2580,19 +2614,14 @@ namespace
         {
             wchar_t fileName[MAX_PATH] {};
 
-            // Filter format: "Desc\0pattern\0Desc\0pattern\0\0"
-            const wchar_t* filter =
-                L"Supported images (*.png;*.jpg;*.jpeg;*.bmp;*.tif;*.tiff;*.gif;*.dds;*.tga)\0"
-                L"*.png;*.jpg;*.jpeg;*.bmp;*.tif;*.tiff;*.gif;*.dds;*.tga\0"
-                L"All files (*.*)\0"
-                L"*.*\0\0";
+            const std::wstring filter = BuildSupportedImageDialogFilter();
 
             OPENFILENAMEW ofn {};
             ofn.lStructSize = sizeof(ofn);
             ofn.hwndOwner = BackplateRef() ? BackplateRef()->Window() : nullptr;
             ofn.lpstrFile = fileName;
             ofn.nMaxFile = static_cast<DWORD>(std::size(fileName));
-            ofn.lpstrFilter = filter;
+            ofn.lpstrFilter = filter.c_str();
             ofn.nFilterIndex = 1;
             ofn.Flags = OFN_FILEMUSTEXIST | OFN_PATHMUSTEXIST | OFN_EXPLORER | OFN_HIDEREADONLY;
             ofn.lpstrTitle = (title != nullptr) ? title : L"Open Image";
