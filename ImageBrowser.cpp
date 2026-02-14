@@ -130,9 +130,28 @@ namespace
         return NormalizePathLowerForCompare(a) == NormalizePathLowerForCompare(b.hostPath);
     }
 
+    static std::wstring NormalizeInnerPathLowerForCompare(const std::wstring& inner)
+    {
+        std::wstring s = inner;
+        for (auto& c : s)
+        {
+            if (c == L'\\')
+            {
+                c = L'/';
+            }
+            c = static_cast<wchar_t>(towlower(c));
+        }
+        while (!s.empty() && (s.back() == L'/' || s.back() == L'\\'))
+        {
+            s.pop_back();
+        }
+        return s;
+    }
+
     static bool PathEqualsInsensitive(const VirtualPath& a, const VirtualPath& b)
     {
-        return a == b;
+        return NormalizePathLowerForCompare(a.hostPath) == NormalizePathLowerForCompare(b.hostPath) &&
+            NormalizeInnerPathLowerForCompare(a.archiveInnerPath) == NormalizeInnerPathLowerForCompare(b.archiveInnerPath);
     }
 
     static bool TryGetIniFilePath(std::wstring& outIniFile)
@@ -876,6 +895,20 @@ namespace
             }
 
             g_contextMenuBrowser = this;
+            m_contextMenuImagePath = VirtualPath();
+
+            for (const auto& item : m_items)
+            {
+                if (item.kind != ThumbItemKind::Image || !item.focus)
+                {
+                    continue;
+                }
+                if (RectContainsPoint(item.focus->LayoutRect(), pt))
+                {
+                    m_contextMenuImagePath = item.path;
+                    break;
+                }
+            }
 
             if (m_mainImage)
             {
@@ -930,6 +963,14 @@ namespace
                         IDM_CTX_TOGGLE_SAMPLING,
                         (std::wstring(L"Sampling: ") + samplingLabel + L"\tQ").c_str());
 
+                    const bool hasExplorerTarget = !GetContextMenuTargetImagePath().empty();
+                    AppendMenuW(hPopup, MF_SEPARATOR, 0, nullptr);
+                    AppendMenuW(
+                        hPopup,
+                        MF_STRING | (hasExplorerTarget ? MF_ENABLED : MF_GRAYED),
+                        IDM_CTX_SHOW_IN_EXPLORER,
+                        L"Show in &Explorer");
+
 #if FICTURE2_ENABLE_REGISTRATION_MENU
                     const bool thumbRegistered = FICture2App::IsThumbnailProviderRegistered();
                     ModifyMenuW(
@@ -974,6 +1015,51 @@ namespace
             }
 
             return true;
+        }
+
+        VirtualPath GetContextMenuTargetImagePath() const
+        {
+            if (!m_contextMenuImagePath.empty())
+            {
+                return m_contextMenuImagePath;
+            }
+            if (m_selectedIndex < m_items.size() && m_items[m_selectedIndex].kind == ThumbItemKind::Image)
+            {
+                return m_items[m_selectedIndex].path;
+            }
+            return VirtualPath();
+        }
+
+        void ShowContextMenuTargetInExplorer()
+        {
+            const VirtualPath target = GetContextMenuTargetImagePath();
+            if (target.empty())
+            {
+                return;
+            }
+
+            const std::filesystem::path nativePath = target.hostPath;
+            if (nativePath.empty())
+            {
+                return;
+            }
+
+            const std::wstring params = L"/select,\"" + nativePath.wstring() + L"\"";
+            const HINSTANCE result = ShellExecuteW(
+                BackplateRef() ? BackplateRef()->Window() : nullptr,
+                L"open",
+                L"explorer.exe",
+                params.c_str(),
+                nullptr,
+                SW_SHOWNORMAL);
+            if (reinterpret_cast<intptr_t>(result) <= 32)
+            {
+                MessageBoxW(
+                    BackplateRef() ? BackplateRef()->Window() : nullptr,
+                    L"Failed to open Windows Explorer for the selected image.",
+                    L"FICture2",
+                    MB_OK | MB_ICONWARNING);
+            }
         }
 
         bool HandleDeferredActionMessage()
@@ -1575,54 +1661,55 @@ namespace
                 return false;
             }
 
-            float paneH = 0.0f;
-            if (g_hasSyncedThumbStripHeight)
+            // Prefer the current pane's actual strip height so splitter drag updates thumbnail size live.
+            // Fall back to synced global height only when local layout is not ready yet.
+            const D2D1_RECT_F scrollRect = m_thumbScroll->LayoutRect();
+            float paneH = scrollRect.bottom - scrollRect.top;
+            if (paneH <= 1.0f && g_hasSyncedThumbStripHeight)
             {
-                // During session restore, individual panes can be briefly laid out with different
-                // thumb-strip heights until the first full Arrange pass settles. If we size thumbs
-                // from per-pane LayoutRect() in that window, 2nd+ panes can jump to huge thumbnails.
-                // Use the globally synced strip height when available so all panes size consistently.
                 paneH = g_syncedThumbStripHeight;
-            }
-            else
-            {
-                const D2D1_RECT_F scrollRect = m_thumbScroll->LayoutRect();
-                paneH = scrollRect.bottom - scrollRect.top;
             }
             if (paneH <= 1.0f)
             {
                 return false;
             }
 
-            // Keep thumbnail spacing constant; only scale the thumbnail square with the pane height.
-            constexpr float contentPadding = 4.0f; // matches thumbs->SetPadding(4)
+            // Keep thumbnail spacing constant; only scale the thumbnail height with the pane height.
+            // Controller uses thumbs->SetPadding(4), so keep this value aligned.
+            constexpr float contentPadding = 4.0f;
             const float availableForThumb = paneH - (contentPadding * 2.0f);
 
-            float newSide = availableForThumb;
-            newSide = (std::max)(32.0f, (std::min)(256.0f, newSide));
+            // Use continuous sizing so splitter drag is reflected immediately.
+            // Coarse snap steps (e.g. 96/128/192) make the strip look "stuck" at one size.
+            float newHeight = (std::max)(kThumbMinSide, (std::min)(kThumbMaxSide, availableForThumb));
 
-            // Avoid thrashing while dragging the splitter.
-            if (std::abs(newSide - m_thumbW) < 1.0f)
+            // Quantize lightly to reduce jitter from fractional layout values.
+            newHeight = std::round(newHeight);
+
+            // Ignore tiny sub-pixel changes only.
+            if (std::abs(newHeight - m_thumbH) < 0.5f)
             {
                 return false;
             }
 
-            m_thumbW = newSide;
-            m_thumbH = newSide;
+            m_thumbW = newHeight; // Keep this for navigation tiles
+            m_thumbH = newHeight;
 
             if (m_thumbScroll)
             {
-                m_thumbScroll->SetScrollStep((std::max)(48.0f, newSide * 0.75f));
+                m_thumbScroll->SetScrollStep((std::max)(48.0f, newHeight * 0.75f));
             }
 
             for (auto& item : m_items)
             {
                 if (item.imageTile)
                 {
-                    item.imageTile->SetFixedSize({ m_thumbW, m_thumbH });
+                    // Use variable width based on aspect ratio
+                    item.imageTile->SetFixedHeight(m_thumbH);
                 }
                 if (item.navTile)
                 {
+                    // Navigation tiles remain square
                     item.navTile->SetFixedSize({ m_thumbW, m_thumbH });
                     item.navTile->Invalidate();
                 }
@@ -1751,6 +1838,13 @@ namespace
                 return false;
             }
 
+            // Don't update layout during rendering to prevent recursion
+            FD2D::Backplate* bp = BackplateRef();
+            if (!force && bp && bp->IsRendering())
+            {
+                return false;
+            }
+
             const D2D1_RECT_F rootR = m_rootSplit->LayoutRect();
             const float totalH = (std::max)(0.0f, rootR.bottom - rootR.top);
             if (totalH <= 0.0f)
@@ -1829,6 +1923,17 @@ namespace
             return m_mainPath;
         }
 
+    public:
+        std::wstring SelectedImageFileNameForTitle() const
+        {
+            if (m_selectedIndex < m_items.size() && m_items[m_selectedIndex].kind == ThumbItemKind::Image)
+            {
+                return m_items[m_selectedIndex].path.filename().wstring();
+            }
+            return L"";
+        }
+
+    private:
         std::wstring ActiveMainFileNameLower() const
         {
             std::wstring p = ActiveMainPath();
@@ -2040,6 +2145,11 @@ namespace
                     }
                 },
                 index);
+
+            if (BackplateRef() != nullptr)
+            {
+                BackplateRef()->UpdateTitleBarInfo();
+            }
         }
 
         static std::wstring ToLower(std::wstring s)
@@ -2584,6 +2694,9 @@ namespace
                     ShowAboutDialog(hwnd);
                 }
                 break;
+            case IDM_CTX_SHOW_IN_EXPLORER:
+                ShowContextMenuTargetInExplorer();
+                break;
             default:
                 // Show/Hide Alpha is implemented in a later step.
                 break;
@@ -2706,7 +2819,7 @@ namespace
 
             if (bp->Window() != nullptr)
             {
-                InvalidateRect(bp->Window(), nullptr, FALSE);
+                bp->Render();
             }
 
             std::wstring iniFile;
@@ -3061,6 +3174,7 @@ namespace
         size_t m_selectedIndex { static_cast<size_t>(-1) };
         ULONGLONG m_lastKeyNavMs { 0 };
         int m_thumbWheelRemainder { 0 };
+        VirtualPath m_contextMenuImagePath {};
 
         VirtualPath m_currentFolder {};
         bool m_showNavItems { true };
@@ -3207,6 +3321,38 @@ void ImageBrowser_OpenAdditionalFilesSideBySideAfter(
     }
 
     g_rootHorizontalHostBrowser->OpenAdditionalFilesSideBySideAfterName(filePaths, afterName);
+}
+
+std::wstring ImageBrowser_GetFocusedSelectedImageFileName()
+{
+    if (g_rootHorizontalHostBrowser == nullptr)
+    {
+        return L"";
+    }
+
+    const std::vector<ImageBrowserImpl*> browsers = g_rootHorizontalHostBrowser->ImageBrowsersSnapshot();
+    if (browsers.empty())
+    {
+        return L"";
+    }
+
+    for (auto* browser : browsers)
+    {
+        if (browser != nullptr && browser->HasFocus())
+        {
+            return browser->SelectedImageFileNameForTitle();
+        }
+    }
+
+    for (auto* browser : browsers)
+    {
+        if (browser != nullptr)
+        {
+            return browser->SelectedImageFileNameForTitle();
+        }
+    }
+
+    return L"";
 }
 
 void ImageBrowser_SaveSessionToIni(const std::wstring& iniFile)

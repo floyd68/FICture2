@@ -22,6 +22,7 @@ public:
     explicit ThumbImageTile(const std::wstring& name);
 
     void SetFixedSize(const FD2D::Size& size);
+    void SetFixedHeight(float height);
     void SetCaption(const std::wstring& text);
 
     void SetSourceFile(const std::wstring& path);
@@ -38,6 +39,9 @@ private:
     void EnsureResources(ID2D1RenderTarget* target);
 
     FD2D::Size m_fixedSize { 128.0f, 128.0f };
+    float m_fixedHeight { 128.0f };
+    bool m_useVariableWidth { false };
+    D2D1_SIZE_F m_lastBitmapSize {};
     std::shared_ptr<FD2D::ThumbImage> m_image {};
     FD2D::Text m_label;
     ClickHandler m_onClick {};

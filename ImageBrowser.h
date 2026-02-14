@@ -35,3 +35,7 @@ void ImageBrowser_OpenAdditionalFilesSideBySide(const std::vector<std::wstring>&
 void ImageBrowser_OpenAdditionalFilesSideBySideAfter(
     const std::vector<std::wstring>& filePaths,
     const std::wstring& afterName);
+
+// Returns the currently focused ImageBrowser's selected image filename for title display.
+// Empty when no image is selected.
+std::wstring ImageBrowser_GetFocusedSelectedImageFileName();
