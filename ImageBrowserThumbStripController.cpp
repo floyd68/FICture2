@@ -183,14 +183,15 @@ ImageBrowserThumbStripController::RebuildResult ImageBrowserThumbStripController
         {
             (void)panel->RemoveChild(name);
             thumbTile = std::make_shared<ThumbImageTile>(name);
-            thumbTile->SetFixedSize({ thumbW, thumbH });
+            thumbTile->SetFixedHeight(thumbH);
             thumbTile->SetSourceFile(p.wstring());
             thumbTile->SetCaption(p.filename().wstring());
             (void)panel->AddChild(thumbTile);
         }
         else
         {
-            thumbTile->SetFixedSize({ thumbW, thumbH });
+            thumbTile->SetFixedHeight(thumbH);
+            thumbTile->SetSourceFile(p.wstring());
             thumbTile->SetCaption(p.filename().wstring());
         }
 

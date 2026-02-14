@@ -180,38 +180,8 @@ namespace
         ok = ok && SetRegSzValue(HKEY_CURRENT_USER, L"Software\\Classes\\" + progId + L"\\DefaultIcon", nullptr, icon);
         ok = ok && SetRegSzValue(HKEY_CURRENT_USER, L"Software\\Classes\\" + progId + L"\\shell\\open\\command", nullptr, cmd);
 
-#if FICTURE2_BUILD_FLAVOR_STANDALONE
-        // Standalone/Nexus: Use legacy Applications registration + direct extension mapping
-        // This works without admin rights and doesn't require HKLM
-        if (!exeName.empty())
-        {
-            ok = ok && SetRegSzValue(HKEY_CURRENT_USER, L"Software\\Classes\\Applications\\" + exeName + L"\\shell\\open\\command", nullptr, cmd);
-            ok = ok && SetRegSzValue(HKEY_CURRENT_USER, L"Software\\Classes\\Applications\\" + exeName + L"\\DefaultIcon", nullptr, icon);
-            ok = ok && SetRegSzValue(HKEY_CURRENT_USER, L"Software\\Classes\\Applications\\" + exeName, L"FriendlyAppName", L"FICture2");
-
-            for (const auto& ext : extensions)
-            {
-                if (ext.empty() || ext[0] != L'.')
-                {
-                    continue;
-                }
-                // SupportedTypes
-                (void)SetRegSzValue(HKEY_CURRENT_USER, L"Software\\Classes\\Applications\\" + exeName + L"\\SupportedTypes\\" + ext, nullptr, L"");
-            }
-        }
-
-        // Direct extension mapping for immediate file opening
-        for (const auto& ext : extensions)
-        {
-            if (ext.empty() || ext[0] != L'.')
-            {
-                continue;
-            }
-            ok = ok && SetRegSzValue(HKEY_CURRENT_USER, L"Software\\Classes\\" + ext, nullptr, progId);
-        }
-#else
-        // Store/Winget: Use modern Capabilities registration
-        // Installer should handle HKLM registration for these builds
+        // Register modern Capabilities model for all flavors (HKCU).
+        // This is required for Windows Default Apps UI integration.
         const std::wstring capabilitiesKey = L"Software\\" + appName + L"\\Capabilities";
         ok = ok && SetRegSzValue(HKEY_CURRENT_USER, capabilitiesKey, L"ApplicationName", L"FICture2");
         ok = ok && SetRegSzValue(HKEY_CURRENT_USER, capabilitiesKey, L"ApplicationDescription", L"FICture2 Image Viewer");
@@ -230,6 +200,38 @@ namespace
                 ext.c_str(),
                 progId);
         }
+
+        // Also register legacy Application + OpenWith metadata for broader shell compatibility.
+        if (!exeName.empty())
+        {
+            ok = ok && SetRegSzValue(HKEY_CURRENT_USER, L"Software\\Classes\\Applications\\" + exeName + L"\\shell\\open\\command", nullptr, cmd);
+            ok = ok && SetRegSzValue(HKEY_CURRENT_USER, L"Software\\Classes\\Applications\\" + exeName + L"\\DefaultIcon", nullptr, icon);
+            ok = ok && SetRegSzValue(HKEY_CURRENT_USER, L"Software\\Classes\\Applications\\" + exeName, L"FriendlyAppName", L"FICture2");
+
+            for (const auto& ext : extensions)
+            {
+                if (ext.empty() || ext[0] != L'.')
+                {
+                    continue;
+                }
+
+                (void)SetRegSzValue(HKEY_CURRENT_USER, L"Software\\Classes\\Applications\\" + exeName + L"\\SupportedTypes\\" + ext, nullptr, L"");
+                (void)SetRegSzValue(HKEY_CURRENT_USER, L"Software\\Classes\\" + ext + L"\\OpenWithProgids\\" + progId, nullptr, L"");
+            }
+        }
+
+#if FICTURE2_BUILD_FLAVOR_STANDALONE
+        // Best-effort direct mapping (may be ignored when UserChoice policy is active).
+        for (const auto& ext : extensions)
+        {
+            if (ext.empty() || ext[0] != L'.')
+            {
+                continue;
+            }
+            ok = ok && SetRegSzValue(HKEY_CURRENT_USER, L"Software\\Classes\\" + ext, nullptr, progId);
+        }
+#else
+        // Store/Winget builds generally rely on installer/MSIX pathways for defaults.
 #endif
 
         // Notify Explorer that associations changed.
@@ -493,13 +495,22 @@ namespace FICture2App
         }
 
 #if FICTURE2_BUILD_FLAVOR_STANDALONE
-        // Standalone: Direct registration works immediately
+        // Standalone/Nexus: registration is complete, but Windows may still require explicit default selection.
         MessageBoxW(
             owner,
-            L"File associations updated successfully.\n\n"
-            L"FICture2 is now registered for supported image formats.",
+            L"File associations were registered successfully.\n\n"
+            L"If some extensions are still not opening with FICture2,\n"
+            L"please set FICture2 in Windows Settings > Apps > Default apps.",
             L"FICture2",
             MB_OK | MB_ICONINFORMATION);
+
+        (void)ShellExecuteW(
+            owner,
+            L"open",
+            L"ms-settings:defaultapps",
+            nullptr,
+            nullptr,
+            SW_SHOWNORMAL);
 #else
         // Store/Winget: User needs to set manually in Windows Settings
         MessageBoxW(

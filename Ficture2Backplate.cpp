@@ -6,6 +6,7 @@
 #include "VirtualPath.h"
 
 #include <algorithm>
+#include <format>
 #include <shellapi.h>
 
 Ficture2Backplate::EventBus::HandlerId Ficture2Backplate::EventBus::Subscribe(Handler handler)
@@ -287,25 +288,9 @@ bool Ficture2Backplate::HandleMessage(HWND hWnd, UINT message, WPARAM wParam, LP
 void Ficture2Backplate::UpdateTitleBarInfo()
 {
     if (m_window == nullptr)
-    {
         return;
-    }
 
-    // Get current window title
-    wchar_t currentTitle[256] = {};
-    GetWindowTextW(m_window, currentTitle, static_cast<int>(std::size(currentTitle)));
-
-    // Extract base title (remove existing info if present)
-    std::wstring baseTitle = currentTitle;
-    size_t infoPos = baseTitle.find(L" [");
-    if (infoPos != std::wstring::npos)
-    {
-        baseTitle = baseTitle.substr(0, infoPos);
-    }
-    if (baseTitle.empty())
-    {
-        baseTitle = L"FICture2";
-    }
+    const std::wstring selectedFileName = ImageBrowser_GetFocusedSelectedImageFileName();
 
     // Get Direct2D version
     const char* d2dVersionStr = FD2D::Core::GetD2DVersionString();
@@ -318,31 +303,18 @@ void Ficture2Backplate::UpdateTitleBarInfo()
     {
         size_t endPos = versionPos + 3; // "1.x"
         if (endPos > d2dVersionA.length())
-        {
             endPos = d2dVersionA.length();
-        }
         versionNum = d2dVersionA.substr(versionPos, endPos - versionPos);
     }
 
-    // Convert to wide string
-    size_t len = versionNum.length();
-    std::wstring versionNumW(len + 1, L'\0');
-    mbstowcs_s(nullptr, &versionNumW[0], len + 1, versionNum.c_str(), len);
-    versionNumW.resize(len);
+    // Convert to wide string (version string is ASCII digits + dot).
+    const std::wstring versionNumW(versionNum.begin(), versionNum.end());
 
     // Check if using D3D11 renderer
     bool usingD3D11 = (m_rendererId.empty() || m_rendererId == L"d3d11_swapchain");
 
-    // Build new title with renderer info on the right
-    wchar_t newTitle[512];
-    if (usingD3D11)
-    {
-        swprintf_s(newTitle, L"%ls [Renderer: D3D11 | D2D %ls]", baseTitle.c_str(), versionNumW.c_str());
-    }
-    else
-    {
-        swprintf_s(newTitle, L"%ls [Renderer: D2D | D2D %ls]", baseTitle.c_str(), versionNumW.c_str());
-    }
+    std::wstring newTitle;
+    newTitle = std::format(L"FICTure2 [Renderer: {} | D2D {}] - {}", usingD3D11 ? L"D3D11" : L"D2D", versionNumW, selectedFileName);
 
-    SetWindowTextW(m_window, newTitle);
+    SetWindowTextW(m_window, newTitle.c_str());
 }
