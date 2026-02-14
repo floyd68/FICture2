@@ -23,11 +23,6 @@ Ficture2Backplate::EventBus::HandlerId Ficture2Backplate::EventBus::Subscribe(Ha
 
 void Ficture2Backplate::EventBus::Unsubscribe(HandlerId id)
 {
-    if (id == 0)
-    {
-        return;
-    }
-
     m_handlers.erase(id);
 }
 
@@ -36,50 +31,27 @@ void Ficture2Backplate::EventBus::Publish(const ImageBrowserEvent& event)
     for (const auto& pair : m_handlers)
     {
         if (pair.second)
-        {
             pair.second(event);
-        }
     }
 }
 
 void Ficture2Backplate::EventBus::RegisterImageBrowser(FD2D::Wnd* browser)
 {
     if (browser == nullptr)
-    {
         return;
-    }
 
     const auto it = std::find(m_imageBrowsers.begin(), m_imageBrowsers.end(), browser);
     if (it != m_imageBrowsers.end())
-    {
         return;
-    }
 
     m_imageBrowsers.push_back(browser);
 }
 
 void Ficture2Backplate::EventBus::UnregisterImageBrowser(FD2D::Wnd* browser)
 {
-    if (browser == nullptr)
-    {
-        return;
-    }
-
     const auto it = std::find(m_imageBrowsers.begin(), m_imageBrowsers.end(), browser);
     if (it != m_imageBrowsers.end())
-    {
         m_imageBrowsers.erase(it);
-    }
-}
-
-std::vector<FD2D::Wnd*> Ficture2Backplate::EventBus::ImageBrowsersSnapshot() const
-{
-    return m_imageBrowsers;
-}
-
-size_t Ficture2Backplate::EventBus::ImageBrowserCount() const
-{
-    return m_imageBrowsers.size();
 }
 
 FD2D::Wnd* Ficture2Backplate::FindImageBrowserTarget(const POINT& ptClient) const

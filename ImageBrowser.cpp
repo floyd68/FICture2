@@ -61,6 +61,11 @@ namespace
     static bool g_backgroundColorInitialized = false;
     static D2D1_COLOR_F g_focusedBrowserBackgroundColor = D2D1::ColorF(0.18f, 0.16f, 0.03f, 1.0f);
 
+    static unsigned long long NowMs()
+    {
+        return static_cast<unsigned long long>(GetTickCount64());
+    }
+
     static uint64_t Fnv1a64(const std::wstring& s)
     {
         // FNV-1a 64-bit over UTF-16 code units.
@@ -746,6 +751,11 @@ namespace
             // live while dragging.
             (void)ApplySyncedThumbStripHeightIfNeeded();
             (void)UpdateThumbSizingFromPane();
+            if (m_pendingThumbStripBroadcast && m_rootSplit != nullptr && !m_rootSplit->IsSplitterDragging())
+            {
+                m_pendingThumbStripBroadcast = false;
+                PublishThumbStripHeightChanged(m_pendingThumbStripHeight);
+            }
             RefreshInfoPanel();
 
             // D2D-only backend: fill per-ImageBrowser background before drawing children.
@@ -1686,8 +1696,21 @@ namespace
             // Quantize lightly to reduce jitter from fractional layout values.
             newHeight = std::round(newHeight);
 
+            const bool splitterDragging = (m_rootSplit != nullptr && m_rootSplit->IsSplitterDragging());
+            const float minDelta = splitterDragging ? 1.5f : 0.5f;
+
+            // While dragging splitter, limit expensive thumbnail retargeting frequency.
+            if (splitterDragging)
+            {
+                const unsigned long long now = NowMs();
+                if ((now - m_lastThumbSizingApplyMs) < 33ULL && std::abs(newHeight - m_thumbH) < 6.0f)
+                {
+                    return false;
+                }
+            }
+
             // Ignore tiny sub-pixel changes only.
-            if (std::abs(newHeight - m_thumbH) < 0.5f)
+            if (std::abs(newHeight - m_thumbH) < minDelta)
             {
                 return false;
             }
@@ -1719,7 +1742,23 @@ namespace
             {
                 BackplateRef()->RequestLayout();
             }
+            m_lastThumbSizingApplyMs = NowMs();
             return true;
+        }
+
+        void PublishThumbStripHeightChanged(float height)
+        {
+            auto bus = m_eventBus.lock();
+            if (!bus)
+            {
+                return;
+            }
+
+            Ficture2Backplate::ImageBrowserEvent ev {};
+            ev.type = Ficture2Backplate::ImageBrowserEvent::Type::ThumbStripHeightChanged;
+            ev.source = this;
+            ev.thumbStripHeight = height;
+            bus->Publish(ev);
         }
 
         void BuildUi()
@@ -1770,21 +1809,15 @@ namespace
 
                 g_syncedThumbStripHeight = (std::max)(kThumbStripMinH, (std::min)(kThumbStripMaxH, h));
                 g_hasSyncedThumbStripHeight = true;
-
-                auto bus = m_eventBus.lock();
-                if (bus)
+                const bool splitterDragging = (m_rootSplit != nullptr && m_rootSplit->IsSplitterDragging());
+                if (splitterDragging)
                 {
-                    Ficture2Backplate::ImageBrowserEvent ev {};
-                    ev.type = Ficture2Backplate::ImageBrowserEvent::Type::ThumbStripHeightChanged;
-                    ev.source = this;
-                    ev.thumbStripHeight = g_syncedThumbStripHeight;
-                    bus->Publish(ev);
+                    m_pendingThumbStripBroadcast = true;
+                    m_pendingThumbStripHeight = g_syncedThumbStripHeight;
+                    return;
                 }
 
-                if (BackplateRef() != nullptr)
-                {
-                    BackplateRef()->RequestLayout();
-                }
+                PublishThumbStripHeightChanged(g_syncedThumbStripHeight);
             });
 
             constexpr float thumbW = 128.0f;
@@ -3180,6 +3213,9 @@ namespace
         bool m_showNavItems { true };
         float m_thumbW { 128.0f };
         float m_thumbH { 128.0f };
+        unsigned long long m_lastThumbSizingApplyMs { 0 };
+        bool m_pendingThumbStripBroadcast { false };
+        float m_pendingThumbStripHeight { 0.0f };
         float m_thumbLabelDip { 0.0f };
         float m_thumbItemSpacing { 0.0f };
         float m_thumbOuterSpacing { 8.0f }; // spacing between thumbnail "items" in the horizontal strip

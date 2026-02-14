@@ -49,8 +49,14 @@ public:
 
         void RegisterImageBrowser(FD2D::Wnd* browser);
         void UnregisterImageBrowser(FD2D::Wnd* browser);
-        std::vector<FD2D::Wnd*> ImageBrowsersSnapshot() const;
-        size_t ImageBrowserCount() const;
+        std::vector<FD2D::Wnd*> ImageBrowsersSnapshot() const
+        {
+			return m_imageBrowsers;
+        }
+        size_t ImageBrowserCount() const
+		{
+			return m_imageBrowsers.size();
+		}
 
     private:
         HandlerId m_nextId { 1 };
