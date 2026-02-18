@@ -361,7 +361,7 @@ public:
 
     std::vector<uint8_t> ExtractToMemory(const std::wstring& entryPath) override
     {
-        const std::wstring key = ToLower(entryPath);
+        const std::wstring key = ToLower(NormalizeArchivePath(entryPath));
         auto it = m_entryMap.find(key);
         if (it == m_entryMap.end())
         {
@@ -379,7 +379,7 @@ public:
 
     bool HasEntry(const std::wstring& entryPath) override
     {
-        return m_entryMap.find(ToLower(entryPath)) != m_entryMap.end();
+        return m_entryMap.find(ToLower(NormalizeArchivePath(entryPath))) != m_entryMap.end();
     }
 
     std::wstring GetFormatName() const override
@@ -707,7 +707,7 @@ private:
             entry.isDirectory = false;
             entry.modTime = 0;
 
-            m_entryMap[ToLower(info.name)] = i;
+            m_entryMap[ToLower(NormalizeArchivePath(info.name))] = i;
             m_entries.push_back(entry);
         }
     }
@@ -889,7 +889,7 @@ public:
     {
         OutputDebugStringW((L"[LibArchiveReader] ExtractToMemory: " + entryPath + L"\n").c_str());
 
-        auto it = m_entryMap.find(ToLower(entryPath));
+        auto it = m_entryMap.find(ToLower(NormalizeArchivePath(entryPath)));
         if (it == m_entryMap.end())
         {
             OutputDebugStringW(L"[LibArchiveReader] Entry not found in map\n");
@@ -946,15 +946,60 @@ public:
             {
                 // Found the entry, extract it
                 la_int64_t size = archive_entry_size(archiveEntry);
-                
+
                 if (size > 0 && size < 1024 * 1024 * 1024) // Max 1GB
                 {
                     result.resize(static_cast<size_t>(size));
-                    la_ssize_t bytesRead = archive_read_data(a, result.data(), result.size());
-                    
-                    if (bytesRead != size)
+                    size_t totalRead = 0;
+                    while (totalRead < result.size())
+                    {
+                        la_ssize_t chunkRead = archive_read_data(
+                            a,
+                            result.data() + totalRead,
+                            result.size() - totalRead);
+                        if (chunkRead <= 0)
+                        {
+                            break;
+                        }
+                        totalRead += static_cast<size_t>(chunkRead);
+                    }
+
+                    if (totalRead != result.size())
                     {
                         result.clear();
+                    }
+                }
+                else if (size < 0)
+                {
+                    // Some archive entries report unknown size. Read as a stream.
+                    constexpr size_t kReadChunk = 64 * 1024;
+                    std::vector<uint8_t> streamBuf(kReadChunk);
+                    size_t totalRead = 0;
+
+                    while (true)
+                    {
+                        la_ssize_t chunkRead = archive_read_data(a, streamBuf.data(), streamBuf.size());
+                        if (chunkRead == 0)
+                        {
+                            break;
+                        }
+                        if (chunkRead < 0)
+                        {
+                            result.clear();
+                            break;
+                        }
+
+                        totalRead += static_cast<size_t>(chunkRead);
+                        if (totalRead > 1024ull * 1024ull * 1024ull)
+                        {
+                            result.clear();
+                            break;
+                        }
+
+                        result.insert(
+                            result.end(),
+                            streamBuf.begin(),
+                            streamBuf.begin() + static_cast<std::ptrdiff_t>(chunkRead));
                     }
                 }
                 break;
@@ -967,7 +1012,7 @@ public:
 
     bool HasEntry(const std::wstring& entryPath) override
     {
-        return m_entryMap.find(ToLower(entryPath)) != m_entryMap.end();
+        return m_entryMap.find(ToLower(NormalizeArchivePath(entryPath))) != m_entryMap.end();
     }
 
     std::wstring GetFormatName() const override
@@ -1047,7 +1092,7 @@ private:
 
             size_t index = m_entries.size();
             m_entries.push_back(archEntry);
-            m_entryMap[ToLower(archEntry.name)] = index;
+            m_entryMap[ToLower(NormalizeArchivePath(archEntry.name))] = index;
         }
 
         archive_read_free(a);

@@ -225,25 +225,36 @@ std::vector<VirtualFileEntry> VirtualFileSystem::ListFilesystemDirectory(const s
         return entries;
     }
 
-    try
+    std::error_code iterEc;
+    const auto options = std::filesystem::directory_options::skip_permission_denied;
+    std::filesystem::directory_iterator it(dirPath, options, iterEc);
+    if (iterEc)
     {
-        for (const auto& entry : std::filesystem::directory_iterator(dirPath))
-        {
-            VirtualPath vpath(entry.path());
-            bool isDir = entry.is_directory();
-            uint64_t size = isDir ? 0 : entry.file_size();
-            
-            auto ftime = entry.last_write_time();
-            auto sctp = std::chrono::time_point_cast<std::chrono::system_clock::duration>(
-                ftime - std::filesystem::file_time_type::clock::now() + std::chrono::system_clock::now());
-            time_t modTime = std::chrono::system_clock::to_time_t(sctp);
-
-            entries.emplace_back(vpath, isDir, size, modTime);
-        }
+        return entries;
     }
-    catch (...)
+
+    const std::filesystem::directory_iterator end {};
+    for (; it != end; it.increment(iterEc))
     {
-        // Ignore errors
+        if (iterEc)
+        {
+            iterEc.clear();
+            continue;
+        }
+
+        const std::filesystem::directory_entry& entry = *it;
+        VirtualPath vpath(entry.path());
+
+        std::error_code typeEc;
+        const bool isDir = entry.is_directory(typeEc);
+        if (typeEc)
+        {
+            continue;
+        }
+
+        // Folder browsing only needs name/type immediately.
+        // Skip per-entry metadata probes here to reduce stalls in large folders.
+        entries.emplace_back(vpath, isDir, 0, 0);
     }
 
     return entries;
@@ -307,6 +318,7 @@ std::vector<VirtualFileEntry> VirtualFileSystem::ListArchiveSubdirectory(
     {
         searchPrefix += L'/';
     }
+    const std::wstring searchPrefixLower = ToLower(searchPrefix);
 
     auto archiveEntries = reader->ListEntries();
     std::unordered_set<std::wstring> addedDirs;
@@ -314,9 +326,10 @@ std::vector<VirtualFileEntry> VirtualFileSystem::ListArchiveSubdirectory(
     for (const auto& archEntry : archiveEntries)
     {
         std::wstring normalized = NormalizePath(archEntry.name);
+        const std::wstring normalizedLower = ToLower(normalized);
         
         // Check if this entry is under our search path
-        if (!StartsWith(normalized, searchPrefix))
+        if (!StartsWith(normalizedLower, searchPrefixLower))
         {
             continue;
         }

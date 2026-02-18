@@ -3,6 +3,7 @@
 #include "ImageBrowserMainPane.h"
 #include "ImageBrowserThumbTypes.h"
 #include "VirtualPath.h"
+#include "VirtualFileSystem.h"
 
 #include <functional>
 #include <memory>
@@ -46,7 +47,8 @@ public:
         const std::function<void(size_t)>& onActivateIndex,
         const std::function<bool(const VirtualPath&, const VirtualPath&)>& pathEquals,
         const std::function<std::wstring(const wchar_t*, const VirtualPath&)>& makeStableName,
-        const std::function<bool(const VirtualPath&)>& isSupportedImage) const;
+        const std::function<bool(const VirtualPath&)>& isSupportedImage,
+        const std::vector<VirtualFileEntry>* preloadedEntries = nullptr) const;
 
     void SelectItemByIndex(
         std::vector<ThumbItem>& items,
