@@ -67,6 +67,11 @@ void ThumbNavTile::SetOnClick(ClickHandler handler)
     m_onClick = std::move(handler);
 }
 
+void ThumbNavTile::SetOnDoubleClick(DoubleClickHandler handler)
+{
+    m_onDoubleClick = std::move(handler);
+}
+
 FD2D::Size ThumbNavTile::Measure(FD2D::Size available)
 {
     UNREFERENCED_PARAMETER(available);
@@ -114,7 +119,7 @@ bool ThumbNavTile::OnMessage(UINT message, WPARAM wParam, LPARAM lParam)
     {
     case WM_MOUSEMOVE:
     {
-        POINT pt { GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam) };
+        POINT pt = FD2D::Wnd::ExtractMousePoint(lParam);
         bool prevHover = m_hovered;
         m_hovered = HitTest(pt);
         if (m_hovered != prevHover)
@@ -125,10 +130,14 @@ bool ThumbNavTile::OnMessage(UINT message, WPARAM wParam, LPARAM lParam)
     }
     case WM_LBUTTONDOWN:
     {
-        POINT pt { GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam) };
+        POINT pt = FD2D::Wnd::ExtractMousePoint(lParam);
         if (HitTest(pt))
         {
             m_pressed = true;
+            if (m_onClick)
+            {
+                m_onClick();
+            }
             Invalidate();
             return true;
         }
@@ -139,19 +148,24 @@ bool ThumbNavTile::OnMessage(UINT message, WPARAM wParam, LPARAM lParam)
         bool wasPressed = m_pressed;
         m_pressed = false;
 
-        POINT pt { GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam) };
-        if (wasPressed && HitTest(pt))
-        {
-            if (m_onClick)
-            {
-                m_onClick();
-            }
-            Invalidate();
-            return true;
-        }
+        POINT pt = FD2D::Wnd::ExtractMousePoint(lParam);
         if (wasPressed)
         {
             Invalidate();
+            return true;
+        }
+        break;
+    }
+    case WM_LBUTTONDBLCLK:
+    {
+        POINT pt = FD2D::Wnd::ExtractMousePoint(lParam);
+        if (HitTest(pt))
+        {
+            if (m_onDoubleClick)
+            {
+                m_onDoubleClick();
+            }
+            return true;
         }
         break;
     }

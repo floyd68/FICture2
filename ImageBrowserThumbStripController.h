@@ -42,9 +42,8 @@ public:
         bool showNavItems,
         const VirtualPath& currentFolder,
         const VirtualPath& preferSelectPath,
-        const std::function<void()>& onNavigateUp,
-        const std::function<void(const VirtualPath&)>& onNavigateToFolder,
         const std::function<void(size_t)>& onSelectIndex,
+        const std::function<void(size_t)>& onActivateIndex,
         const std::function<bool(const VirtualPath&, const VirtualPath&)>& pathEquals,
         const std::function<std::wstring(const wchar_t*, const VirtualPath&)>& makeStableName,
         const std::function<bool(const VirtualPath&)>& isSupportedImage) const;

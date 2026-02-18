@@ -19,9 +19,7 @@ public:
         const std::function<bool(const VirtualPath&)>& isDirectory,
         VirtualPath& currentFolder,
         const std::function<void(const VirtualPath&)>& rebuildThumbList,
-        const std::function<void()>& resetThumbScroll,
-        const std::function<void(size_t)>& selectIndex,
-        const std::vector<ThumbItem>& items) const;
+        const std::function<void()>& resetThumbScroll) const;
 
     bool NavigateToFile(
         const VirtualPath& filePath,
