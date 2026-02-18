@@ -13,6 +13,7 @@ class ThumbNavTile : public FD2D::Wnd
 {
 public:
     using ClickHandler = std::function<void()>;
+    using DoubleClickHandler = std::function<void()>;
 
     enum class IconKind
     {
@@ -36,6 +37,7 @@ public:
     void SetSelected(bool selected);
     bool Selected() const;
     void SetOnClick(ClickHandler handler);
+    void SetOnDoubleClick(DoubleClickHandler handler);
 
     FD2D::Size Measure(FD2D::Size available) override;
     void Arrange(FD2D::Rect finalRect) override;
@@ -50,6 +52,7 @@ private:
     FD2D::Text m_label;
     D2D1_RECT_F m_labelRect {};
     ClickHandler m_onClick {};
+    DoubleClickHandler m_onDoubleClick {};
     Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> m_labelBackdropBrush {};
     Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> m_fillBrush {};
     Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> m_strokeBrush {};

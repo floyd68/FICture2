@@ -48,39 +48,22 @@ bool ImageBrowserInputController::HandleMouseWheel(const MouseWheelContext& ctx,
 
             for (int s = 0; s < count; ++s)
             {
-                size_t probe = next;
-                bool found = false;
-                while (true)
+                if (dir < 0)
                 {
-                    if (dir < 0)
+                    if (next == 0)
                     {
-                        if (probe == 0)
-                        {
-                            break;
-                        }
-                        probe--;
-                    }
-                    else
-                    {
-                        probe++;
-                        if (probe >= ctx.items->size())
-                        {
-                            break;
-                        }
-                    }
-
-                    if ((*ctx.items)[probe].kind == ThumbItemKind::Image)
-                    {
-                        found = true;
                         break;
                     }
+                    next--;
                 }
-
-                if (!found)
+                else
                 {
-                    break;
+                    if ((next + 1) >= ctx.items->size())
+                    {
+                        break;
+                    }
+                    next++;
                 }
-                next = probe;
             }
 
             if (next != cur && ctx.selectIndex)

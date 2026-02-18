@@ -4,6 +4,7 @@
 #include "framework.h"
 #include <algorithm>
 #include <cmath>
+#include <windowsx.h>
 
 ThumbImageTile::ThumbImageTile(const std::wstring& name)
     : Wnd(name)
@@ -297,5 +298,40 @@ void ThumbImageTile::OnRender(ID2D1RenderTarget* target)
     }
 
     m_label.OnRender(target);
+}
+
+bool ThumbImageTile::OnMessage(UINT message, WPARAM wParam, LPARAM lParam)
+{
+    UNREFERENCED_PARAMETER(wParam);
+    auto hitTest = [this](const POINT& pt) -> bool
+    {
+        const D2D1_RECT_F rect = LayoutRect();
+        return pt.x >= rect.left &&
+            pt.x <= rect.right &&
+            pt.y >= rect.top &&
+            pt.y <= rect.bottom;
+    };
+
+    switch (message)
+    {
+    case WM_LBUTTONDOWN:
+        {
+            POINT pt = FD2D::Wnd::ExtractMousePoint(lParam);
+            if (hitTest(pt))
+            {
+                if (m_onClick)
+                {
+                    m_onClick();
+                }
+                return true;
+            }
+        }
+        break;
+
+    default:
+        break;
+    }
+
+    return Wnd::OnMessage(message, wParam, lParam);
 }
 

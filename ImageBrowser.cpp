@@ -2438,12 +2438,7 @@ namespace
             {
                 m_thumbScroll->SetScrollX(0.0f);
             }
-                },
-                [this](size_t index)
-                {
-                    SelectItemByIndex(index);
-                },
-                m_items);
+                });
         }
 
         void NavigateToFile(const VirtualPath& filePath)
@@ -2498,18 +2493,16 @@ namespace
                 m_showNavItems,
                 m_currentFolder,
                 preferSelectPath,
-                [this]()
-                    {
-                        QueueNavigateUp();
-                },
-                [this](const VirtualPath& dir)
-                    {
-                        QueueDeferredAction(DeferredActionKind::NavigateToFolder, dir);
+                [this](size_t index)
+                {
+                    RequestFocus();
+                    SelectItemByIndex(index);
                 },
                 [this](size_t index)
                 {
                     RequestFocus();
                     SelectItemByIndex(index);
+                    QueueDeferredAction(DeferredActionKind::ActivateSelected);
                 },
                 [](const VirtualPath& a, const VirtualPath& b)
                 {

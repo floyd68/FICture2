@@ -914,6 +914,7 @@ public:
         archive_read_support_format_zip(a);
         archive_read_support_format_7zip(a);
         archive_read_support_format_rar(a);
+        archive_read_support_format_rar5(a);
 
         // Enable only essential compression filters for ZIP/7z/RAR
         archive_read_support_filter_none(a);    // Uncompressed
@@ -988,6 +989,7 @@ private:
         archive_read_support_format_zip(a);
         archive_read_support_format_7zip(a);
         archive_read_support_format_rar(a);
+        archive_read_support_format_rar5(a);
 
         // Enable only essential compression filters for ZIP/7z/RAR
         archive_read_support_filter_none(a);    // Uncompressed

@@ -55,9 +55,8 @@ ImageBrowserThumbStripController::RebuildResult ImageBrowserThumbStripController
     bool showNavItems,
     const VirtualPath& currentFolder,
     const VirtualPath& preferSelectPath,
-    const std::function<void()>& onNavigateUp,
-    const std::function<void(const VirtualPath&)>& onNavigateToFolder,
     const std::function<void(size_t)>& onSelectIndex,
+    const std::function<void(size_t)>& onActivateIndex,
     const std::function<bool(const VirtualPath&, const VirtualPath&)>& pathEquals,
     const std::function<std::wstring(const wchar_t*, const VirtualPath&)>& makeStableName,
     const std::function<bool(const VirtualPath&)>& isSupportedImage) const
@@ -91,12 +90,12 @@ ImageBrowserThumbStripController::RebuildResult ImageBrowserThumbStripController
 
     std::sort(folders.begin(), folders.end(), [](const VirtualPath& a, const VirtualPath& b)
     {
-        return a.GetFilename() < b.GetFilename();
+        return ToLower(a.GetFilename()) < ToLower(b.GetFilename());
     });
 
     std::sort(files.begin(), files.end(), [](const VirtualPath& a, const VirtualPath& b)
     {
-        return a.GetFilename() < b.GetFilename();
+        return ToLower(a.GetFilename()) < ToLower(b.GetFilename());
     });
 
     std::vector<std::wstring> desiredOrder;
@@ -133,11 +132,23 @@ ImageBrowserThumbStripController::RebuildResult ImageBrowserThumbStripController
             tile->SetText(L"..");
             tile->SetTextPlacement(ThumbNavTile::TextPlacement::Bottom);
             tile->SetIcon(ThumbNavTile::IconKind::Up);
-            tile->SetOnClick([onNavigateUp]()
+            const size_t index = items.size();
+            tile->SetOnClick([onSelectIndex, index]()
             {
-                if (onNavigateUp)
+                if (onSelectIndex)
                 {
-                    onNavigateUp();
+                    onSelectIndex(index);
+                }
+            });
+            tile->SetOnDoubleClick([onSelectIndex, onActivateIndex, index]()
+            {
+                if (onSelectIndex)
+                {
+                    onSelectIndex(index);
+                }
+                if (onActivateIndex)
+                {
+                    onActivateIndex(index);
                 }
             });
 
@@ -161,11 +172,23 @@ ImageBrowserThumbStripController::RebuildResult ImageBrowserThumbStripController
             tile->SetText(dir.filename().wstring());
             tile->SetTextPlacement(ThumbNavTile::TextPlacement::Bottom);
             tile->SetIcon(ThumbNavTile::IconKind::Folder);
-            tile->SetOnClick([onNavigateToFolder, dir]()
+            const size_t index = items.size();
+            tile->SetOnClick([onSelectIndex, index]()
             {
-                if (onNavigateToFolder)
+                if (onSelectIndex)
                 {
-                    onNavigateToFolder(dir);
+                    onSelectIndex(index);
+                }
+            });
+            tile->SetOnDoubleClick([onSelectIndex, onActivateIndex, index]()
+            {
+                if (onSelectIndex)
+                {
+                    onSelectIndex(index);
+                }
+                if (onActivateIndex)
+                {
+                    onActivateIndex(index);
                 }
             });
 

@@ -27,36 +27,23 @@ bool ImageBrowserNavigation::NavigateToFolder(
     const std::function<bool(const VirtualPath&)>& isDirectory,
     VirtualPath& currentFolder,
     const std::function<void(const VirtualPath&)>& rebuildThumbList,
-    const std::function<void()>& resetThumbScroll,
-    const std::function<void(size_t)>& selectIndex,
-    const std::vector<ThumbItem>& items) const
+    const std::function<void()>& resetThumbScroll) const
 {
     if (isDirectory && !isDirectory(folder))
     {
         return false;
     }
 
+    const VirtualPath previousFolder = currentFolder;
     currentFolder = folder;
     if (rebuildThumbList)
     {
-        rebuildThumbList(VirtualPath());
+        rebuildThumbList(previousFolder);
     }
 
     if (resetThumbScroll)
     {
         resetThumbScroll();
-    }
-
-    if (selectIndex)
-    {
-        for (size_t i = 0; i < items.size(); ++i)
-        {
-            if (items[i].kind == ThumbItemKind::Image)
-            {
-                selectIndex(i);
-                break;
-            }
-        }
     }
 
     return true;

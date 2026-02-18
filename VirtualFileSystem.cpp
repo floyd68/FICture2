@@ -271,9 +271,9 @@ std::vector<VirtualFileEntry> VirtualFileSystem::ListArchiveRoot(const std::file
         
         if (sepPos == std::wstring::npos)
         {
-            // Root-level file
+            // Direct child at archive root: can be either file or explicit directory entry.
             VirtualPath vpath(archivePath, normalized);
-            entries.emplace_back(vpath, false, archEntry.size, archEntry.modTime);
+            entries.emplace_back(vpath, archEntry.isDirectory, archEntry.size, archEntry.modTime);
         }
         else
         {
@@ -329,9 +329,9 @@ std::vector<VirtualFileEntry> VirtualFileSystem::ListArchiveSubdirectory(
         
         if (sepPos == std::wstring::npos)
         {
-            // Direct child file
+            // Direct child entry: can be file or explicit directory entry.
             VirtualPath vpath(archivePath, normalized);
-            entries.emplace_back(vpath, false, archEntry.size, archEntry.modTime);
+            entries.emplace_back(vpath, archEntry.isDirectory, archEntry.size, archEntry.modTime);
         }
         else
         {
