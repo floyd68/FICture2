@@ -6,16 +6,23 @@
 
 #include <windowsx.h>
 #include <wincodec.h>
+#include <vector>
 
 ThumbNavTile::ThumbNavTile(const std::wstring& name)
     : Wnd(name)
     , m_label(name + L"_label")
+    , m_badgeLabel(name + L"_badge")
 {
     m_label.SetFont(L"Segoe UI Semibold", 18.0f);
     m_label.SetColor(D2D1::ColorF(D2D1::ColorF::White, 0.90f));
     m_label.SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
     m_label.SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
     m_label.SetEllipsisTrimmingEnabled(true);
+
+    m_badgeLabel.SetFont(L"Segoe UI Semibold", 10.0f);
+    m_badgeLabel.SetColor(D2D1::ColorF(D2D1::ColorF::White, 0.98f));
+    m_badgeLabel.SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
+    m_badgeLabel.SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
 }
 
 void ThumbNavTile::SetIcon(IconKind kind)
@@ -32,6 +39,26 @@ void ThumbNavTile::SetIcon(IconKind kind)
 void ThumbNavTile::SetText(const std::wstring& text)
 {
     m_label.SetText(text);
+}
+
+void ThumbNavTile::SetBadgeText(const std::wstring& text)
+{
+    m_badgeText = text;
+    m_badgeLabel.SetText(text);
+    Invalidate();
+}
+
+void ThumbNavTile::SetIconTint(IconTint tint)
+{
+    if (m_iconTint == tint)
+    {
+        return;
+    }
+
+    m_iconTint = tint;
+    m_folderBitmap.Reset();
+    m_folderBitmapTarget = nullptr;
+    Invalidate();
 }
 
 void ThumbNavTile::SetTextPlacement(TextPlacement placement)
@@ -55,6 +82,10 @@ void ThumbNavTile::SetSelected(bool selected)
     m_selected = selected;
     m_selectedStartMs = GetTickCount64();
     Invalidate();
+    if (m_selected && BackplateRef() != nullptr)
+    {
+        BackplateRef()->RequestAnimationFrame();
+    }
 }
 
 bool ThumbNavTile::Selected() const
@@ -108,6 +139,21 @@ void ThumbNavTile::Arrange(FD2D::Rect finalRect)
         // Centered text (folder/up): match image caption sizing and use black for readability on the icon.
         m_label.SetFont(L"Segoe UI", font);
         m_label.SetColor(D2D1::ColorF(D2D1::ColorF::Black, 0.90f));
+    }
+
+    if (!m_badgeText.empty())
+    {
+        const float badgeH = (std::max)(18.0f, h * 0.18f);
+        const float badgeW = (std::max)(36.0f, w * 0.32f);
+        const float inset = (std::max)(4.0f, h * 0.05f);
+        m_badgeRect = D2D1::RectF(r.right - badgeW - inset, r.top + inset, r.right - inset, r.top + inset + badgeH);
+        m_badgeLabel.SetRect(m_badgeRect);
+        m_badgeLabel.SetFixedWidth(badgeW);
+        m_badgeLabel.SetFont(L"Segoe UI Semibold", (std::max)(9.0f, (std::min)(12.0f, h * 0.10f)));
+    }
+    else
+    {
+        m_badgeRect = D2D1::RectF(0, 0, 0, 0);
     }
 }
 
@@ -207,22 +253,35 @@ void ThumbNavTile::OnRender(ID2D1RenderTarget* target)
 
     if (m_selected)
     {
-        // Subtle breathe: modulate alpha.
+        // Breathe animation: modulate alpha + thickness + slight expand.
         unsigned long long nowMs = GetTickCount64();
         float t = static_cast<float>((nowMs - m_selectedStartMs) % 1800) / 1800.0f;
         float s = 0.5f + 0.5f * sinf(t * 6.2831853f);
-        float a = 0.55f + (0.10f * s);
+        float a = 0.52f + (0.20f * s);
         stroke = D2D1::ColorF(1.0f, 0.60f, 0.24f, a);
-        strokeThickness = 2.0f;
+
+        const float inflate = 0.6f + (1.2f * s);
+        D2D1_RECT_F pulseRect = LayoutRect();
+        pulseRect.left -= inflate;
+        pulseRect.top -= inflate;
+        pulseRect.right += inflate;
+        pulseRect.bottom += inflate;
+
+        strokeThickness = 1.8f + (1.0f * s);
 
         if (BackplateRef() != nullptr)
         {
             BackplateRef()->RequestAnimationFrame();
         }
-    }
 
-    m_strokeBrush->SetColor(stroke);
-    target->DrawRectangle(LayoutRect(), m_strokeBrush.Get(), strokeThickness);
+        m_strokeBrush->SetColor(stroke);
+        target->DrawRectangle(pulseRect, m_strokeBrush.Get(), strokeThickness);
+    }
+    else
+    {
+        m_strokeBrush->SetColor(stroke);
+        target->DrawRectangle(LayoutRect(), m_strokeBrush.Get(), strokeThickness);
+    }
 
     // Caption backdrop (same idea as image thumbnail captions): a subtle translucent band.
     if (m_icon != IconKind::None && m_textPlacement == TextPlacement::Bottom)
@@ -235,6 +294,19 @@ void ThumbNavTile::OnRender(ID2D1RenderTarget* target)
         {
             target->FillRectangle(m_labelRect, m_labelBackdropBrush.Get());
         }
+    }
+
+    if (!m_badgeText.empty())
+    {
+        if (!m_badgeBackdropBrush)
+        {
+            (void)target->CreateSolidColorBrush(D2D1::ColorF(0.03f, 0.03f, 0.03f, 0.80f), &m_badgeBackdropBrush);
+        }
+        if (m_badgeBackdropBrush)
+        {
+            target->FillRectangle(m_badgeRect, m_badgeBackdropBrush.Get());
+        }
+        m_badgeLabel.OnRender(target);
     }
 
     // Draw icon (folder / up) if requested.
@@ -399,10 +471,75 @@ bool ThumbNavTile::EnsureFolderBitmap(ID2D1RenderTarget* target)
         return false;
     }
 
-    hr = target->CreateBitmapFromWicBitmap(converter.Get(), nullptr, &m_folderBitmap);
-    if (FAILED(hr) || !m_folderBitmap)
+    if (m_iconTint == IconTint::None)
     {
-        return false;
+        hr = target->CreateBitmapFromWicBitmap(converter.Get(), nullptr, &m_folderBitmap);
+        if (FAILED(hr) || !m_folderBitmap)
+        {
+            return false;
+        }
+    }
+    else
+    {
+        UINT width = 0;
+        UINT height = 0;
+        hr = converter->GetSize(&width, &height);
+        if (FAILED(hr) || width == 0 || height == 0)
+        {
+            return false;
+        }
+
+        const UINT stride = width * 4;
+        std::vector<BYTE> pixels(static_cast<size_t>(stride) * static_cast<size_t>(height));
+        hr = converter->CopyPixels(nullptr, stride, static_cast<UINT>(pixels.size()), pixels.data());
+        if (FAILED(hr))
+        {
+            return false;
+        }
+
+        D2D1_COLOR_F tintColor = D2D1::ColorF(1.0f, 0.26f, 0.26f, 1.0f);
+        if (m_iconTint == IconTint::ArchiveBlue)
+        {
+            tintColor = D2D1::ColorF(0.26f, 0.55f, 1.0f, 1.0f);
+        }
+
+        const float mixFactor = 0.50f;
+        for (size_t i = 0; i + 3 < pixels.size(); i += 4)
+        {
+            const float alpha = static_cast<float>(pixels[i + 3]) / 255.0f;
+            if (alpha <= 0.0f)
+            {
+                continue;
+            }
+
+            const float targetB = tintColor.b * alpha * 255.0f;
+            const float targetG = tintColor.g * alpha * 255.0f;
+            const float targetR = tintColor.r * alpha * 255.0f;
+
+            pixels[i + 0] = static_cast<BYTE>((1.0f - mixFactor) * pixels[i + 0] + mixFactor * targetB);
+            pixels[i + 1] = static_cast<BYTE>((1.0f - mixFactor) * pixels[i + 1] + mixFactor * targetG);
+            pixels[i + 2] = static_cast<BYTE>((1.0f - mixFactor) * pixels[i + 2] + mixFactor * targetR);
+        }
+
+        Microsoft::WRL::ComPtr<IWICBitmap> tintedBitmap;
+        hr = wic->CreateBitmapFromMemory(
+            width,
+            height,
+            GUID_WICPixelFormat32bppPBGRA,
+            stride,
+            static_cast<UINT>(pixels.size()),
+            pixels.data(),
+            &tintedBitmap);
+        if (FAILED(hr) || !tintedBitmap)
+        {
+            return false;
+        }
+
+        hr = target->CreateBitmapFromWicBitmap(tintedBitmap.Get(), nullptr, &m_folderBitmap);
+        if (FAILED(hr) || !m_folderBitmap)
+        {
+            return false;
+        }
     }
 
     m_folderBitmapTarget = target;

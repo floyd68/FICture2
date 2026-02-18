@@ -153,6 +153,10 @@ bool ImageBrowserInputController::HandleKeyUp(const KeyContext& ctx, UINT messag
         }
         return true;
     case 'N':
+        if (!alt)
+        {
+            return false;
+        }
         if (ctx.queueToggleNavItems)
         {
             ctx.queueToggleNavItems();
@@ -160,6 +164,10 @@ bool ImageBrowserInputController::HandleKeyUp(const KeyContext& ctx, UINT messag
         return true;
     case 'A':
     case 'a':
+        if (!alt)
+        {
+            return false;
+        }
         if (ctx.toggleAlphaCheckerboard)
         {
             ctx.toggleAlphaCheckerboard();
@@ -167,6 +175,10 @@ bool ImageBrowserInputController::HandleKeyUp(const KeyContext& ctx, UINT messag
         return true;
     case 'X':
     case 'x':
+        if (!alt)
+        {
+            return false;
+        }
         if (ctx.fitToScreen)
         {
             ctx.fitToScreen();
@@ -174,6 +186,10 @@ bool ImageBrowserInputController::HandleKeyUp(const KeyContext& ctx, UINT messag
         return true;
     case 'B':
     case 'b':
+        if (!alt)
+        {
+            return false;
+        }
         if (ctx.pickBackgroundColor)
         {
             ctx.pickBackgroundColor();
@@ -181,6 +197,10 @@ bool ImageBrowserInputController::HandleKeyUp(const KeyContext& ctx, UINT messag
         return true;
     case 'Q':
     case 'q':
+        if (!alt)
+        {
+            return false;
+        }
         if (ctx.toggleSamplingQuality)
         {
             ctx.toggleSamplingQuality();

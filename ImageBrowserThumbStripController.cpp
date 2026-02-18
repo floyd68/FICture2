@@ -4,6 +4,7 @@
 #include "ThumbImageTile.h"
 #include "ThumbNavTile.h"
 #include "VirtualFileSystem.h"
+#include "ArchiveReader.h"
 
 #include <algorithm>
 #include <cwctype>
@@ -11,6 +12,12 @@
 
 namespace
 {
+    struct FolderEntryData
+    {
+        VirtualPath path {};
+        bool isArchive { false };
+    };
+
     std::wstring ToLower(std::wstring s)
     {
         for (auto& c : s)
@@ -18,6 +25,46 @@ namespace
             c = static_cast<wchar_t>(towlower(c));
         }
         return s;
+    }
+
+    std::wstring ToUpper(std::wstring s)
+    {
+        for (auto& c : s)
+        {
+            c = static_cast<wchar_t>(towupper(c));
+        }
+        return s;
+    }
+
+    std::wstring GetArchiveBadgeText(const VirtualPath& path)
+    {
+        std::wstring ext = ToLower(path.hostPath.extension().wstring());
+        if (ext == L".zip" || ext == L".7z" || ext == L".rar" || ext == L".bsa" || ext == L".ba2")
+        {
+            if (!ext.empty() && ext.front() == L'.')
+            {
+                ext.erase(ext.begin());
+            }
+            return ToUpper(ext);
+        }
+
+        return L"";
+    }
+
+    ThumbNavTile::IconTint GetArchiveIconTint(const VirtualPath& path)
+    {
+        const std::wstring ext = ToLower(path.hostPath.extension().wstring());
+        if (ext == L".bsa" || ext == L".ba2")
+        {
+            return ThumbNavTile::IconTint::ArchiveBlue;
+        }
+
+        if (ext == L".zip" || ext == L".7z" || ext == L".rar")
+        {
+            return ThumbNavTile::IconTint::ArchiveRed;
+        }
+
+        return ThumbNavTile::IconTint::None;
     }
 }
 
@@ -59,7 +106,8 @@ ImageBrowserThumbStripController::RebuildResult ImageBrowserThumbStripController
     const std::function<void(size_t)>& onActivateIndex,
     const std::function<bool(const VirtualPath&, const VirtualPath&)>& pathEquals,
     const std::function<std::wstring(const wchar_t*, const VirtualPath&)>& makeStableName,
-    const std::function<bool(const VirtualPath&)>& isSupportedImage) const
+    const std::function<bool(const VirtualPath&)>& isSupportedImage,
+    const std::vector<VirtualFileEntry>* preloadedEntries) const
 {
     RebuildResult result {};
     if (!panel)
@@ -69,28 +117,51 @@ ImageBrowserThumbStripController::RebuildResult ImageBrowserThumbStripController
 
     items.clear();
 
-    std::vector<VirtualPath> folders;
+    std::vector<FolderEntryData> folders;
     std::vector<VirtualPath> files;
+    std::unordered_set<std::wstring> seenFolderKeys;
+    std::unordered_set<std::wstring> seenFileKeys;
 
     if (!currentFolder.hostPath.empty())
     {
-        auto entries = VirtualFileSystem::ListDirectory(currentFolder);
-        for (const auto& entry : entries)
+        const std::vector<VirtualFileEntry> listedEntries = preloadedEntries != nullptr
+            ? *preloadedEntries
+            : VirtualFileSystem::ListDirectory(currentFolder);
+        seenFolderKeys.reserve(listedEntries.size());
+        seenFileKeys.reserve(listedEntries.size());
+
+        for (const auto& entry : listedEntries)
         {
-            if (entry.isDirectory || entry.path.IsArchiveFile())
+            const std::wstring entryKey = ToLower(entry.path.GetDisplayPath());
+
+            if (entry.isDirectory)
             {
-                folders.push_back(entry.path);
+                if (seenFolderKeys.insert(entryKey).second)
+                {
+                    folders.push_back({ entry.path, false });
+                }
+            }
+            else if (entry.path.IsFilesystemPath() &&
+                ArchiveReaderFactory::HasArchiveExtension(entry.path.hostPath.filename().wstring()))
+            {
+                if (seenFolderKeys.insert(entryKey).second)
+                {
+                    folders.push_back({ entry.path, true });
+                }
             }
             else if (isSupportedImage && isSupportedImage(entry.path))
             {
-                files.push_back(entry.path);
+                if (seenFileKeys.insert(entryKey).second)
+                {
+                    files.push_back(entry.path);
+                }
             }
         }
     }
 
-    std::sort(folders.begin(), folders.end(), [](const VirtualPath& a, const VirtualPath& b)
+    std::sort(folders.begin(), folders.end(), [](const FolderEntryData& a, const FolderEntryData& b)
     {
-        return ToLower(a.GetFilename()) < ToLower(b.GetFilename());
+        return ToLower(a.path.GetFilename()) < ToLower(b.path.GetFilename());
     });
 
     std::sort(files.begin(), files.end(), [](const VirtualPath& a, const VirtualPath& b)
@@ -157,8 +228,9 @@ ImageBrowserThumbStripController::RebuildResult ImageBrowserThumbStripController
             items.push_back({ ThumbItemKind::Up, parent, tile, nullptr, tile, nullptr });
         }
 
-        for (const auto& dir : folders)
+        for (const auto& folder : folders)
         {
+            const VirtualPath& dir = folder.path;
             std::wstring name = makeStableName ? makeStableName(L"nav_folder", dir) : L"nav_folder";
             auto tile = std::dynamic_pointer_cast<ThumbNavTile>(getExistingChild(name));
             if (!tile)
@@ -172,6 +244,16 @@ ImageBrowserThumbStripController::RebuildResult ImageBrowserThumbStripController
             tile->SetText(dir.filename().wstring());
             tile->SetTextPlacement(ThumbNavTile::TextPlacement::Bottom);
             tile->SetIcon(ThumbNavTile::IconKind::Folder);
+            if (folder.isArchive)
+            {
+                tile->SetBadgeText(GetArchiveBadgeText(dir));
+                tile->SetIconTint(GetArchiveIconTint(dir));
+            }
+            else
+            {
+                tile->SetBadgeText(L"");
+                tile->SetIconTint(ThumbNavTile::IconTint::None);
+            }
             const size_t index = items.size();
             tile->SetOnClick([onSelectIndex, index]()
             {

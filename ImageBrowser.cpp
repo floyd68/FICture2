@@ -26,11 +26,16 @@
 #include "VirtualFileSystem.h"
 
 #include <algorithm>
+#include <atomic>
 #include <cstdint>
 #include <cmath>
 #include <filesystem>
+#include <mutex>
 #include <memory>
+#include <thread>
+#include <deque>
 #include <unordered_set>
+#include <unordered_map>
 #include <vector>
 #include <sstream>
 #include <cwctype>
@@ -62,6 +67,20 @@ namespace
     static bool g_showAlpha = true;
     static bool g_backgroundColorInitialized = false;
     static D2D1_COLOR_F g_focusedBrowserBackgroundColor = D2D1::ColorF(0.18f, 0.16f, 0.03f, 1.0f);
+
+    struct AsyncThumbListChunkPayload
+    {
+        unsigned long long requestId { 0 };
+        VirtualPath folder {};
+        VirtualPath preferSelectPath {};
+        bool showNavItems { true };
+        bool completed { false };
+        std::vector<VirtualFileEntry> batch {};
+    };
+
+    std::mutex g_asyncThumbListMutex;
+    std::unordered_map<std::wstring, std::deque<AsyncThumbListChunkPayload>> g_asyncThumbListChunksByBrowser {};
+    std::unordered_map<std::wstring, HANDLE> g_asyncThumbReadyEventByBrowser {};
 
     static unsigned long long NowMs()
     {
@@ -514,6 +533,12 @@ namespace
             : Wnd(name)
             , m_initialFile(initialFile)
         {
+            m_asyncThumbReadyEvent = CreateEventW(nullptr, TRUE, FALSE, nullptr);
+            if (m_asyncThumbReadyEvent != nullptr)
+            {
+                std::lock_guard<std::mutex> lock(g_asyncThumbListMutex);
+                g_asyncThumbReadyEventByBrowser[Name()] = m_asyncThumbReadyEvent;
+            }
             EnsureShowNavItemsInitialized();
             m_showNavItems = g_showNavItems;
             BuildUi();
@@ -521,6 +546,16 @@ namespace
 
         ~ImageBrowserImpl() override
         {
+            {
+                std::lock_guard<std::mutex> lock(g_asyncThumbListMutex);
+                g_asyncThumbListChunksByBrowser.erase(Name());
+                g_asyncThumbReadyEventByBrowser.erase(Name());
+            }
+            if (m_asyncThumbReadyEvent != nullptr)
+            {
+                CloseHandle(m_asyncThumbReadyEvent);
+                m_asyncThumbReadyEvent = nullptr;
+            }
             UnregisterFromEventBus();
         }
 
@@ -790,6 +825,26 @@ namespace
             // live while dragging.
             (void)ApplySyncedThumbStripHeightIfNeeded();
             (void)UpdateThumbSizingFromPane();
+            if (m_thumbListLoading && m_asyncThumbReadyEvent != nullptr)
+            {
+                if (WaitForSingleObject(m_asyncThumbReadyEvent, 0) == WAIT_OBJECT_0)
+                {
+                    DrainAsyncThumbChunks();
+                }
+                if (BackplateRef() != nullptr)
+                {
+                    BackplateRef()->RequestAnimationFrame();
+                }
+            }
+            // Throttle progressive UI list updates so large folders don't monopolize the UI thread.
+            if (m_progressiveUiDirty && !m_progressiveLoadCompleted)
+            {
+                const unsigned long long now = NowMs();
+                if (now - m_progressiveLastApplyMs >= 50)
+                {
+                    ApplyProgressiveThumbUpdate(false);
+                }
+            }
             if (m_pendingThumbStripBroadcast && m_rootSplit != nullptr && !m_rootSplit->IsSplitterDragging())
             {
                 m_pendingThumbStripBroadcast = false;
@@ -884,6 +939,9 @@ namespace
 
             case WM_FIC2_DEFERRED_ACTION:
                 return HandleDeferredActionMessage();
+
+            case WM_FIC2_ASYNC_THUMB_READY:
+                return HandleAsyncThumbReadyMessage();
 
             case WM_MOUSEWHEEL:
                 if (HandleMouseWheelMessage(wParam, lParam))
@@ -993,14 +1051,14 @@ namespace
                         IDM_CTX_TOGGLE_DIRECTORIES,
                         MF_BYCOMMAND | MF_STRING,
                         IDM_CTX_TOGGLE_DIRECTORIES,
-                            g_showNavItems ? L"Hide Directories\tN" : L"Show Directories\tN");
+                            g_showNavItems ? L"Hide Directories\tAlt+N" : L"Show Directories\tAlt+N");
 
                     ModifyMenuW(
                         hPopup,
                         IDM_CTX_TOGGLE_ALPHA,
                         MF_BYCOMMAND | MF_STRING,
                         IDM_CTX_TOGGLE_ALPHA,
-                        g_showAlpha ? L"Hide Alpha\tA" : L"Show Alpha\tA");
+                        g_showAlpha ? L"Hide Alpha\tAlt+A" : L"Show Alpha\tAlt+A");
 
                     auto mainImage = ActiveMainImage();
                     const bool highQuality = mainImage ? mainImage->HighQualitySampling() : true;
@@ -1010,7 +1068,7 @@ namespace
                         IDM_CTX_TOGGLE_SAMPLING,
                         MF_BYCOMMAND | MF_STRING,
                         IDM_CTX_TOGGLE_SAMPLING,
-                        (std::wstring(L"Sampling: ") + samplingLabel + L"\tQ").c_str());
+                        (std::wstring(L"Sampling: ") + samplingLabel + L"\tAlt+Q").c_str());
 
                     const bool hasExplorerTarget = !GetContextMenuTargetImagePath().empty();
                     AppendMenuW(hPopup, MF_SEPARATOR, 0, nullptr);
@@ -1168,7 +1226,171 @@ namespace
                 SelectItemByIndex(idx);
             };
 
-            return m_inputController->HandleKeyDown(ctx, message, wParam, lParam);
+            // Priority: handle navigation keys first so type-to-select never blocks arrow movement.
+            if (m_inputController->HandleKeyDown(ctx, message, wParam, lParam))
+            {
+                return true;
+            }
+
+            return HandleTypeToSelectKeyDown(message, wParam, lParam);
+        }
+
+        bool HandleTypeToSelectKeyDown(UINT message, WPARAM wParam, LPARAM lParam)
+        {
+            if (message != WM_KEYDOWN)
+            {
+                return false;
+            }
+
+            if (m_items.empty())
+            {
+                return false;
+            }
+
+            const bool ctrl = ((GetKeyState(VK_CONTROL) & 0x8000) != 0);
+            const bool alt = ((GetKeyState(VK_MENU) & 0x8000) != 0);
+            if (ctrl || alt)
+            {
+                return false;
+            }
+
+            const unsigned long long now = NowMs();
+            if (now - m_typeSelectLastInputMs > 1200)
+            {
+                m_typeSelectQuery.clear();
+            }
+
+            // Let navigation/edit/system keys flow to normal key handlers.
+            switch (wParam)
+            {
+            case VK_LEFT:
+            case VK_RIGHT:
+            case VK_UP:
+            case VK_DOWN:
+            case VK_HOME:
+            case VK_END:
+            case VK_PRIOR:
+            case VK_NEXT:
+            case VK_RETURN:
+            case VK_TAB:
+            case VK_DELETE:
+            case VK_INSERT:
+            case VK_F1:
+            case VK_F2:
+            case VK_F3:
+            case VK_F4:
+            case VK_F5:
+            case VK_F6:
+            case VK_F7:
+            case VK_F8:
+            case VK_F9:
+            case VK_F10:
+            case VK_F11:
+            case VK_F12:
+                return false;
+            default:
+                break;
+            }
+
+            wchar_t chars[4] {};
+            BYTE keyState[256] {};
+            if (!GetKeyboardState(keyState))
+            {
+                return false;
+            }
+
+            const UINT scanCode = static_cast<UINT>((lParam >> 16) & 0xFF);
+            int converted = ToUnicode(static_cast<UINT>(wParam), scanCode, keyState, chars, 4, 0);
+            if (converted < 0)
+            {
+                wchar_t clearBuf[4] {};
+                (void)ToUnicode(static_cast<UINT>(wParam), scanCode, keyState, clearBuf, 4, 0);
+                return false;
+            }
+            if (converted <= 0)
+            {
+                return false;
+            }
+
+            wchar_t ch = chars[0];
+            if (!iswprint(ch))
+            {
+                return false;
+            }
+
+            ch = static_cast<wchar_t>(towlower(ch));
+            std::wstring nextQuery = m_typeSelectQuery;
+            nextQuery.push_back(ch);
+
+            if (!TrySelectByTypeToSelectQuery(nextQuery) && nextQuery.size() > 1)
+            {
+                nextQuery.assign(1, ch);
+                (void)TrySelectByTypeToSelectQuery(nextQuery);
+            }
+
+            m_typeSelectQuery = nextQuery;
+            m_typeSelectLastInputMs = now;
+            return true;
+        }
+
+        bool TrySelectByTypeToSelectQuery(const std::wstring& query)
+        {
+            if (query.empty() || m_items.empty())
+            {
+                return false;
+            }
+
+            auto startsWithInsensitive = [](const std::wstring& text, const std::wstring& prefix) -> bool
+            {
+                if (prefix.size() > text.size())
+                {
+                    return false;
+                }
+                for (size_t i = 0; i < prefix.size(); ++i)
+                {
+                    const wchar_t tc = static_cast<wchar_t>(towlower(text[i]));
+                    const wchar_t pc = static_cast<wchar_t>(towlower(prefix[i]));
+                    if (tc != pc)
+                    {
+                        return false;
+                    }
+                }
+                return true;
+            };
+
+            auto itemLabel = [this](size_t index) -> std::wstring
+            {
+                if (index >= m_items.size())
+                {
+                    return L"";
+                }
+
+                const ThumbItem& item = m_items[index];
+                if (item.kind == ThumbItemKind::Up)
+                {
+                    return L"..";
+                }
+                return item.path.GetFilename();
+            };
+
+            const size_t count = m_items.size();
+            size_t start = 0;
+            if (m_selectedIndex < count)
+            {
+                start = (m_selectedIndex + 1) % count;
+            }
+
+            for (size_t offset = 0; offset < count; ++offset)
+            {
+                const size_t idx = (start + offset) % count;
+                if (startsWithInsensitive(itemLabel(idx), query))
+                {
+                    SelectItemByIndex(idx);
+                    return true;
+                }
+            }
+
+            return false;
         }
 
         bool HandleKeyUpMessage(UINT message, WPARAM wParam, LPARAM lParam)
@@ -1581,6 +1803,7 @@ namespace
         static constexpr ULONGLONG kKeyRepeatMinIntervalMs = 60;
         static constexpr UINT WM_FIC2_DEFERRED_ACTION = WM_APP + 0x7A11;
         static constexpr UINT WM_FIC2_IPC_COMPARE = WM_APP + 0x7A12;
+        static constexpr UINT WM_FIC2_ASYNC_THUMB_READY = WM_APP + 0x7A13;
 
         enum class DeferredActionKind
         {
@@ -2471,12 +2694,231 @@ namespace
 
         void RebuildThumbList(const VirtualPath& preferSelectPath)
         {
+            FD2D::Backplate* bp = BackplateRef();
+            if (bp == nullptr)
+            {
+                RebuildThumbListImmediate(preferSelectPath, nullptr);
+                return;
+            }
+
+            StartThumbListLoadAsync(preferSelectPath);
+        }
+
+        void StartThumbListLoadAsync(const VirtualPath& preferSelectPath)
+        {
+            if (!m_thumbPanel)
+            {
+                return;
+            }
+
+            if (!m_thumbStripController)
+            {
+                m_thumbStripController = std::make_unique<ImageBrowserThumbStripController>();
+            }
+
+            const unsigned long long requestId = ++m_thumbListRequestId;
+            const std::wstring browserName = Name();
+            const VirtualPath folder = m_currentFolder;
+            const bool showNavItems = m_showNavItems;
+
+            m_thumbListLoading = true;
+            m_progressiveListedEntries.clear();
+            m_progressivePreferSelectPath = preferSelectPath;
+            m_progressiveUiDirty = false;
+            m_progressiveLoadCompleted = false;
+            m_progressiveLastApplyMs = 0;
+            if (m_asyncThumbReadyEvent != nullptr)
+            {
+                ResetEvent(m_asyncThumbReadyEvent);
+            }
+            if (BackplateRef() != nullptr)
+            {
+                BackplateRef()->RequestAnimationFrame();
+            }
+
+            std::thread([requestId, browserName, folder, preferSelectPath, showNavItems]()
+            {
+                auto enqueueChunk = [&](std::vector<VirtualFileEntry>&& batch, bool completed)
+                {
+                    AsyncThumbListChunkPayload payload {};
+                    payload.requestId = requestId;
+                    payload.folder = folder;
+                    payload.preferSelectPath = preferSelectPath;
+                    payload.showNavItems = showNavItems;
+                    payload.completed = completed;
+                    payload.batch = std::move(batch);
+
+                    HANDLE eventHandle = nullptr;
+                    {
+                        std::lock_guard<std::mutex> lock(g_asyncThumbListMutex);
+                        auto& queue = g_asyncThumbListChunksByBrowser[browserName];
+                        queue.push_back(std::move(payload));
+                        auto eventIt = g_asyncThumbReadyEventByBrowser.find(browserName);
+                        if (eventIt != g_asyncThumbReadyEventByBrowser.end())
+                        {
+                            eventHandle = eventIt->second;
+                        }
+                    }
+
+                    if (eventHandle != nullptr)
+                    {
+                        SetEvent(eventHandle);
+                    }
+                };
+
+                if (!folder.IsInArchive() && !folder.IsArchiveFile())
+                {
+                    std::error_code ec;
+                    const auto options = std::filesystem::directory_options::skip_permission_denied;
+                    std::filesystem::directory_iterator it(folder.hostPath, options, ec);
+                    if (ec)
+                    {
+                        enqueueChunk({}, true);
+                        return;
+                    }
+
+                    constexpr size_t kBatchSize = 64;
+                    std::vector<VirtualFileEntry> batch {};
+                    batch.reserve(kBatchSize);
+                    const std::filesystem::directory_iterator end {};
+                    for (; it != end; it.increment(ec))
+                    {
+                        if (ec)
+                        {
+                            ec.clear();
+                            continue;
+                        }
+
+                        const std::filesystem::directory_entry& entry = *it;
+                        std::error_code typeEc;
+                        const bool isDir = entry.is_directory(typeEc);
+                        if (typeEc)
+                        {
+                            continue;
+                        }
+
+                        batch.emplace_back(VirtualPath(entry.path()), isDir, 0, 0);
+                        if (batch.size() >= kBatchSize)
+                        {
+                            enqueueChunk(std::move(batch), false);
+                            batch.clear();
+                            batch.reserve(kBatchSize);
+                        }
+                    }
+
+                    enqueueChunk(std::move(batch), true);
+                    return;
+                }
+
+                // Archive listing is currently produced as a single snapshot.
+                enqueueChunk(VirtualFileSystem::ListDirectory(folder), true);
+            }).detach();
+        }
+
+        bool HandleAsyncThumbReadyMessage()
+        {
+            DrainAsyncThumbChunks();
+            return true;
+        }
+
+        void DrainAsyncThumbChunks()
+        {
+            std::deque<AsyncThumbListChunkPayload> chunks;
+            {
+                std::lock_guard<std::mutex> lock(g_asyncThumbListMutex);
+                auto it = g_asyncThumbListChunksByBrowser.find(Name());
+                if (it != g_asyncThumbListChunksByBrowser.end())
+                {
+                    chunks = std::move(it->second);
+                    g_asyncThumbListChunksByBrowser.erase(it);
+                }
+                if (m_asyncThumbReadyEvent != nullptr && chunks.empty())
+                {
+                    ResetEvent(m_asyncThumbReadyEvent);
+                }
+            }
+
+            if (chunks.empty())
+            {
+                return;
+            }
+
+            bool anyAccepted = false;
+            for (auto& chunk : chunks)
+            {
+                if (chunk.requestId != m_thumbListRequestId.load())
+                {
+                    continue;
+                }
+
+                if (!PathEqualsInsensitive(chunk.folder, m_currentFolder) || chunk.showNavItems != m_showNavItems)
+                {
+                    continue;
+                }
+
+                anyAccepted = true;
+                if (!chunk.batch.empty())
+                {
+                    m_progressiveListedEntries.insert(
+                        m_progressiveListedEntries.end(),
+                        chunk.batch.begin(),
+                        chunk.batch.end());
+                    m_progressiveUiDirty = true;
+                }
+
+                if (chunk.completed)
+                {
+                    m_progressiveLoadCompleted = true;
+                    m_progressiveUiDirty = true;
+                }
+            }
+
+            if (!anyAccepted)
+            {
+                return;
+            }
+
+            const unsigned long long now = NowMs();
+            const bool shouldApplyNow = m_progressiveLoadCompleted || (now - m_progressiveLastApplyMs >= 50);
+            if (shouldApplyNow)
+            {
+                ApplyProgressiveThumbUpdate(m_progressiveLoadCompleted);
+            }
+        }
+
+        void ApplyProgressiveThumbUpdate(bool finalizeSelection)
+        {
+            if (!m_progressiveUiDirty)
+            {
+                return;
+            }
+
+            const bool applySelection = finalizeSelection && m_progressiveLoadCompleted;
+            RebuildThumbListImmediate(
+                m_progressivePreferSelectPath,
+                &m_progressiveListedEntries,
+                applySelection);
+
+            m_progressiveUiDirty = false;
+            m_progressiveLastApplyMs = NowMs();
+            if (m_progressiveLoadCompleted)
+            {
+                m_thumbListLoading = false;
+            }
+        }
+
+        void RebuildThumbListImmediate(
+            const VirtualPath& preferSelectPath,
+            const std::vector<VirtualFileEntry>* preloadedEntries,
+            bool applySelection = true)
+        {
             if (!m_thumbPanel)
             {
                 return;
             }
 
             m_items.clear();
+            m_typeSelectQuery.clear();
             m_selectedIndex = static_cast<size_t>(-1);
             m_selectedFocus.reset();
 
@@ -2514,24 +2956,50 @@ namespace
                 },
                 [](const VirtualPath& p)
                 {
-                    return ImageCore::DecoderRegistry::Instance().IsSupportedPath(p.GetDisplayPath());
-                });
+                    return VirtualFileSystem::IsImageFile(p);
+                },
+                preloadedEntries);
 
             // Restore selection without scrolling yet; layout hasn't been updated.
             if (!result.hasItems)
             {
-                // No items: clear main image and path
-                if (m_mainImage)
+                if (applySelection)
                 {
-                    m_mainImage->ClearSource();
-                    m_mainImage->SetInteractionEnabled(false);
+                    // No items: clear main image and path
+                    if (m_mainImage)
+                    {
+                        m_mainImage->ClearSource();
+                        m_mainImage->SetInteractionEnabled(false);
+                    }
+                    m_mainPath.clear();
+                    RefreshInfoPanel();
                 }
-                m_mainPath.clear();
-                RefreshInfoPanel();
+            }
+            else if (applySelection)
+            {
+                SelectItemByIndex(result.selectIndex);
             }
             else
             {
-                SelectItemByIndex(result.selectIndex);
+                // During progressive async updates, keep a stable selected index/focus so keyboard
+                // navigation does not reset to the first item between chunks.
+                m_selectedIndex = result.selectIndex;
+                if (m_selectedIndex < m_items.size())
+                {
+                    m_selectedFocus = m_items[m_selectedIndex].focus;
+                    if (m_items[m_selectedIndex].image)
+                    {
+                        m_items[m_selectedIndex].image->SetSelected(true);
+                    }
+                    if (m_items[m_selectedIndex].navTile)
+                    {
+                        m_items[m_selectedIndex].navTile->SetSelected(true);
+                    }
+                }
+                else
+                {
+                    m_selectedFocus.reset();
+                }
             }
 
             if (BackplateRef() != nullptr)
@@ -3227,12 +3695,22 @@ namespace
         std::shared_ptr<FD2D::StackPanel> m_thumbPanel {};
         std::vector<ThumbItem> m_items {};
         size_t m_selectedIndex { static_cast<size_t>(-1) };
+        std::wstring m_typeSelectQuery {};
+        unsigned long long m_typeSelectLastInputMs { 0 };
         ULONGLONG m_lastKeyNavMs { 0 };
         int m_thumbWheelRemainder { 0 };
         VirtualPath m_contextMenuImagePath {};
 
         VirtualPath m_currentFolder {};
         bool m_showNavItems { true };
+        std::atomic<unsigned long long> m_thumbListRequestId { 0 };
+        bool m_thumbListLoading { false };
+        VirtualPath m_progressivePreferSelectPath {};
+        std::vector<VirtualFileEntry> m_progressiveListedEntries {};
+        bool m_progressiveUiDirty { false };
+        bool m_progressiveLoadCompleted { false };
+        unsigned long long m_progressiveLastApplyMs { 0 };
+        HANDLE m_asyncThumbReadyEvent { nullptr };
         float m_thumbW { 128.0f };
         float m_thumbH { 128.0f };
         unsigned long long m_lastThumbSizingApplyMs { 0 };
