@@ -68,52 +68,28 @@ namespace
     }
 }
 
-ImageBrowserThumbStripController::BuildResult ImageBrowserThumbStripController::Build(
-    const std::shared_ptr<FD2D::SplitPanel>& rootSplit) const
-{
-    BuildResult result {};
-    if (!rootSplit)
-    {
-        return result;
-    }
-
-    auto thumbs = std::make_shared<FD2D::StackPanel>(L"thumbs", FD2D::Orientation::Horizontal);
-    thumbs->SetSpacing(4.0f);
-    thumbs->SetPadding(4.0f);
-
-    auto thumbScroll = std::make_shared<FD2D::ScrollView>(L"thumbScroll");
-    thumbScroll->SetScrollStep(96.0f);
-    thumbScroll->SetSmoothTimeMs(110);
-    thumbScroll->SetVerticalScrollEnabled(false);
-    thumbScroll->SetContent(thumbs);
-
-    rootSplit->SetSecondChild(thumbScroll);
-
-    result.scroll = thumbScroll;
-    result.panel = thumbs;
-    return result;
-}
-
 ImageBrowserThumbStripController::RebuildResult ImageBrowserThumbStripController::RebuildList(
-    const std::shared_ptr<FD2D::StackPanel>& panel,
-    std::vector<ThumbItem>& items,
-    float thumbW,
-    float thumbH,
-    bool showNavItems,
-    const VirtualPath& currentFolder,
-    const VirtualPath& preferSelectPath,
-    const std::function<void(size_t)>& onSelectIndex,
-    const std::function<void(size_t)>& onActivateIndex,
-    const std::function<bool(const VirtualPath&, const VirtualPath&)>& pathEquals,
-    const std::function<std::wstring(const wchar_t*, const VirtualPath&)>& makeStableName,
-    const std::function<bool(const VirtualPath&)>& isSupportedImage,
-    const std::vector<VirtualFileEntry>* preloadedEntries) const
+    const RebuildListContext& context) const
 {
     RebuildResult result {};
-    if (!panel)
+    if (!context.panel || context.items == nullptr)
     {
         return result;
     }
+
+    const auto& panel = context.panel;
+    auto& items = *context.items;
+    const float thumbW = context.thumbW;
+    const float thumbH = context.thumbH;
+    const bool showNavItems = context.showNavItems;
+    const VirtualPath& currentFolder = context.currentFolder;
+    const VirtualPath& preferSelectPath = context.preferSelectPath;
+    const auto& onSelectIndex = context.onSelectIndex;
+    const auto& onActivateIndex = context.onActivateIndex;
+    const auto& pathEquals = context.pathEquals;
+    const auto& makeStableName = context.makeStableName;
+    const auto& isSupportedImage = context.isSupportedImage;
+    const std::vector<VirtualFileEntry>* preloadedEntries = context.preloadedEntries;
 
     items.clear();
 
@@ -349,22 +325,23 @@ ImageBrowserThumbStripController::RebuildResult ImageBrowserThumbStripController
     return result;
 }
 
-void ImageBrowserThumbStripController::SelectItemByIndex(
-    std::vector<ThumbItem>& items,
-    size_t& selectedIndex,
-    std::shared_ptr<FD2D::Wnd>& selectedFocus,
-    const std::shared_ptr<FD2D::ScrollView>& thumbScroll,
-    const std::shared_ptr<FD2D::MainImage>& mainImage,
-    std::wstring& mainPath,
-    const VirtualPath& currentFolder,
-    ImageBrowserMainPane* mainPane,
-    bool syncSuppressBroadcast,
-    size_t imageBrowserCount,
-    const std::function<void(size_t)>& applyMainFromIndex,
-    const std::function<void()>& refreshInfo,
-    const std::function<void(const std::wstring&)>& publishFileName,
-    size_t index) const
+void ImageBrowserThumbStripController::SelectItemByIndex(const SelectItemContext& context, size_t index) const
 {
+    if (context.items == nullptr || context.selectedIndex == nullptr || context.selectedFocus == nullptr)
+    {
+        return;
+    }
+
+    auto& items = *context.items;
+    auto& selectedIndex = *context.selectedIndex;
+    auto& selectedFocus = *context.selectedFocus;
+    const auto& ensureSelectionVisible = context.ensureSelectionVisible;
+    const bool syncSuppressBroadcast = context.syncSuppressBroadcast;
+    const size_t imageBrowserCount = context.imageBrowserCount;
+    const auto& applyMainFromIndex = context.applyMainFromIndex;
+    const auto& applyNonImageSelection = context.applyNonImageSelection;
+    const auto& publishFileName = context.publishFileName;
+
     if (items.empty())
     {
         return;
@@ -399,22 +376,9 @@ void ImageBrowserThumbStripController::SelectItemByIndex(
         items[index].navTile->SetSelected(true);
     }
 
-    if (thumbScroll && selectedFocus)
+    if (selectedFocus && ensureSelectionVisible)
     {
-        // If layout isn't ready yet (e.g. command-line / IPC open during startup),
-        // LayoutRect() can still be empty. In that case, Arrange() will center later.
-        const D2D1_RECT_F scrollRect = thumbScroll->LayoutRect();
-        const D2D1_RECT_F focusRect = selectedFocus->LayoutRect();
-        const bool layoutReady =
-            (scrollRect.right > scrollRect.left) &&
-            (scrollRect.bottom > scrollRect.top) &&
-            (focusRect.right > focusRect.left) &&
-            (focusRect.bottom > focusRect.top);
-
-        if (layoutReady)
-        {
-            thumbScroll->EnsureCentered(focusRect);
-        }
+        ensureSelectionVisible();
     }
 
     if (items[selectedIndex].kind == ThumbItemKind::Image)
@@ -426,30 +390,9 @@ void ImageBrowserThumbStripController::SelectItemByIndex(
     }
     else if (items[selectedIndex].kind == ThumbItemKind::Folder || items[selectedIndex].kind == ThumbItemKind::Up)
     {
-        if (mainImage)
+        if (applyNonImageSelection)
         {
-            mainImage->ClearSource();
-            mainImage->SetInteractionEnabled(false);
-            mainImage->Invalidate();
-        }
-
-        if (items[selectedIndex].kind == ThumbItemKind::Up && !currentFolder.empty())
-        {
-            mainPath = currentFolder.GetDisplayPath();
-        }
-        else
-        {
-            mainPath = items[selectedIndex].path.GetDisplayPath();
-        }
-
-        if (mainPane)
-        {
-            mainPane->ResetInfoCache();
-        }
-
-        if (refreshInfo)
-        {
-            refreshInfo();
+            applyNonImageSelection(items[selectedIndex]);
         }
     }
 

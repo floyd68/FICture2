@@ -172,7 +172,7 @@ namespace
     }
 
     static constexpr wchar_t kSingleInstanceMutex[] = L"Local\\FICture2_SingleInstance";
-    static constexpr UINT WM_FIC2_IPC_COMPARE = WM_APP + 0x7A12;
+    static constexpr UINT CMD_FIC2_IPC_COMPARE = WM_APP + 0x7A12;
 }
 
 int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
@@ -363,7 +363,7 @@ int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
                 req->compareStarted = false;
 
                 auto* bm = new FD2D::Backplate::BroadcastMessage();
-                bm->message = WM_FIC2_IPC_COMPARE;
+                bm->message = CMD_FIC2_IPC_COMPARE;
                 bm->wParam = 0;
                 bm->lParam = reinterpret_cast<LPARAM>(req);
 

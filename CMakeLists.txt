@@ -326,11 +326,15 @@ target_sources(FICture2 PRIVATE
     FICture2.cpp
     Ficture2Backplate.cpp
     ImageBrowser.cpp
+    ImageBrowserAsyncThumbLoader.cpp
+    ImageBrowserContextMenu.cpp
+    ImageBrowserDeferredActions.cpp
     ImageBrowserDragDrop.cpp
     ImageBrowserDragOverlay.cpp
-    ImageBrowserInputController.cpp
     ImageBrowserMainPane.cpp
-    ImageBrowserNavigation.cpp
+    ImageBrowserSessionPersistence.cpp
+    ImageBrowserSplitCoordinator.cpp
+    ImageBrowserThumbnailPane.cpp
     ImageBrowserThumbStripController.cpp
     ThumbImageTile.cpp
     ThumbNavTile.cpp
