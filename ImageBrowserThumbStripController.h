@@ -1,6 +1,5 @@
 #pragma once
 
-#include "ImageBrowserMainPane.h"
 #include "ImageBrowserThumbTypes.h"
 #include "VirtualPath.h"
 #include "VirtualFileSystem.h"
@@ -12,57 +11,51 @@
 
 namespace FD2D
 {
-    class ScrollView;
-    class SplitPanel;
     class StackPanel;
+    class MainImage;
     class Wnd;
 }
 
 class ImageBrowserThumbStripController
 {
 public:
-    struct BuildResult
-    {
-        std::shared_ptr<FD2D::ScrollView> scroll {};
-        std::shared_ptr<FD2D::StackPanel> panel {};
-    };
-
     struct RebuildResult
     {
         size_t selectIndex { 0 };
         bool hasItems { false };
     };
 
-    BuildResult Build(const std::shared_ptr<FD2D::SplitPanel>& rootSplit) const;
+    struct RebuildListContext
+    {
+        std::shared_ptr<FD2D::StackPanel> panel {};
+        std::vector<ThumbItem>* items { nullptr };
+        float thumbW { 0.0f };
+        float thumbH { 0.0f };
+        bool showNavItems { false };
+        VirtualPath currentFolder {};
+        VirtualPath preferSelectPath {};
+        std::function<void(size_t)> onSelectIndex {};
+        std::function<void(size_t)> onActivateIndex {};
+        std::function<bool(const VirtualPath&, const VirtualPath&)> pathEquals {};
+        std::function<std::wstring(const wchar_t*, const VirtualPath&)> makeStableName {};
+        std::function<bool(const VirtualPath&)> isSupportedImage {};
+        const std::vector<VirtualFileEntry>* preloadedEntries { nullptr };
+    };
 
-    RebuildResult RebuildList(
-        const std::shared_ptr<FD2D::StackPanel>& panel,
-        std::vector<ThumbItem>& items,
-        float thumbW,
-        float thumbH,
-        bool showNavItems,
-        const VirtualPath& currentFolder,
-        const VirtualPath& preferSelectPath,
-        const std::function<void(size_t)>& onSelectIndex,
-        const std::function<void(size_t)>& onActivateIndex,
-        const std::function<bool(const VirtualPath&, const VirtualPath&)>& pathEquals,
-        const std::function<std::wstring(const wchar_t*, const VirtualPath&)>& makeStableName,
-        const std::function<bool(const VirtualPath&)>& isSupportedImage,
-        const std::vector<VirtualFileEntry>* preloadedEntries = nullptr) const;
+    struct SelectItemContext
+    {
+        std::vector<ThumbItem>* items { nullptr };
+        size_t* selectedIndex { nullptr };
+        std::shared_ptr<FD2D::Wnd>* selectedFocus { nullptr };
+        std::function<void()> ensureSelectionVisible {};
+        bool syncSuppressBroadcast { false };
+        size_t imageBrowserCount { 0 };
+        std::function<void(size_t)> applyMainFromIndex {};
+        std::function<void(const ThumbItem&)> applyNonImageSelection {};
+        std::function<void(const std::wstring&)> publishFileName {};
+    };
 
-    void SelectItemByIndex(
-        std::vector<ThumbItem>& items,
-        size_t& selectedIndex,
-        std::shared_ptr<FD2D::Wnd>& selectedFocus,
-        const std::shared_ptr<FD2D::ScrollView>& thumbScroll,
-        const std::shared_ptr<FD2D::MainImage>& mainImage,
-        std::wstring& mainPath,
-        const VirtualPath& currentFolder,
-        ImageBrowserMainPane* mainPane,
-        bool syncSuppressBroadcast,
-        size_t imageBrowserCount,
-        const std::function<void(size_t)>& applyMainFromIndex,
-        const std::function<void()>& refreshInfo,
-        const std::function<void(const std::wstring&)>& publishFileName,
-        size_t index) const;
+    RebuildResult RebuildList(const RebuildListContext& context) const;
+
+    void SelectItemByIndex(const SelectItemContext& context, size_t index) const;
 };

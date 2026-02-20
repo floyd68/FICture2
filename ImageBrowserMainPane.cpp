@@ -5,6 +5,17 @@
 #include <wrl/client.h>
 #include <vector>
 
+namespace
+{
+    bool RectContainsPoint(const D2D1_RECT_F& r, const POINT& pt)
+    {
+        return pt.x >= r.left &&
+            pt.x <= r.right &&
+            pt.y >= r.top &&
+            pt.y <= r.bottom;
+    }
+}
+
 class InfoBar : public FD2D::Wnd
 {
 public:
@@ -411,18 +422,27 @@ private:
     std::wstring m_lastFittedValue {};
 };
 
+ImageBrowserMainPane::ImageBrowserMainPane()
+    : FD2D::Wnd(L"mainPane")
+{
+}
+
 void ImageBrowserMainPane::Build(
     const std::shared_ptr<FD2D::SplitPanel>& rootSplit,
     const std::wstring& initialFile,
     const std::function<void(const FD2D::Image::ViewTransform&)>& onViewChanged,
     const std::function<void()>& onClick,
-    const std::function<void(FD2D::MainImage&)>& applyIni)
+    const std::function<void(FD2D::MainImage&)>& applyIni,
+    const std::function<bool(const POINT&)>& onContextMenuRequest,
+    const std::function<void()>& onMainImageWheelFocus)
 {
     if (!rootSplit)
     {
         return;
     }
 
+    m_onContextMenuRequest = onContextMenuRequest;
+    m_onMainImageWheelFocus = onMainImageWheelFocus;
     m_mainDock.reset();
     m_mainImage.reset();
 
@@ -463,7 +483,9 @@ void ImageBrowserMainPane::Build(
     dock->AddChild(m_mainImage);
     dock->SetChildDock(m_mainImage, FD2D::Dock::Fill);
     m_mainDock = dock;
-    rootSplit->SetFirstChild(dock);
+    ClearChildren();
+    AddChild(dock);
+    rootSplit->SetFirstChild(shared_from_this());
 }
 
 void ImageBrowserMainPane::UpdateInfo(
@@ -500,4 +522,177 @@ void ImageBrowserMainPane::ResetInfoCache()
     m_lastPathText.clear();
     m_lastInfoText.clear();
     m_lastZoomText.clear();
+}
+
+bool ImageBrowserMainPane::TryGetMainImageRect(D2D1_RECT_F& outRect) const
+{
+    if (m_mainImage == nullptr)
+    {
+        return false;
+    }
+
+    outRect = m_mainImage->LayoutRect();
+    return outRect.right > outRect.left && outRect.bottom > outRect.top;
+}
+
+bool ImageBrowserMainPane::ContainsMainPoint(const POINT& pt) const
+{
+    D2D1_RECT_F mainRect {};
+    return TryGetMainImageRect(mainRect) && RectContainsPoint(mainRect, pt);
+}
+
+bool ImageBrowserMainPane::TryGetMainRectForPoint(const POINT& pt, D2D1_RECT_F& outRect) const
+{
+    if (!TryGetMainImageRect(outRect))
+    {
+        return false;
+    }
+
+    return RectContainsPoint(outRect, pt);
+}
+
+void ImageBrowserMainPane::PauseMainImageViewAnimation()
+{
+    if (m_mainImage == nullptr)
+    {
+        return;
+    }
+
+    auto vt = m_mainImage->GetViewTransform();
+    vt.targetZoomScale = vt.zoomScale;
+    vt.zoomVelocity = 0.0f;
+    m_mainImage->SetViewTransform(vt, false /*notify*/);
+}
+
+void ImageBrowserMainPane::RenderMainBackgroundD3D(
+    FD2D::Backplate* backplate,
+    bool hasFocus,
+    const D2D1_COLOR_F& baseBackground,
+    const D2D1_COLOR_F& focusedBackground)
+{
+    if (backplate == nullptr || backplate->D3DDevice() == nullptr)
+    {
+        return;
+    }
+
+    D2D1_RECT_F mainRect {};
+    if (!TryGetMainImageRect(mainRect))
+    {
+        return;
+    }
+
+    const D2D1_COLOR_F bg = hasFocus ? focusedBackground : baseBackground;
+    (void)backplate->ClearRectD3D(mainRect, bg);
+    if (m_mainImage)
+    {
+        m_mainImage->SetBackdropColor(bg);
+    }
+}
+
+void ImageBrowserMainPane::RenderMainBackgroundD2D(
+    ID2D1RenderTarget* target,
+    bool d3dActive,
+    bool hasFocus,
+    const D2D1_COLOR_F& baseBackground,
+    const D2D1_COLOR_F& focusedBackground)
+{
+    if (target == nullptr || d3dActive)
+    {
+        return;
+    }
+
+    D2D1_RECT_F mainRect {};
+    if (!TryGetMainImageRect(mainRect))
+    {
+        return;
+    }
+
+    const D2D1_COLOR_F bg = hasFocus ? focusedBackground : baseBackground;
+    if (!m_mainBackgroundBrush)
+    {
+        (void)target->CreateSolidColorBrush(bg, m_mainBackgroundBrush.ReleaseAndGetAddressOf());
+    }
+    if (m_mainBackgroundBrush)
+    {
+        m_mainBackgroundBrush->SetColor(bg);
+        target->FillRectangle(mainRect, m_mainBackgroundBrush.Get());
+    }
+
+    if (m_mainImage)
+    {
+        m_mainImage->SetBackdropColor(bg);
+    }
+}
+
+void ImageBrowserMainPane::RenderCenteredMainOverlayBitmap(
+    ID2D1RenderTarget* target,
+    ID2D1Bitmap* bitmap,
+    float sizeFactor)
+{
+    if (target == nullptr || bitmap == nullptr)
+    {
+        return;
+    }
+
+    D2D1_RECT_F mainRect {};
+    if (!TryGetMainImageRect(mainRect))
+    {
+        return;
+    }
+
+    const float w = mainRect.right - mainRect.left;
+    const float h = mainRect.bottom - mainRect.top;
+    if (w <= 0.0f || h <= 0.0f)
+    {
+        return;
+    }
+
+    const float clampedFactor = (std::max)(0.01f, (std::min)(1.0f, sizeFactor));
+    const float iconSize = (std::min)(w, h) * clampedFactor;
+    const float iconX = mainRect.left + (w - iconSize) * 0.5f;
+    const float iconY = mainRect.top + (h - iconSize) * 0.5f;
+
+    const D2D1_RECT_F dst = D2D1::RectF(iconX, iconY, iconX + iconSize, iconY + iconSize);
+    target->DrawBitmap(
+        bitmap,
+        dst,
+        1.0f,
+        D2D1_BITMAP_INTERPOLATION_MODE_LINEAR,
+        D2D1::RectF(0.0f, 0.0f, bitmap->GetSize().width, bitmap->GetSize().height));
+}
+
+void ImageBrowserMainPane::RenderOnMainRect(const std::function<void(const D2D1_RECT_F&)>& renderer)
+{
+    if (!renderer)
+    {
+        return;
+    }
+
+    D2D1_RECT_F mainRect {};
+    if (!TryGetMainImageRect(mainRect))
+    {
+        return;
+    }
+
+    renderer(mainRect);
+}
+
+bool ImageBrowserMainPane::OnInputEvent(const FD2D::InputEvent& event)
+{
+    if (event.hasPoint && ContainsMainPoint(event.point))
+    {
+        if (event.type == FD2D::InputEventType::MouseUp &&
+            event.button == FD2D::MouseButton::Right &&
+            m_onContextMenuRequest)
+        {
+            return m_onContextMenuRequest(event.point);
+        }
+
+        if (event.type == FD2D::InputEventType::MouseWheel && m_onMainImageWheelFocus)
+        {
+            m_onMainImageWheelFocus();
+        }
+    }
+
+    return Wnd::OnInputEvent(event);
 }

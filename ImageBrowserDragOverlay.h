@@ -7,6 +7,8 @@
 class ImageBrowserDragOverlay
 {
 public:
+    ImageBrowserDragOverlay(ID2D1RenderTarget* target);
+
     enum class Kind
     {
         None,

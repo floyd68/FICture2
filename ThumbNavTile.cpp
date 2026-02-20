@@ -4,7 +4,6 @@
 #include "Resource.h"
 #include "FD2D/Backplate.h"
 
-#include <windowsx.h>
 #include <wincodec.h>
 #include <vector>
 
@@ -157,15 +156,17 @@ void ThumbNavTile::Arrange(FD2D::Rect finalRect)
     }
 }
 
-bool ThumbNavTile::OnMessage(UINT message, WPARAM wParam, LPARAM lParam)
+bool ThumbNavTile::OnInputEvent(const FD2D::InputEvent& event)
 {
-    UNREFERENCED_PARAMETER(wParam);
-
-    switch (message)
+    switch (event.type)
     {
-    case WM_MOUSEMOVE:
+    case FD2D::InputEventType::MouseMove:
     {
-        POINT pt = FD2D::Wnd::ExtractMousePoint(lParam);
+        if (!event.hasPoint)
+        {
+            return false;
+        }
+        POINT pt = event.point;
         bool prevHover = m_hovered;
         m_hovered = HitTest(pt);
         if (m_hovered != prevHover)
@@ -174,9 +175,13 @@ bool ThumbNavTile::OnMessage(UINT message, WPARAM wParam, LPARAM lParam)
         }
         return m_hovered;
     }
-    case WM_LBUTTONDOWN:
+    case FD2D::InputEventType::MouseDown:
     {
-        POINT pt = FD2D::Wnd::ExtractMousePoint(lParam);
+        if (event.button != FD2D::MouseButton::Left || !event.hasPoint)
+        {
+            break;
+        }
+        POINT pt = event.point;
         if (HitTest(pt))
         {
             m_pressed = true;
@@ -189,12 +194,16 @@ bool ThumbNavTile::OnMessage(UINT message, WPARAM wParam, LPARAM lParam)
         }
         break;
     }
-    case WM_LBUTTONUP:
+    case FD2D::InputEventType::MouseUp:
     {
+        if (event.button != FD2D::MouseButton::Left || !event.hasPoint)
+        {
+            break;
+        }
         bool wasPressed = m_pressed;
         m_pressed = false;
 
-        POINT pt = FD2D::Wnd::ExtractMousePoint(lParam);
+        POINT pt = event.point;
         if (wasPressed)
         {
             Invalidate();
@@ -202,9 +211,13 @@ bool ThumbNavTile::OnMessage(UINT message, WPARAM wParam, LPARAM lParam)
         }
         break;
     }
-    case WM_LBUTTONDBLCLK:
+    case FD2D::InputEventType::MouseDoubleClick:
     {
-        POINT pt = FD2D::Wnd::ExtractMousePoint(lParam);
+        if (event.button != FD2D::MouseButton::Left || !event.hasPoint)
+        {
+            break;
+        }
+        POINT pt = event.point;
         if (HitTest(pt))
         {
             if (m_onDoubleClick)
@@ -219,7 +232,7 @@ bool ThumbNavTile::OnMessage(UINT message, WPARAM wParam, LPARAM lParam)
         break;
     }
 
-    return Wnd::OnMessage(message, wParam, lParam);
+    return Wnd::OnInputEvent(event);
 }
 
 void ThumbNavTile::OnRender(ID2D1RenderTarget* target)
