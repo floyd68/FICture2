@@ -78,17 +78,7 @@ public:
 
     void OnRender(ID2D1RenderTarget* target) override
     {
-        if (target != nullptr)
-        {
-            if (!m_bgBrush)
-            {
-                (void)target->CreateSolidColorBrush(D2D1::ColorF(0.10f, 0.10f, 0.11f, 1.0f), &m_bgBrush);
-            }
-            if (m_bgBrush)
-            {
-                target->FillRectangle(LayoutRect(), m_bgBrush.Get());
-            }
-        }
+        UNREFERENCED_PARAMETER(target);
         Wnd::OnRender(target);
     }
 
@@ -96,7 +86,6 @@ private:
     std::shared_ptr<FD2D::DockPanel> m_host {};
     std::shared_ptr<FD2D::Text> m_leftText {};
     std::shared_ptr<FD2D::Text> m_rightText {};
-    Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> m_bgBrush {};
 };
 
 class PathBar : public FD2D::Wnd
@@ -144,17 +133,7 @@ public:
 
     void OnRender(ID2D1RenderTarget* target) override
     {
-        if (target != nullptr)
-        {
-            if (!m_bgBrush)
-            {
-                (void)target->CreateSolidColorBrush(D2D1::ColorF(0.10f, 0.10f, 0.11f, 1.0f), &m_bgBrush);
-            }
-            if (m_bgBrush)
-            {
-                target->FillRectangle(LayoutRect(), m_bgBrush.Get());
-            }
-        }
+        UNREFERENCED_PARAMETER(target);
         Wnd::OnRender(target);
     }
 
@@ -416,7 +395,6 @@ private:
     }
 
     std::shared_ptr<FD2D::Text> m_text {};
-    Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> m_bgBrush {};
     Microsoft::WRL::ComPtr<IDWriteTextFormat> m_format {};
     std::wstring m_rawValue {};
     std::wstring m_lastFittedValue {};
@@ -562,66 +540,6 @@ void ImageBrowserMainPane::PauseMainImageViewAnimation()
     vt.targetZoomScale = vt.zoomScale;
     vt.zoomVelocity = 0.0f;
     m_mainImage->SetViewTransform(vt, false /*notify*/);
-}
-
-void ImageBrowserMainPane::RenderMainBackgroundD3D(
-    FD2D::Backplate* backplate,
-    bool hasFocus,
-    const D2D1_COLOR_F& baseBackground,
-    const D2D1_COLOR_F& focusedBackground)
-{
-    if (backplate == nullptr || backplate->D3DDevice() == nullptr)
-    {
-        return;
-    }
-
-    D2D1_RECT_F mainRect {};
-    if (!TryGetMainImageRect(mainRect))
-    {
-        return;
-    }
-
-    const D2D1_COLOR_F bg = hasFocus ? focusedBackground : baseBackground;
-    (void)backplate->ClearRectD3D(mainRect, bg);
-    if (m_mainImage)
-    {
-        m_mainImage->SetBackdropColor(bg);
-    }
-}
-
-void ImageBrowserMainPane::RenderMainBackgroundD2D(
-    ID2D1RenderTarget* target,
-    bool d3dActive,
-    bool hasFocus,
-    const D2D1_COLOR_F& baseBackground,
-    const D2D1_COLOR_F& focusedBackground)
-{
-    if (target == nullptr || d3dActive)
-    {
-        return;
-    }
-
-    D2D1_RECT_F mainRect {};
-    if (!TryGetMainImageRect(mainRect))
-    {
-        return;
-    }
-
-    const D2D1_COLOR_F bg = hasFocus ? focusedBackground : baseBackground;
-    if (!m_mainBackgroundBrush)
-    {
-        (void)target->CreateSolidColorBrush(bg, m_mainBackgroundBrush.ReleaseAndGetAddressOf());
-    }
-    if (m_mainBackgroundBrush)
-    {
-        m_mainBackgroundBrush->SetColor(bg);
-        target->FillRectangle(mainRect, m_mainBackgroundBrush.Get());
-    }
-
-    if (m_mainImage)
-    {
-        m_mainImage->SetBackdropColor(bg);
-    }
 }
 
 void ImageBrowserMainPane::RenderCenteredMainOverlayBitmap(
