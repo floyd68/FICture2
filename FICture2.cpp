@@ -283,6 +283,8 @@ int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
 
     int result = -1;
     {
+        const std::wstring iniFile = FICture2App::GetIniFilePath();
+
         // IMPORTANT:
         // Ensure all UI objects (Backplate/Wnd tree) are destroyed BEFORE OleUninitialize().
         // Some COM-backed objects used by the UI/render stack must be released
@@ -295,10 +297,13 @@ int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
         }
 
         // Persist window placement while the HWND is still valid (before destruction).
-        backplate->SetOnBeforeDestroy([](HWND hwnd)
+        backplate->SetOnBeforeDestroy([iniFile, weakBackplate = std::weak_ptr<Ficture2Backplate>(backplate)](HWND hwnd)
         {
             FICture2App::SaveWindowPlacement(hwnd);
-            ImageBrowser_SaveSessionToIni(FICture2App::GetIniFilePath());
+            if (auto bp = weakBackplate.lock())
+            {
+                bp->SaveImageBrowserSession(iniFile);
+            }
         });
 
         // Autosave window placement when the user moves/resizes the window.
@@ -318,7 +323,7 @@ int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
         // (If a file is provided, we respect that and ignore saved folders/files.)
         if (initialFile.empty())
         {
-            const bool restored = ImageBrowser_TryRestoreSessionFromIni(FICture2App::GetIniFilePath());
+            const bool restored = backplate->TryRestoreImageBrowserSession(iniFile);
 #if defined(_DEBUG)
             {
                 wchar_t msg[256] {};
@@ -333,7 +338,7 @@ int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
                 const std::wstring firstPicture = FindFirstSupportedImageInPictures();
                 if (!firstPicture.empty())
                 {
-                    ImageBrowser_OpenFileInRoot(firstPicture);
+                    backplate->OpenFileInRoot(firstPicture);
                 }
             }
         }

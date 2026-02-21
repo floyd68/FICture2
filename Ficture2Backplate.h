@@ -68,10 +68,57 @@ public:
     EventBus& Bus() { return *m_eventBus; }
     const EventBus& Bus() const { return *m_eventBus; }
 
+    void EnsureImageBrowserIniInitialized();
+    bool ShowNavItemsEnabled() const { return m_showNavItems; }
+    D2D1_COLOR_F FocusedBackgroundColor() const { return m_focusedBackgroundColor; }
+    bool AlphaCheckerboardEnabled() const { return m_alphaCheckerboardEnabled; }
+
+    void SetSyncedThumbStripHeight(float height);
+    bool TryGetSyncedThumbStripHeight(float& outHeight) const;
+    void SynchronizeThumbStripHeight(FD2D::Wnd* source, float height);
+    void SynchronizeFileSelection(FD2D::Wnd* source, const std::wstring& fileNameLower);
+    void SynchronizeViewTransform(
+        FD2D::Wnd* source,
+        const std::wstring& fileNameLower,
+        const FD2D::Image::ViewTransform& viewTransform);
+    void SynchronizeShowNavItems(FD2D::Wnd* source, bool showNavItems);
+    void SynchronizeBackgroundColor(FD2D::Wnd* source, const D2D1_COLOR_F& color);
+    void SynchronizeFocusedBackgroundColor(FD2D::Wnd* source, const D2D1_COLOR_F& color);
+    void SynchronizeAlphaCheckerboard(FD2D::Wnd* source, bool checkerEnabled);
+    bool TryStartCompareWithFileNameMatch(const std::wstring& incomingFilePath);
+    void OpenFileInRoot(const std::wstring& filePath);
+    void OpenAdditionalFilesSideBySide(const std::vector<std::wstring>& filePaths);
+    void OpenAdditionalFilesSideBySideAfter(const std::vector<std::wstring>& filePaths, const std::wstring& afterName);
+    bool ShowImageBrowserContextMenu(FD2D::Wnd* source, const POINT& ptClient);
+    bool HandleImageBrowserContextMenuCommand(FD2D::Wnd* source, UINT cmd, const POINT& ptClient);
+    std::wstring SamplingLabelForRenderer(bool highQuality) const;
+    bool HandleImageBrowserKeyUpCommand(
+        FD2D::Wnd* source,
+        UINT keyCode,
+        bool ctrl,
+        bool shift,
+        bool alt,
+        bool& outHandled);
+    bool HandleImageBrowserKeyDownCommand(
+        FD2D::Wnd* source,
+        UINT keyCode,
+        bool ctrl,
+        bool shift,
+        bool alt,
+        bool& outHandled);
+    std::wstring GetFocusedSelectedImageFileName() const;
+    void SaveImageBrowserSession(const std::wstring& iniFile);
+    bool TryRestoreImageBrowserSession(const std::wstring& iniFile);
     void UpdateTitleBarInfo() override;
 
 private:
     std::shared_ptr<EventBus> m_eventBus { std::make_shared<EventBus>() };
+    float m_syncedThumbStripHeight { 0.0f };
+    bool m_hasSyncedThumbStripHeight { false };
+    bool m_showNavItems { true };
+    bool m_alphaCheckerboardEnabled { false };
+    D2D1_COLOR_F m_focusedBackgroundColor { 0.18f, 0.16f, 0.03f, 1.0f };
+    bool m_imageBrowserIniInitialized { false };
 
 protected:
     FD2D::Wnd* FindTargetWnd(const POINT& ptClient) override;
