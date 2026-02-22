@@ -22,6 +22,7 @@
 #define IDM_CTX_UNREGISTER_THUMBNAIL_PROVIDER 32782
 #define IDM_CTX_ABOUT                   32783
 #define IDM_CTX_SHOW_IN_EXPLORER        32784
+#define IDM_CTX_OPEN_FOLDER             32785
 #define IDC_STATIC                      -1
 
 // Next default values for new objects
@@ -30,7 +31,7 @@
 #ifndef APSTUDIO_READONLY_SYMBOLS
 #define _APS_NO_MFC                     1
 #define _APS_NEXT_RESOURCE_VALUE        132
-#define _APS_NEXT_COMMAND_VALUE         32785
+#define _APS_NEXT_COMMAND_VALUE         32786
 #define _APS_NEXT_CONTROL_VALUE         1000
 #define _APS_NEXT_SYMED_VALUE           110
 #endif
