@@ -21,6 +21,7 @@
 #include <commctrl.h>
 #include <commdlg.h>
 #include <shellapi.h>
+#include <shlobj.h>
 
 namespace
 {
@@ -181,6 +182,7 @@ namespace
     enum class BrowserCommandAction
     {
         OpenImage,
+        OpenFolder,
         OpenImageSplitNew,
         OpenNewImage,
         Close,
@@ -233,6 +235,7 @@ namespace
     static const CommandMapEntry kContextLifecycleMap[] =
     {
         { IDM_CTX_OPEN_IMAGE, BrowserCommandAction::OpenImage },
+        { IDM_CTX_OPEN_FOLDER, BrowserCommandAction::OpenFolder },
         { IDM_CTX_OPEN_NEW_IMAGE, BrowserCommandAction::OpenNewImage },
         { IDM_CTX_CLOSE, BrowserCommandAction::Close },
     };
@@ -396,6 +399,37 @@ namespace
         return true;
     }
 
+    bool TryPickFolder(HWND ownerWindow, std::wstring& outFolderPath)
+    {
+        BROWSEINFOW bi {};
+        bi.hwndOwner = ownerWindow;
+        bi.lpszTitle = L"Select Folder";
+        bi.ulFlags = BIF_RETURNONLYFSDIRS | BIF_USENEWUI | BIF_NONEWFOLDERBUTTON;
+
+        PIDLIST_ABSOLUTE pidl = SHBrowseForFolderW(&bi);
+        if (pidl == nullptr)
+        {
+            return false;
+        }
+
+        wchar_t selectedPath[MAX_PATH] {};
+        const BOOL ok = SHGetPathFromIDListW(pidl, selectedPath);
+        CoTaskMemFree(pidl);
+        if (!ok)
+        {
+            return false;
+        }
+
+        const std::filesystem::path folder { selectedPath };
+        if (!std::filesystem::exists(folder) || !std::filesystem::is_directory(folder))
+        {
+            return false;
+        }
+
+        outFolderPath = folder.wstring();
+        return true;
+    }
+
     bool TryPickColor(HWND ownerWindow, const D2D1_COLOR_F& current, D2D1_COLOR_F& outColor)
     {
         static COLORREF s_custom[16] {};
@@ -478,10 +512,23 @@ namespace
         }
 
         if (action != BrowserCommandAction::OpenImage &&
+            action != BrowserCommandAction::OpenFolder &&
             action != BrowserCommandAction::OpenImageSplitNew &&
             action != BrowserCommandAction::OpenNewImage)
         {
             return false;
+        }
+
+        if (action == BrowserCommandAction::OpenFolder)
+        {
+            std::wstring selectedFolder {};
+            if (!TryPickFolder(ownerWindow, selectedFolder))
+            {
+                return true;
+            }
+
+            browserOps->BrowserRestoreOpenFolder(selectedFolder);
+            return true;
         }
 
         std::wstring selectedPath {};
