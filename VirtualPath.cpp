@@ -1,18 +1,7 @@
 #include "VirtualPath.h"
 #include "ArchiveReader.h"
+#include "CommonUtil.h"
 #include <algorithm>
-#include <cwctype>
-
-namespace
-{
-    std::wstring ToLower(const std::wstring& str)
-    {
-        std::wstring result = str;
-        std::transform(result.begin(), result.end(), result.begin(),
-            [](wchar_t c) { return static_cast<wchar_t>(std::towlower(c)); });
-        return result;
-    }
-}
 
 bool VirtualPath::IsArchiveFile() const
 {
@@ -79,7 +68,7 @@ std::optional<VirtualPath> VirtualPath::Parse(const std::wstring& displayPath)
 
     // Try to find an archive file in the path
     // Look for extensions like .zip, .7z, .rar in the path
-    std::wstring lowerPath = ToLower(displayPath);
+    std::wstring lowerPath = CommonUtil::ToLower(displayPath);
     
     std::vector<std::wstring> archiveExts = ArchiveReaderFactory::GetSupportedExtensions();
     

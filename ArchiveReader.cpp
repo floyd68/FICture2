@@ -1,8 +1,8 @@
 #include "ArchiveReader.h"
+#include "CommonUtil.h"
 
 #include <algorithm>
 #include <array>
-#include <cwctype>
 #include <cstring>
 #include <fstream>
 #include <limits>
@@ -91,14 +91,6 @@ namespace
 
         std::string result(utf8Len - 1, '\0');
         WideCharToMultiByte(CP_UTF8, 0, wideStr.c_str(), -1, result.data(), utf8Len, nullptr, nullptr);
-        return result;
-    }
-
-    std::wstring ToLower(const std::wstring& str)
-    {
-        std::wstring result = str;
-        std::transform(result.begin(), result.end(), result.begin(),
-            [](wchar_t c) { return static_cast<wchar_t>(std::towlower(c)); });
         return result;
     }
 
@@ -361,7 +353,7 @@ public:
 
     std::vector<uint8_t> ExtractToMemory(const std::wstring& entryPath) override
     {
-        const std::wstring key = ToLower(NormalizeArchivePath(entryPath));
+        const std::wstring key = CommonUtil::ToLower(NormalizeArchivePath(entryPath));
         auto it = m_entryMap.find(key);
         if (it == m_entryMap.end())
         {
@@ -379,7 +371,7 @@ public:
 
     bool HasEntry(const std::wstring& entryPath) override
     {
-        return m_entryMap.find(ToLower(NormalizeArchivePath(entryPath))) != m_entryMap.end();
+        return m_entryMap.find(CommonUtil::ToLower(NormalizeArchivePath(entryPath))) != m_entryMap.end();
     }
 
     std::wstring GetFormatName() const override
@@ -707,7 +699,7 @@ private:
             entry.isDirectory = false;
             entry.modTime = 0;
 
-            m_entryMap[ToLower(NormalizeArchivePath(info.name))] = i;
+            m_entryMap[CommonUtil::ToLower(NormalizeArchivePath(info.name))] = i;
             m_entries.push_back(entry);
         }
     }
@@ -889,7 +881,7 @@ public:
     {
         OutputDebugStringW((L"[LibArchiveReader] ExtractToMemory: " + entryPath + L"\n").c_str());
 
-        auto it = m_entryMap.find(ToLower(NormalizeArchivePath(entryPath)));
+        auto it = m_entryMap.find(CommonUtil::ToLower(NormalizeArchivePath(entryPath)));
         if (it == m_entryMap.end())
         {
             OutputDebugStringW(L"[LibArchiveReader] Entry not found in map\n");
@@ -1012,7 +1004,7 @@ public:
 
     bool HasEntry(const std::wstring& entryPath) override
     {
-        return m_entryMap.find(ToLower(NormalizeArchivePath(entryPath))) != m_entryMap.end();
+        return m_entryMap.find(CommonUtil::ToLower(NormalizeArchivePath(entryPath))) != m_entryMap.end();
     }
 
     std::wstring GetFormatName() const override
@@ -1092,7 +1084,7 @@ private:
 
             size_t index = m_entries.size();
             m_entries.push_back(archEntry);
-            m_entryMap[ToLower(NormalizeArchivePath(archEntry.name))] = index;
+            m_entryMap[CommonUtil::ToLower(NormalizeArchivePath(archEntry.name))] = index;
         }
 
         archive_read_free(a);
@@ -1117,7 +1109,7 @@ std::unique_ptr<IArchiveReader> ArchiveReaderFactory::Open(const std::filesystem
 
     try
     {
-        const std::wstring ext = ToLower(path.extension().wstring());
+        const std::wstring ext = CommonUtil::ToLower(path.extension().wstring());
         if (ext == L".ba2")
         {
             auto reader = std::make_unique<Ba2Reader>(path);
@@ -1152,7 +1144,7 @@ bool ArchiveReaderFactory::HasArchiveExtension(const std::wstring& filename)
     if (ext.empty())
         return false;
 
-    ext = ToLower(ext);
+    ext = CommonUtil::ToLower(ext);
 
     static const std::vector<std::wstring> supportedExts = {
 #if FICTURE2_ENABLE_LIBARCHIVE_COMMON_ARCHIVES

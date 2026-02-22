@@ -72,6 +72,7 @@ public:
     bool ShowNavItemsEnabled() const { return m_showNavItems; }
     D2D1_COLOR_F FocusedBackgroundColor() const { return m_focusedBackgroundColor; }
     bool AlphaCheckerboardEnabled() const { return m_alphaCheckerboardEnabled; }
+    float ImageZoomStiffness() const { return m_imageZoomStiffness; }
 
     void SetSyncedThumbStripHeight(float height);
     bool TryGetSyncedThumbStripHeight(float& outHeight) const;
@@ -118,13 +119,11 @@ private:
     bool m_showNavItems { true };
     bool m_alphaCheckerboardEnabled { false };
     D2D1_COLOR_F m_focusedBackgroundColor { 0.18f, 0.16f, 0.03f, 1.0f };
+    float m_imageZoomStiffness { 80.0f };
     bool m_imageBrowserIniInitialized { false };
 
 protected:
     FD2D::Wnd* FindTargetWnd(const POINT& ptClient) override;
     bool HandleMessage(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam, LRESULT& result) override;
     bool HandleFileDropPaths(const std::vector<std::wstring>& paths, const POINT& ptClient) override;
-
-private:
-    FD2D::Wnd* FindImageBrowserTarget(const POINT& ptClient) const;
 };

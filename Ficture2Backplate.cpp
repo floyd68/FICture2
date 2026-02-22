@@ -1,5 +1,6 @@
 #include "Ficture2Backplate.h"
 
+#include "CommonUtil.h"
 #include "FD2D/Core.h"
 #include "AppSetup.h"
 #include "Resource.h"
@@ -7,13 +8,18 @@
 #include "ImageBrowser.h"
 #include "ImageBrowserContextMenu.h"
 #include "ImageBrowserSessionPersistence.h"
+#include "ImageCore/DecoderRegistry.h"
+#include "ImageCore/ImageDecodeDispatcher.h"
 #include "VirtualFileSystem.h"
 #include "VirtualPath.h"
 
 #include <algorithm>
 #include <cmath>
+#include <filesystem>
 #include <format>
+#include <sstream>
 #include <commctrl.h>
+#include <commdlg.h>
 #include <shellapi.h>
 
 namespace
@@ -57,61 +63,48 @@ namespace
             return;
         }
 
-        const auto toByte = [](float v) -> unsigned
-        {
-            if (v < 0.0f) v = 0.0f;
-            if (v > 1.0f) v = 1.0f;
-            return static_cast<unsigned>(std::floor(v * 255.0f + 0.5f));
-        };
-
         wchar_t rgb[64] {};
-        swprintf_s(rgb, L"%u,%u,%u", toByte(color.r), toByte(color.g), toByte(color.b));
+        swprintf_s(
+            rgb,
+            L"%u,%u,%u",
+            CommonUtil::ToByte255(color.r),
+            CommonUtil::ToByte255(color.g),
+            CommonUtil::ToByte255(color.b));
         (void)WritePrivateProfileStringW(section, key, rgb, iniFile.c_str());
+    }
+
+    template <typename T>
+    T* AsImageBrowser(FD2D::Wnd* wnd)
+    {
+        if (wnd == nullptr)
+        {
+            return nullptr;
+        }
+
+        return dynamic_cast<T*>(wnd);
     }
 
     IImageBrowserOps* AsImageBrowserOps(FD2D::Wnd* wnd)
     {
-        if (wnd == nullptr)
-        {
-            return nullptr;
-        }
-
-        return dynamic_cast<IImageBrowserOps*>(wnd);
-    }
-
-    IImageBrowserCommands* AsImageBrowserCommands(FD2D::Wnd* wnd)
-    {
-        if (wnd == nullptr)
-        {
-            return nullptr;
-        }
-
-        return dynamic_cast<IImageBrowserCommands*>(wnd);
+        return AsImageBrowser<IImageBrowserOps>(wnd);
     }
 
     IImageBrowserSync* AsImageBrowserSync(FD2D::Wnd* wnd)
     {
-        if (wnd == nullptr)
-        {
-            return nullptr;
-        }
-
-        return dynamic_cast<IImageBrowserSync*>(wnd);
+        return AsImageBrowser<IImageBrowserSync>(wnd);
     }
 
     IImageBrowserQuery* AsImageBrowserQuery(FD2D::Wnd* wnd)
     {
-        if (wnd == nullptr)
-        {
-            return nullptr;
-        }
-
-        return dynamic_cast<IImageBrowserQuery*>(wnd);
+        return AsImageBrowser<IImageBrowserQuery>(wnd);
     }
 
-    std::vector<IImageBrowserOps*> SnapshotBrowserOps(const std::shared_ptr<Ficture2Backplate::EventBus>& bus)
+    template <typename T>
+    std::vector<T*> SnapshotBrowsers(
+        const std::shared_ptr<Ficture2Backplate::EventBus>& bus,
+        FD2D::Wnd* exclude = nullptr)
     {
-        std::vector<IImageBrowserOps*> out;
+        std::vector<T*> out;
         if (!bus)
         {
             return out;
@@ -121,72 +114,38 @@ namespace
         out.reserve(browsers.size());
         for (auto* browser : browsers)
         {
-            auto* ops = AsImageBrowserOps(browser);
-            if (ops != nullptr)
+            if (browser == nullptr || browser == exclude)
             {
-                out.push_back(ops);
+                continue;
+            }
+
+            auto* target = AsImageBrowser<T>(browser);
+            if (target != nullptr)
+            {
+                out.push_back(target);
             }
         }
 
         return out;
+    }
+
+    std::vector<IImageBrowserOps*> SnapshotBrowserOps(const std::shared_ptr<Ficture2Backplate::EventBus>& bus)
+    {
+        return SnapshotBrowsers<IImageBrowserOps>(bus);
     }
 
     std::vector<IImageBrowserSync*> SnapshotOtherBrowserSync(
         const std::shared_ptr<Ficture2Backplate::EventBus>& bus,
         FD2D::Wnd* source)
     {
-        std::vector<IImageBrowserSync*> out;
-        if (!bus)
-        {
-            return out;
-        }
-
-        const auto browsers = bus->ImageBrowsersSnapshot();
-        out.reserve(browsers.size());
-        for (auto* browser : browsers)
-        {
-            if (browser == nullptr || browser == source)
-            {
-                continue;
-            }
-
-            auto* sync = AsImageBrowserSync(browser);
-            if (sync != nullptr)
-            {
-                out.push_back(sync);
-            }
-        }
-
-        return out;
+        return SnapshotBrowsers<IImageBrowserSync>(bus, source);
     }
 
     std::vector<IImageBrowserOps*> SnapshotOtherBrowserOps(
         const std::shared_ptr<Ficture2Backplate::EventBus>& bus,
         FD2D::Wnd* source)
     {
-        std::vector<IImageBrowserOps*> out;
-        if (!bus)
-        {
-            return out;
-        }
-
-        const auto browsers = bus->ImageBrowsersSnapshot();
-        out.reserve(browsers.size());
-        for (auto* browser : browsers)
-        {
-            if (browser == nullptr || browser == source)
-            {
-                continue;
-            }
-
-            auto* ops = AsImageBrowserOps(browser);
-            if (ops != nullptr)
-            {
-                out.push_back(ops);
-            }
-        }
-
-        return out;
+        return SnapshotBrowsers<IImageBrowserOps>(bus, source);
     }
 
     void ShowAboutDialog(HWND hwnd)
@@ -259,6 +218,12 @@ namespace
         bool shift { false };
         bool alt { false };
         BrowserCommandAction action { BrowserCommandAction::OpenImage };
+    };
+
+    struct BrowserOpsActionEntry
+    {
+        BrowserCommandAction action { BrowserCommandAction::OpenImage };
+        void (IImageBrowserOps::*invoke)() { nullptr };
     };
 
     // Centralized command/key policy maps.
@@ -337,15 +302,334 @@ namespace
         { 'Q', false, false, true, BrowserCommandAction::ToggleSampling },
     };
 
+    // Keep in sync with ImageBrowserDragController's default insert threshold.
+    static constexpr float kMultiDropInsertThreshold = 0.75f;
+
+    static const BrowserOpsActionEntry kDirectBrowserOpsActions[] =
+    {
+        { BrowserCommandAction::Close, &IImageBrowserOps::BrowserCmdClose },
+        { BrowserCommandAction::ActivateSelected, &IImageBrowserOps::BrowserCmdActivateSelected },
+        { BrowserCommandAction::SelectPrevious, &IImageBrowserOps::BrowserCmdSelectPrevious },
+        { BrowserCommandAction::SelectNext, &IImageBrowserOps::BrowserCmdSelectNext },
+        { BrowserCommandAction::SelectFirst, &IImageBrowserOps::BrowserCmdSelectFirst },
+        { BrowserCommandAction::SelectLast, &IImageBrowserOps::BrowserCmdSelectLast },
+        { BrowserCommandAction::PagePrevious, &IImageBrowserOps::BrowserCmdPagePrevious },
+        { BrowserCommandAction::PageNext, &IImageBrowserOps::BrowserCmdPageNext },
+        { BrowserCommandAction::NavigateUp, &IImageBrowserOps::BrowserCmdNavigateUp },
+        { BrowserCommandAction::FitToScreen, &IImageBrowserOps::BrowserCmdFitToScreen },
+        { BrowserCommandAction::ToggleDirectories, &IImageBrowserOps::BrowserCmdToggleDirectories },
+        { BrowserCommandAction::ToggleAlpha, &IImageBrowserOps::BrowserCmdToggleAlpha },
+        { BrowserCommandAction::ToggleSampling, &IImageBrowserOps::BrowserCmdToggleSampling },
+    };
+
+    std::wstring BuildSupportedImageDialogFilter()
+    {
+        const std::vector<std::wstring> exts = ImageCore::ImageDecodeDispatcher::GetSupportedExtensions();
+        std::wostringstream patternBuilder {};
+        for (size_t i = 0; i < exts.size(); ++i)
+        {
+            if (i != 0)
+            {
+                patternBuilder << L";";
+            }
+            patternBuilder << L"*" << exts[i];
+        }
+
+        std::wstring wildcardPattern = patternBuilder.str();
+        if (wildcardPattern.empty())
+        {
+            wildcardPattern = L"*.*";
+        }
+
+        std::wstring filter {};
+        filter.reserve(256 + wildcardPattern.size() * 2);
+        filter += L"Supported images (" + wildcardPattern + L")";
+        filter.push_back(L'\0');
+        filter += wildcardPattern;
+        filter.push_back(L'\0');
+        filter += L"All files (*.*)";
+        filter.push_back(L'\0');
+        filter += L"*.*";
+        filter.push_back(L'\0');
+        filter.push_back(L'\0');
+        return filter;
+    }
+
+    bool TryPickSupportedImageFile(
+        HWND ownerWindow,
+        const std::wstring& initialDir,
+        const wchar_t* title,
+        std::wstring& outFilePath)
+    {
+        wchar_t fileName[MAX_PATH] {};
+        const std::wstring filter = BuildSupportedImageDialogFilter();
+
+        OPENFILENAMEW ofn {};
+        ofn.lStructSize = sizeof(ofn);
+        ofn.hwndOwner = ownerWindow;
+        ofn.lpstrFile = fileName;
+        ofn.nMaxFile = static_cast<DWORD>(std::size(fileName));
+        ofn.lpstrFilter = filter.c_str();
+        ofn.nFilterIndex = 1;
+        ofn.Flags = OFN_FILEMUSTEXIST | OFN_PATHMUSTEXIST | OFN_EXPLORER | OFN_HIDEREADONLY;
+        ofn.lpstrTitle = (title != nullptr) ? title : L"Open Image";
+        ofn.lpstrInitialDir = initialDir.empty() ? nullptr : initialDir.c_str();
+
+        if (!GetOpenFileNameW(&ofn))
+        {
+            return false;
+        }
+
+        const std::filesystem::path chosen { fileName };
+        if (!std::filesystem::exists(chosen) || !std::filesystem::is_regular_file(chosen))
+        {
+            return false;
+        }
+
+        if (!ImageCore::DecoderRegistry::Instance().IsSupportedPath(chosen.wstring()))
+        {
+            MessageBoxW(ownerWindow, L"Selected file type is not supported.", L"FICture2", MB_OK | MB_ICONWARNING);
+            return false;
+        }
+
+        outFilePath = chosen.wstring();
+        return true;
+    }
+
+    bool TryPickColor(HWND ownerWindow, const D2D1_COLOR_F& current, D2D1_COLOR_F& outColor)
+    {
+        static COLORREF s_custom[16] {};
+
+        CHOOSECOLORW cc {};
+        cc.lStructSize = sizeof(cc);
+        cc.hwndOwner = ownerWindow;
+        cc.lpCustColors = s_custom;
+        cc.rgbResult = RGB(
+            CommonUtil::ToByte255(current.r),
+            CommonUtil::ToByte255(current.g),
+            CommonUtil::ToByte255(current.b));
+        cc.Flags = CC_FULLOPEN | CC_RGBINIT;
+        if (!ChooseColorW(&cc))
+        {
+            return false;
+        }
+
+        outColor = D2D1::ColorF(
+            static_cast<float>(GetRValue(cc.rgbResult)) / 255.0f,
+            static_cast<float>(GetGValue(cc.rgbResult)) / 255.0f,
+            static_cast<float>(GetBValue(cc.rgbResult)) / 255.0f,
+            1.0f);
+        return true;
+    }
+
+    std::wstring ResolveInitialDialogDir(IImageBrowserOps* browserOps)
+    {
+        if (browserOps == nullptr)
+        {
+            return L"";
+        }
+
+        const std::filesystem::path candidate { browserOps->BrowserGetCurrentFolderPath() };
+        if (!candidate.empty() && std::filesystem::exists(candidate) && std::filesystem::is_directory(candidate))
+        {
+            return candidate.wstring();
+        }
+
+        return L"";
+    }
+
     void ExecuteBrowserCommandAction(
-        IImageBrowserCommands* browserOps,
+        Ficture2Backplate* backplate,
+        FD2D::Wnd* source,
+        IImageBrowserOps* browserOps,
         BrowserCommandAction action,
         const POINT& ptClient,
         HWND ownerWindow);
 
+    bool TryExecuteDirectBrowserOpsAction(IImageBrowserOps* browserOps, BrowserCommandAction action)
+    {
+        if (browserOps == nullptr)
+        {
+            return false;
+        }
+
+        for (const auto& entry : kDirectBrowserOpsActions)
+        {
+            if (entry.action == action && entry.invoke != nullptr)
+            {
+                (browserOps->*entry.invoke)();
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    bool TryExecuteOpenAction(
+        Ficture2Backplate* backplate,
+        FD2D::Wnd* source,
+        IImageBrowserOps* browserOps,
+        BrowserCommandAction action,
+        HWND ownerWindow)
+    {
+        if (backplate == nullptr || source == nullptr || browserOps == nullptr)
+        {
+            return false;
+        }
+
+        if (action != BrowserCommandAction::OpenImage &&
+            action != BrowserCommandAction::OpenImageSplitNew &&
+            action != BrowserCommandAction::OpenNewImage)
+        {
+            return false;
+        }
+
+        std::wstring selectedPath {};
+        const std::wstring initialDir = ResolveInitialDialogDir(browserOps);
+        const wchar_t* title = (action == BrowserCommandAction::OpenNewImage) ? L"Open New Image" : L"Open Image";
+        if (!TryPickSupportedImageFile(ownerWindow, initialDir, title, selectedPath))
+        {
+            return true;
+        }
+
+        if (action == BrowserCommandAction::OpenImage)
+        {
+            browserOps->BrowserRestoreOpenFile(selectedPath);
+            return true;
+        }
+
+        if (action == BrowserCommandAction::OpenImageSplitNew)
+        {
+            browserOps->BrowserOpenAdditionalFileInHorizontalSplit(selectedPath);
+            return true;
+        }
+
+        auto* bus = backplate->BusPtr().get();
+        if (bus == nullptr || bus->ImageBrowserCount() > 3)
+        {
+            return true;
+        }
+
+        browserOps->BrowserOpenAdditionalFilesSideBySideAfterName({ selectedPath }, source->Name());
+        return true;
+    }
+
+    bool TryExecuteBackgroundColorAction(
+        Ficture2Backplate* backplate,
+        FD2D::Wnd* source,
+        BrowserCommandAction action,
+        HWND ownerWindow)
+    {
+        if (backplate == nullptr || source == nullptr)
+        {
+            return false;
+        }
+
+        if (action != BrowserCommandAction::BackgroundColor &&
+            action != BrowserCommandAction::FocusedBackgroundColor)
+        {
+            return false;
+        }
+
+        auto* sourceSync = AsImageBrowserSync(source);
+        if (sourceSync == nullptr)
+        {
+            return true;
+        }
+
+        const D2D1_COLOR_F current = (action == BrowserCommandAction::BackgroundColor)
+            ? backplate->ClearColor()
+            : backplate->FocusedBackgroundColor();
+        D2D1_COLOR_F nextColor {};
+        if (!TryPickColor(ownerWindow, current, nextColor))
+        {
+            return true;
+        }
+
+        if (action == BrowserCommandAction::BackgroundColor)
+        {
+            backplate->SetClearColor(nextColor);
+            sourceSync->BrowserApplyBackgroundColorForSync(nextColor);
+            backplate->SynchronizeBackgroundColor(source, nextColor);
+        }
+        else
+        {
+            sourceSync->BrowserApplyFocusedBackgroundColorForSync(nextColor);
+            backplate->SynchronizeFocusedBackgroundColor(source, nextColor);
+        }
+        backplate->Render();
+        return true;
+    }
+
+    bool TryExecuteShowInExplorerAction(
+        IImageBrowserOps* browserOps,
+        BrowserCommandAction action,
+        const POINT& ptClient,
+        HWND ownerWindow)
+    {
+        if (browserOps == nullptr)
+        {
+            return false;
+        }
+
+        if (action != BrowserCommandAction::ShowInExplorerAtPoint)
+        {
+            return false;
+        }
+
+        const std::wstring targetPath = browserOps->BrowserGetExplorerTargetPathAtPoint(ptClient);
+        if (targetPath.empty())
+        {
+            return true;
+        }
+
+        const std::wstring args = L"/select,\"" + targetPath + L"\"";
+        const HINSTANCE result = ShellExecuteW(ownerWindow, L"open", L"explorer.exe", args.c_str(), nullptr, SW_SHOWNORMAL);
+        if (reinterpret_cast<intptr_t>(result) <= 32)
+        {
+            const std::filesystem::path parent = std::filesystem::path(targetPath).parent_path();
+            if (!parent.empty())
+            {
+                (void)ShellExecuteW(ownerWindow, L"open", parent.wstring().c_str(), nullptr, nullptr, SW_SHOWNORMAL);
+            }
+        }
+
+        return true;
+    }
+
+    bool TryExecuteSystemAction(BrowserCommandAction action, HWND ownerWindow)
+    {
+        if (action == BrowserCommandAction::ShowAbout)
+        {
+            ShowAboutDialog(ownerWindow);
+            return true;
+        }
+
+#if FICTURE2_ENABLE_REGISTRATION_MENU
+        if (action == BrowserCommandAction::RegisterAssociations)
+        {
+            FICture2App::RegisterSupportedFileAssociations(ownerWindow);
+            return true;
+        }
+
+        if (action == BrowserCommandAction::RegisterThumbnailProvider ||
+            action == BrowserCommandAction::UnregisterThumbnailProvider)
+        {
+            FICture2App::RegisterThumbnailProvider(
+                ownerWindow,
+                action == BrowserCommandAction::UnregisterThumbnailProvider);
+            return true;
+        }
+#endif
+
+        return false;
+    }
+
     template <size_t N>
     bool TryDispatchMappedAction(
-        IImageBrowserCommands* browserOps,
+        Ficture2Backplate* backplate,
+        FD2D::Wnd* source,
+        IImageBrowserOps* browserOps,
         UINT id,
         const CommandMapEntry (&entries)[N],
         const POINT& ptClient,
@@ -360,7 +644,7 @@ namespace
         {
             if (entry.id == id)
             {
-                ExecuteBrowserCommandAction(browserOps, entry.action, ptClient, ownerWindow);
+                ExecuteBrowserCommandAction(backplate, source, browserOps, entry.action, ptClient, ownerWindow);
                 return true;
             }
         }
@@ -370,7 +654,9 @@ namespace
 
     template <size_t N>
     bool TryDispatchMappedKeyAction(
-        IImageBrowserCommands* browserOps,
+        Ficture2Backplate* backplate,
+        FD2D::Wnd* source,
+        IImageBrowserOps* browserOps,
         UINT key,
         bool ctrl,
         bool shift,
@@ -391,7 +677,7 @@ namespace
                 entry.shift == shift &&
                 entry.alt == alt)
             {
-                ExecuteBrowserCommandAction(browserOps, entry.action, ptClient, ownerWindow);
+                ExecuteBrowserCommandAction(backplate, source, browserOps, entry.action, ptClient, ownerWindow);
                 return true;
             }
         }
@@ -400,176 +686,41 @@ namespace
     }
 
     void ExecuteBrowserCommandAction(
-        IImageBrowserCommands* browserOps,
+        Ficture2Backplate* backplate,
+        FD2D::Wnd* source,
+        IImageBrowserOps* browserOps,
         BrowserCommandAction action,
         const POINT& ptClient,
         HWND ownerWindow)
     {
-        if (browserOps == nullptr)
+        if (browserOps == nullptr || backplate == nullptr || source == nullptr)
         {
             return;
         }
 
-        switch (action)
+        if (TryExecuteDirectBrowserOpsAction(browserOps, action))
         {
-        case BrowserCommandAction::OpenImage:
-            browserOps->BrowserCmdOpenImage();
-            return;
-        case BrowserCommandAction::OpenImageSplitNew:
-            browserOps->BrowserCmdOpenImageSplitNew();
-            return;
-        case BrowserCommandAction::OpenNewImage:
-            browserOps->BrowserCmdOpenNewImage();
-            return;
-        case BrowserCommandAction::Close:
-            browserOps->BrowserCmdClose();
-            return;
-        case BrowserCommandAction::ActivateSelected:
-            browserOps->BrowserCmdActivateSelected();
-            return;
-        case BrowserCommandAction::SelectPrevious:
-            browserOps->BrowserCmdSelectPrevious();
-            return;
-        case BrowserCommandAction::SelectNext:
-            browserOps->BrowserCmdSelectNext();
-            return;
-        case BrowserCommandAction::SelectFirst:
-            browserOps->BrowserCmdSelectFirst();
-            return;
-        case BrowserCommandAction::SelectLast:
-            browserOps->BrowserCmdSelectLast();
-            return;
-        case BrowserCommandAction::PagePrevious:
-            browserOps->BrowserCmdPagePrevious();
-            return;
-        case BrowserCommandAction::PageNext:
-            browserOps->BrowserCmdPageNext();
-            return;
-        case BrowserCommandAction::NavigateUp:
-            browserOps->BrowserCmdNavigateUp();
-            return;
-        case BrowserCommandAction::FitToScreen:
-            browserOps->BrowserCmdFitToScreen();
-            return;
-        case BrowserCommandAction::BackgroundColor:
-            browserOps->BrowserCmdBackgroundColor();
-            return;
-        case BrowserCommandAction::FocusedBackgroundColor:
-            browserOps->BrowserCmdFocusedBackgroundColor();
-            return;
-        case BrowserCommandAction::ToggleDirectories:
-            browserOps->BrowserCmdToggleDirectories();
-            return;
-        case BrowserCommandAction::ToggleAlpha:
-            browserOps->BrowserCmdToggleAlpha();
-            return;
-        case BrowserCommandAction::ToggleSampling:
-            browserOps->BrowserCmdToggleSampling();
-            return;
-        case BrowserCommandAction::ShowInExplorerAtPoint:
-            browserOps->BrowserCmdShowInExplorerAtPoint(ptClient);
-            return;
-        case BrowserCommandAction::ShowAbout:
-            ShowAboutDialog(ownerWindow);
-            return;
-        case BrowserCommandAction::RegisterAssociations:
-            browserOps->BrowserCmdRegisterAssociations();
-            return;
-        case BrowserCommandAction::RegisterThumbnailProvider:
-            browserOps->BrowserCmdRegisterThumbnailProvider();
-            return;
-        case BrowserCommandAction::UnregisterThumbnailProvider:
-            browserOps->BrowserCmdUnregisterThumbnailProvider();
             return;
         }
-    }
 
-    bool TryHandleContextCommandLifecycle(IImageBrowserCommands* browserOps, UINT cmd)
-    {
-        return TryDispatchMappedAction(browserOps, cmd, kContextLifecycleMap, POINT {}, nullptr);
-    }
-
-    bool TryHandleContextCommandViewAppearance(IImageBrowserCommands* browserOps, UINT cmd)
-    {
-        return TryDispatchMappedAction(browserOps, cmd, kContextViewAppearanceMap, POINT {}, nullptr);
-    }
-
-    bool TryHandleContextCommandIntegration(
-        IImageBrowserCommands* browserOps,
-        UINT cmd,
-        const POINT& ptClient,
-        HWND ownerWindow)
-    {
-        if (TryDispatchMappedAction(browserOps, cmd, kContextIntegrationMap, ptClient, ownerWindow))
+        if (TryExecuteOpenAction(backplate, source, browserOps, action, ownerWindow))
         {
-            return true;
+            return;
         }
 
-#if FICTURE2_ENABLE_REGISTRATION_MENU
-        if (TryDispatchMappedAction(browserOps, cmd, kContextRegistrationMap, ptClient, ownerWindow))
+        if (TryExecuteBackgroundColorAction(backplate, source, action, ownerWindow))
         {
-            return true;
+            return;
         }
-#endif
-        return false;
+
+        if (TryExecuteShowInExplorerAction(browserOps, action, ptClient, ownerWindow))
+        {
+            return;
+        }
+
+        (void)TryExecuteSystemAction(action, ownerWindow);
     }
 
-    bool TryHandleKeyCommandLifecycle(
-        IImageBrowserCommands* browserOps,
-        UINT keyCode,
-        UINT normalizedKey,
-        bool ctrl,
-        bool shift,
-        bool& outHandled)
-    {
-        const UINT keyForMatch = (normalizedKey == 'O') ? normalizedKey : keyCode;
-        outHandled = TryDispatchMappedKeyAction(
-            browserOps,
-            keyForMatch,
-            ctrl,
-            shift,
-            false,
-            kKeyLifecycleChordMap,
-            POINT {},
-            nullptr);
-        return outHandled;
-    }
-
-    bool TryHandleKeyCommandSelectionNavigation(
-        IImageBrowserCommands* browserOps,
-        UINT keyCode,
-        bool& outHandled)
-    {
-        outHandled = TryDispatchMappedAction(browserOps, keyCode, kKeySelectionNavigationMap, POINT {}, nullptr);
-        return outHandled;
-    }
-
-    bool TryHandleKeyCommandViewAppearance(
-        IImageBrowserCommands* browserOps,
-        UINT normalizedKey,
-        bool alt,
-        bool& outHandled)
-    {
-        outHandled = TryDispatchMappedKeyAction(
-            browserOps,
-            normalizedKey,
-            false,
-            false,
-            alt,
-            kKeyViewAppearanceChordMap,
-            POINT {},
-            nullptr);
-        return outHandled;
-    }
-
-    bool TryHandleKeyDownSelectionNavigation(
-        IImageBrowserCommands* browserOps,
-        UINT keyCode,
-        bool& outHandled)
-    {
-        outHandled = TryDispatchMappedAction(browserOps, keyCode, kKeyDownSelectionNavigationMap, POINT {}, nullptr);
-        return outHandled;
-    }
 }
 
 Ficture2Backplate::EventBus::HandlerId Ficture2Backplate::EventBus::Subscribe(Handler handler)
@@ -617,7 +768,7 @@ void Ficture2Backplate::EventBus::UnregisterImageBrowser(FD2D::Wnd* browser)
         m_imageBrowsers.erase(it);
 }
 
-FD2D::Wnd* Ficture2Backplate::FindImageBrowserTarget(const POINT& ptClient) const
+FD2D::Wnd* Ficture2Backplate::FindTargetWnd(const POINT& ptClient)
 {
     if (!m_eventBus)
     {
@@ -654,11 +805,6 @@ FD2D::Wnd* Ficture2Backplate::FindImageBrowserTarget(const POINT& ptClient) cons
     }
 
     return best;
-}
-
-FD2D::Wnd* Ficture2Backplate::FindTargetWnd(const POINT& ptClient)
-{
-    return FindImageBrowserTarget(ptClient);
 }
 
 bool Ficture2Backplate::HandleFileDropPaths(const std::vector<std::wstring>& paths, const POINT& ptClient)
@@ -700,7 +846,7 @@ bool Ficture2Backplate::HandleFileDropPaths(const std::vector<std::wstring>& pat
             const D2D1_RECT_F r = target->LayoutRect();
             const float w = (std::max)(1.0f, r.right - r.left);
             const float relX = (static_cast<float>(ptClient.x) - r.left) / w;
-            insertMode = (relX >= 0.75f);
+            insertMode = (relX >= kMultiDropInsertThreshold);
         }
 
         if (insertMode)
@@ -854,6 +1000,22 @@ void Ficture2Backplate::EnsureImageBrowserIniInitialized()
         if (TryParseRgb(focusedBuf, focusedColor))
         {
             m_focusedBackgroundColor = focusedColor;
+        }
+    }
+
+    wchar_t zoomStiffnessStr[32] {};
+    if (GetPrivateProfileStringW(
+        L"Image",
+        L"ZoomStiffness",
+        L"80.0",
+        zoomStiffnessStr,
+        static_cast<DWORD>(std::size(zoomStiffnessStr)),
+        iniFile.c_str()) > 0)
+    {
+        const float zoomStiffness = static_cast<float>(_wtof(zoomStiffnessStr));
+        if (zoomStiffness >= 10.0f && zoomStiffness <= 500.0f)
+        {
+            m_imageZoomStiffness = zoomStiffness;
         }
     }
 }
@@ -1289,23 +1451,35 @@ std::wstring Ficture2Backplate::SamplingLabelForRenderer(bool highQuality) const
 
 bool Ficture2Backplate::HandleImageBrowserContextMenuCommand(FD2D::Wnd* source, UINT cmd, const POINT& ptClient)
 {
-    auto* browserOps = AsImageBrowserCommands(source);
+    auto* browserOps = AsImageBrowserOps(source);
     if (browserOps == nullptr)
     {
         return false;
     }
 
-    if (TryHandleContextCommandLifecycle(browserOps, cmd))
+    if (TryDispatchMappedAction(this, source, browserOps, cmd, kContextLifecycleMap, POINT {}, m_window))
     {
         return true;
     }
 
-    if (TryHandleContextCommandViewAppearance(browserOps, cmd))
+    if (TryDispatchMappedAction(this, source, browserOps, cmd, kContextViewAppearanceMap, POINT {}, m_window))
     {
         return true;
     }
 
-    return TryHandleContextCommandIntegration(browserOps, cmd, ptClient, m_window);
+    if (TryDispatchMappedAction(this, source, browserOps, cmd, kContextIntegrationMap, ptClient, m_window))
+    {
+        return true;
+    }
+
+#if FICTURE2_ENABLE_REGISTRATION_MENU
+    if (TryDispatchMappedAction(this, source, browserOps, cmd, kContextRegistrationMap, ptClient, m_window))
+    {
+        return true;
+    }
+#endif
+
+    return false;
 }
 
 bool Ficture2Backplate::HandleImageBrowserKeyUpCommand(
@@ -1318,7 +1492,7 @@ bool Ficture2Backplate::HandleImageBrowserKeyUpCommand(
 {
     outHandled = false;
 
-    auto* browserOps = AsImageBrowserCommands(source);
+    auto* browserOps = AsImageBrowserOps(source);
     if (browserOps == nullptr)
     {
         return false;
@@ -1328,17 +1502,41 @@ bool Ficture2Backplate::HandleImageBrowserKeyUpCommand(
         ? (keyCode - 'a' + 'A')
         : keyCode;
 
-    if (TryHandleKeyCommandSelectionNavigation(browserOps, keyCode, outHandled))
+    outHandled = TryDispatchMappedAction(this, source, browserOps, keyCode, kKeySelectionNavigationMap, POINT {}, m_window);
+    if (outHandled)
     {
         return true;
     }
 
-    if (TryHandleKeyCommandLifecycle(browserOps, keyCode, normalizedKey, ctrl, shift, outHandled))
+    const UINT keyForLifecycleMatch = (normalizedKey == 'O') ? normalizedKey : keyCode;
+    outHandled = TryDispatchMappedKeyAction(
+        this,
+        source,
+        browserOps,
+        keyForLifecycleMatch,
+        ctrl,
+        shift,
+        false,
+        kKeyLifecycleChordMap,
+        POINT {},
+        m_window);
+    if (outHandled)
     {
         return true;
     }
 
-    return TryHandleKeyCommandViewAppearance(browserOps, normalizedKey, alt, outHandled);
+    outHandled = TryDispatchMappedKeyAction(
+        this,
+        source,
+        browserOps,
+        normalizedKey,
+        false,
+        false,
+        alt,
+        kKeyViewAppearanceChordMap,
+        POINT {},
+        m_window);
+    return outHandled;
 }
 
 bool Ficture2Backplate::HandleImageBrowserKeyDownCommand(
@@ -1355,13 +1553,14 @@ bool Ficture2Backplate::HandleImageBrowserKeyDownCommand(
 
     outHandled = false;
 
-    auto* browserOps = AsImageBrowserCommands(source);
+    auto* browserOps = AsImageBrowserOps(source);
     if (browserOps == nullptr)
     {
         return false;
     }
 
-    return TryHandleKeyDownSelectionNavigation(browserOps, keyCode, outHandled);
+    outHandled = TryDispatchMappedAction(this, source, browserOps, keyCode, kKeyDownSelectionNavigationMap, POINT {}, m_window);
+    return outHandled;
 }
 
 std::wstring Ficture2Backplate::GetFocusedSelectedImageFileName() const

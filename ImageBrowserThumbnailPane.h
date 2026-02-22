@@ -26,11 +26,7 @@ public:
     std::shared_ptr<FD2D::ScrollView> Scroll() const { return m_thumbScroll; }
     std::shared_ptr<FD2D::StackPanel> Panel() const { return m_thumbPanel; }
     bool TryGetStripRect(D2D1_RECT_F& outRect) const;
-    bool TryGetStripHeight(float& outHeight) const;
     size_t PagingStep(float itemExtent) const;
-    void SetScrollStep(float step);
-    void SetScrollX(float x);
-    void EnsureCentered(const D2D1_RECT_F& rect, bool immediate = false);
 
     bool OnInputEvent(const FD2D::InputEvent& event) override;
 

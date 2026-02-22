@@ -1,20 +1,10 @@
 #include "ImageBrowserMainPane.h"
+#include "FD2D/Util.h"
 
 #include "framework.h"
 
 #include <wrl/client.h>
 #include <vector>
-
-namespace
-{
-    bool RectContainsPoint(const D2D1_RECT_F& r, const POINT& pt)
-    {
-        return pt.x >= r.left &&
-            pt.x <= r.right &&
-            pt.y >= r.top &&
-            pt.y <= r.bottom;
-    }
-}
 
 class InfoBar : public FD2D::Wnd
 {
@@ -513,22 +503,6 @@ bool ImageBrowserMainPane::TryGetMainImageRect(D2D1_RECT_F& outRect) const
     return outRect.right > outRect.left && outRect.bottom > outRect.top;
 }
 
-bool ImageBrowserMainPane::ContainsMainPoint(const POINT& pt) const
-{
-    D2D1_RECT_F mainRect {};
-    return TryGetMainImageRect(mainRect) && RectContainsPoint(mainRect, pt);
-}
-
-bool ImageBrowserMainPane::TryGetMainRectForPoint(const POINT& pt, D2D1_RECT_F& outRect) const
-{
-    if (!TryGetMainImageRect(outRect))
-    {
-        return false;
-    }
-
-    return RectContainsPoint(outRect, pt);
-}
-
 void ImageBrowserMainPane::PauseMainImageViewAnimation()
 {
     if (m_mainImage == nullptr)
@@ -597,7 +571,11 @@ void ImageBrowserMainPane::RenderOnMainRect(const std::function<void(const D2D1_
 
 bool ImageBrowserMainPane::OnInputEvent(const FD2D::InputEvent& event)
 {
-    if (event.hasPoint && ContainsMainPoint(event.point))
+    D2D1_RECT_F mainRect {};
+    const bool pointInMain = event.hasPoint &&
+        TryGetMainImageRect(mainRect) &&
+        FD2D::Util::RectContainsPoint(mainRect, event.point);
+    if (pointInMain)
     {
         if (event.type == FD2D::InputEventType::MouseUp &&
             event.button == FD2D::MouseButton::Right &&

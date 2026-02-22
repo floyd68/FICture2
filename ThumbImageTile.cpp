@@ -79,6 +79,12 @@ void ThumbImageTile::SetFixedHeight(float height)
 
 void ThumbImageTile::SetCaption(const std::wstring& text)
 {
+    if (m_caption == text)
+    {
+        return;
+    }
+
+    m_caption = text;
     m_label.SetText(text);
     Invalidate();
 }

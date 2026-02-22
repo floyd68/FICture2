@@ -32,9 +32,6 @@ public:
     virtual ~IImageBrowserCommands() = default;
 
     // Command domain: file/viewer lifecycle.
-    virtual void BrowserCmdOpenImage() = 0;
-    virtual void BrowserCmdOpenImageSplitNew() = 0;
-    virtual void BrowserCmdOpenNewImage() = 0;
     virtual void BrowserCmdClose() = 0;
 
     // Command domain: selection/navigation.
@@ -48,18 +45,10 @@ public:
     virtual void BrowserCmdNavigateUp() = 0;
 
     // Command domain: view/appearance toggles.
-    virtual void BrowserCmdBackgroundColor() = 0;
-    virtual void BrowserCmdFocusedBackgroundColor() = 0;
     virtual void BrowserCmdFitToScreen() = 0;
     virtual void BrowserCmdToggleDirectories() = 0;
     virtual void BrowserCmdToggleAlpha() = 0;
     virtual void BrowserCmdToggleSampling() = 0;
-
-    // Command domain: integration/system actions.
-    virtual void BrowserCmdShowInExplorerAtPoint(const POINT& ptClient) = 0;
-    virtual void BrowserCmdRegisterAssociations() = 0;
-    virtual void BrowserCmdRegisterThumbnailProvider() = 0;
-    virtual void BrowserCmdUnregisterThumbnailProvider() = 0;
 };
 
 class IImageBrowserQuery
@@ -79,6 +68,7 @@ public:
     virtual std::vector<float> BrowserCaptureHorizontalSplitRatios() const = 0;
     virtual bool BrowserContextMenuPrepareForDisplay(const POINT& ptClient) = 0;
     virtual ContextMenuSnapshot BrowserContextMenuSnapshotAtPoint(const POINT& ptClient) const = 0;
+    virtual std::wstring BrowserGetExplorerTargetPathAtPoint(const POINT& ptClient) const = 0;
     virtual bool BrowserHasFocusForTitle() const = 0;
     virtual std::wstring BrowserSelectedImageFileNameForTitle() const = 0;
 };

@@ -1,5 +1,6 @@
 #include "ImageBrowserThumbStripController.h"
 
+#include "CommonUtil.h"
 #include "FD2D/FD2D.h"
 #include "ThumbImageTile.h"
 #include "ThumbNavTile.h"
@@ -18,15 +19,6 @@ namespace
         bool isArchive { false };
     };
 
-    std::wstring ToLower(std::wstring s)
-    {
-        for (auto& c : s)
-        {
-            c = static_cast<wchar_t>(towlower(c));
-        }
-        return s;
-    }
-
     std::wstring ToUpper(std::wstring s)
     {
         for (auto& c : s)
@@ -38,7 +30,7 @@ namespace
 
     std::wstring GetArchiveBadgeText(const VirtualPath& path)
     {
-        std::wstring ext = ToLower(path.hostPath.extension().wstring());
+        std::wstring ext = CommonUtil::ToLower(path.hostPath.extension().wstring());
         if (ext == L".zip" || ext == L".7z" || ext == L".rar" || ext == L".bsa" || ext == L".ba2")
         {
             if (!ext.empty() && ext.front() == L'.')
@@ -53,7 +45,7 @@ namespace
 
     ThumbNavTile::IconTint GetArchiveIconTint(const VirtualPath& path)
     {
-        const std::wstring ext = ToLower(path.hostPath.extension().wstring());
+        const std::wstring ext = CommonUtil::ToLower(path.hostPath.extension().wstring());
         if (ext == L".bsa" || ext == L".ba2")
         {
             return ThumbNavTile::IconTint::ArchiveBlue;
@@ -100,15 +92,20 @@ ImageBrowserThumbStripController::RebuildResult ImageBrowserThumbStripController
 
     if (!currentFolder.hostPath.empty())
     {
-        const std::vector<VirtualFileEntry> listedEntries = preloadedEntries != nullptr
-            ? *preloadedEntries
-            : VirtualFileSystem::ListDirectory(currentFolder);
-        seenFolderKeys.reserve(listedEntries.size());
-        seenFileKeys.reserve(listedEntries.size());
-
-        for (const auto& entry : listedEntries)
+        std::vector<VirtualFileEntry> listedEntriesOwned {};
+        const std::vector<VirtualFileEntry>* listedEntries = preloadedEntries;
+        if (listedEntries == nullptr)
         {
-            const std::wstring entryKey = ToLower(entry.path.GetDisplayPath());
+            listedEntriesOwned = VirtualFileSystem::ListDirectory(currentFolder);
+            listedEntries = &listedEntriesOwned;
+        }
+
+        seenFolderKeys.reserve(listedEntries->size());
+        seenFileKeys.reserve(listedEntries->size());
+
+        for (const auto& entry : *listedEntries)
+        {
+            const std::wstring entryKey = CommonUtil::ToLower(entry.path.GetDisplayPath());
 
             if (entry.isDirectory)
             {
@@ -137,12 +134,12 @@ ImageBrowserThumbStripController::RebuildResult ImageBrowserThumbStripController
 
     std::sort(folders.begin(), folders.end(), [](const FolderEntryData& a, const FolderEntryData& b)
     {
-        return ToLower(a.path.GetFilename()) < ToLower(b.path.GetFilename());
+        return CommonUtil::ToLower(a.path.GetFilename()) < CommonUtil::ToLower(b.path.GetFilename());
     });
 
     std::sort(files.begin(), files.end(), [](const VirtualPath& a, const VirtualPath& b)
     {
-        return ToLower(a.GetFilename()) < ToLower(b.GetFilename());
+        return CommonUtil::ToLower(a.GetFilename()) < CommonUtil::ToLower(b.GetFilename());
     });
 
     std::vector<std::wstring> desiredOrder;
@@ -272,8 +269,6 @@ ImageBrowserThumbStripController::RebuildResult ImageBrowserThumbStripController
         else
         {
             thumbTile->SetFixedHeight(thumbH);
-            thumbTile->SetSourceFile(p.wstring());
-            thumbTile->SetCaption(p.filename().wstring());
         }
 
         const size_t index = items.size();
@@ -405,7 +400,7 @@ void ImageBrowserThumbStripController::SelectItemByIndex(const SelectItemContext
         const ThumbItem& item = items[selectedIndex];
         if (item.kind == ThumbItemKind::Image)
         {
-            const std::wstring fileNameLower = ToLower(item.path.filename().wstring());
+            const std::wstring fileNameLower = CommonUtil::ToLower(item.path.filename().wstring());
             if (!fileNameLower.empty() && publishFileName)
             {
                 publishFileName(fileNameLower);

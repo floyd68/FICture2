@@ -1,22 +1,14 @@
 #include "VirtualFileSystem.h"
 #include "ArchiveReader.h"
+#include "CommonUtil.h"
 #include "ImageCore/ImageDecodeDispatcher.h"
 #include <algorithm>
-#include <cwctype>
 #include <fstream>
 #include <unordered_set>
 #include <Windows.h>
 
 namespace
 {
-    std::wstring ToLower(const std::wstring& str)
-    {
-        std::wstring result = str;
-        std::transform(result.begin(), result.end(), result.begin(),
-            [](wchar_t c) { return static_cast<wchar_t>(std::towlower(c)); });
-        return result;
-    }
-
     bool StartsWith(const std::wstring& str, const std::wstring& prefix)
     {
         if (str.length() < prefix.length())
@@ -96,7 +88,7 @@ bool VirtualFileSystem::IsImageFile(const std::wstring& filename)
     if (filename.empty())
         return false;
 
-    auto ext = ToLower(filename);
+    auto ext = CommonUtil::ToLower(filename);
     auto dotPos = ext.find_last_of(L'.');
     if (dotPos == std::wstring::npos)
         return false;
@@ -318,7 +310,7 @@ std::vector<VirtualFileEntry> VirtualFileSystem::ListArchiveSubdirectory(
     {
         searchPrefix += L'/';
     }
-    const std::wstring searchPrefixLower = ToLower(searchPrefix);
+    const std::wstring searchPrefixLower = CommonUtil::ToLower(searchPrefix);
 
     auto archiveEntries = reader->ListEntries();
     std::unordered_set<std::wstring> addedDirs;
@@ -326,7 +318,7 @@ std::vector<VirtualFileEntry> VirtualFileSystem::ListArchiveSubdirectory(
     for (const auto& archEntry : archiveEntries)
     {
         std::wstring normalized = NormalizePath(archEntry.name);
-        const std::wstring normalizedLower = ToLower(normalized);
+        const std::wstring normalizedLower = CommonUtil::ToLower(normalized);
         
         // Check if this entry is under our search path
         if (!StartsWith(normalizedLower, searchPrefixLower))
