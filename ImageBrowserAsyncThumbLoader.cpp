@@ -1,7 +1,7 @@
 #include "ImageBrowserAsyncThumbLoader.h"
+#include "CommonUtil.h"
 
 #include <filesystem>
-#include <cwctype>
 #include <deque>
 #include <mutex>
 #include <thread>
@@ -9,18 +9,9 @@
 
 namespace
 {
-    std::wstring ToLower(std::wstring s)
-    {
-        for (auto& c : s)
-        {
-            c = static_cast<wchar_t>(towlower(c));
-        }
-        return s;
-    }
-
     bool PathEqualsInsensitive(const VirtualPath& a, const VirtualPath& b)
     {
-        return ToLower(a.GetDisplayPath()) == ToLower(b.GetDisplayPath());
+        return CommonUtil::ToLower(a.GetDisplayPath()) == CommonUtil::ToLower(b.GetDisplayPath());
     }
 
     std::mutex g_asyncThumbListMutex;
@@ -106,7 +97,8 @@ void ImageBrowserAsyncThumbLoader::StartEnumerate(
                 return;
             }
 
-            constexpr size_t kBatchSize = 64;
+            // Fewer, larger chunks reduce progressive UI rebuild overhead on large folders.
+            constexpr size_t kBatchSize = 256;
             std::vector<VirtualFileEntry> batch {};
             batch.reserve(kBatchSize);
             const std::filesystem::directory_iterator end {};

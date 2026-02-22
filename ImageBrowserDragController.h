@@ -1,15 +1,21 @@
 #pragma once
 
 #include "FD2D/FD2D.h"
-#include "ImageBrowserDragOverlay.h"
 #include "VirtualPath.h"
 
-#include <memory>
+#include <wrl/client.h>
 #include <string>
 
-class ImageBrowserDragDrop
+class ImageBrowserDragController
 {
 public:
+    enum class OverlayKind
+    {
+        None,
+        Replace,
+        Insert
+    };
+
     enum class ActionKind
     {
         None,
@@ -35,5 +41,14 @@ public:
         const POINT& clientPt,
         const D2D1_RECT_F& mainRect,
         FD2D::FileDragVisual& outVisual,
-        ImageBrowserDragOverlay::Kind& outOverlay) const;
+        OverlayKind& outOverlay) const;
+
+    void DrawOverlay(ID2D1RenderTarget* target, const D2D1_RECT_F& rect, OverlayKind kind);
+    void SetInsertThreshold(float threshold);
+    float InsertThreshold() const { return m_insertThreshold; }
+
+private:
+    float m_insertThreshold { 0.75f };
+    Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> m_replaceBrush {};
+    Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> m_insertBrush {};
 };

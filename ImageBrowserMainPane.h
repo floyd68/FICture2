@@ -26,8 +26,6 @@ public:
 
     std::shared_ptr<FD2D::MainImage> MainImage() const { return m_mainImage; }
     bool TryGetMainImageRect(D2D1_RECT_F& outRect) const;
-    bool ContainsMainPoint(const POINT& pt) const;
-    bool TryGetMainRectForPoint(const POINT& pt, D2D1_RECT_F& outRect) const;
     void PauseMainImageViewAnimation();
     void RenderCenteredMainOverlayBitmap(
         ID2D1RenderTarget* target,

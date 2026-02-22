@@ -1,17 +1,11 @@
-#include "ImageBrowserDragDrop.h"
+#include "ImageBrowserDragController.h"
+#include "FD2D/Util.h"
 
 #include "VirtualFileSystem.h"
+#include <algorithm>
 
 namespace
 {
-    bool RectContainsPoint(const D2D1_RECT_F& r, const POINT& pt)
-    {
-        return pt.x >= r.left &&
-            pt.x <= r.right &&
-            pt.y >= r.top &&
-            pt.y <= r.bottom;
-    }
-
     bool IsSupportedDropPath(const VirtualPath& path)
     {
         if (VirtualFileSystem::IsDirectory(path) || path.IsArchiveFile())
@@ -23,7 +17,7 @@ namespace
     }
 }
 
-bool ImageBrowserDragDrop::HandleFileDrop(
+bool ImageBrowserDragController::HandleFileDrop(
     const std::wstring& path,
     const POINT& clientPt,
     const D2D1_RECT_F& mainRect,
@@ -34,7 +28,7 @@ bool ImageBrowserDragDrop::HandleFileDrop(
         return false;
     }
 
-    if (!RectContainsPoint(mainRect, clientPt))
+    if (!FD2D::Util::RectContainsPoint(mainRect, clientPt))
     {
         return false;
     }
@@ -52,7 +46,7 @@ bool ImageBrowserDragDrop::HandleFileDrop(
 
     const float mainW = (std::max)(1.0f, mainRect.right - mainRect.left);
     const float relX = (static_cast<float>(clientPt.x) - mainRect.left) / mainW;
-    if (relX >= 0.75f)
+    if (relX >= m_insertThreshold)
     {
         outAction.kind = ActionKind::InsertHorizontal;
         outAction.path = *vp;
@@ -71,19 +65,19 @@ bool ImageBrowserDragDrop::HandleFileDrop(
     return true;
 }
 
-bool ImageBrowserDragDrop::HandleFileDrag(
+bool ImageBrowserDragController::HandleFileDrag(
     const std::wstring& path,
     const POINT& clientPt,
     const D2D1_RECT_F& mainRect,
     FD2D::FileDragVisual& outVisual,
-    ImageBrowserDragOverlay::Kind& outOverlay) const
+    OverlayKind& outOverlay) const
 {
     if (path.empty())
     {
         return false;
     }
 
-    if (!RectContainsPoint(mainRect, clientPt))
+    if (!FD2D::Util::RectContainsPoint(mainRect, clientPt))
     {
         return false;
     }
@@ -101,14 +95,54 @@ bool ImageBrowserDragDrop::HandleFileDrag(
 
     const float w = (std::max)(1.0f, mainRect.right - mainRect.left);
     const float relX = (static_cast<float>(clientPt.x) - mainRect.left) / w;
-    if (relX < 0.75f)
+    if (relX < m_insertThreshold)
     {
-        outOverlay = ImageBrowserDragOverlay::Kind::Replace;
+        outOverlay = OverlayKind::Replace;
         outVisual = FD2D::FileDragVisual::Replace;
         return true;
     }
 
-    outOverlay = ImageBrowserDragOverlay::Kind::Insert;
+    outOverlay = OverlayKind::Insert;
     outVisual = FD2D::FileDragVisual::Insert;
     return true;
+}
+
+void ImageBrowserDragController::DrawOverlay(ID2D1RenderTarget* target, const D2D1_RECT_F& rect, OverlayKind kind)
+{
+    if (!target || kind == OverlayKind::None)
+    {
+        return;
+    }
+
+    if (!m_replaceBrush)
+    {
+        (void)target->CreateSolidColorBrush(D2D1::ColorF(1.0f, 0.0f, 0.0f, 0.18f), m_replaceBrush.ReleaseAndGetAddressOf());
+    }
+    if (!m_insertBrush)
+    {
+        (void)target->CreateSolidColorBrush(D2D1::ColorF(0.0f, 1.0f, 0.0f, 0.18f), m_insertBrush.ReleaseAndGetAddressOf());
+    }
+
+    if (rect.right <= rect.left || rect.bottom <= rect.top)
+    {
+        return;
+    }
+
+    if (kind == OverlayKind::Replace && m_replaceBrush)
+    {
+        target->FillRectangle(rect, m_replaceBrush.Get());
+    }
+    else if (m_insertBrush)
+    {
+        const float w = (std::max)(1.0f, rect.right - rect.left);
+        const float splitX = rect.left + (w * m_insertThreshold);
+        const D2D1_RECT_F rr { splitX, rect.top, rect.right, rect.bottom };
+        target->FillRectangle(rr, m_insertBrush.Get());
+    }
+}
+
+void ImageBrowserDragController::SetInsertThreshold(float threshold)
+{
+    // Keep usable split area on both sides.
+    m_insertThreshold = (std::max)(0.10f, (std::min)(0.95f, threshold));
 }

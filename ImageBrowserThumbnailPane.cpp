@@ -1,18 +1,8 @@
 #include "ImageBrowserThumbnailPane.h"
+#include "FD2D/Util.h"
 
 #include <algorithm>
 #include <cmath>
-
-namespace
-{
-    bool RectContainsPoint(const D2D1_RECT_F& r, const POINT& pt)
-    {
-        return pt.x >= r.left &&
-            pt.x <= r.right &&
-            pt.y >= r.top &&
-            pt.y <= r.bottom;
-    }
-}
 
 ImageBrowserThumbnailPane::ImageBrowserThumbnailPane()
     : FD2D::Wnd(L"thumbnailPane")
@@ -59,18 +49,6 @@ bool ImageBrowserThumbnailPane::TryGetStripRect(D2D1_RECT_F& outRect) const
     return outRect.right > outRect.left && outRect.bottom > outRect.top;
 }
 
-bool ImageBrowserThumbnailPane::TryGetStripHeight(float& outHeight) const
-{
-    D2D1_RECT_F stripRect {};
-    if (!TryGetStripRect(stripRect))
-    {
-        return false;
-    }
-
-    outHeight = (std::max)(0.0f, stripRect.bottom - stripRect.top);
-    return outHeight > 0.0f;
-}
-
 size_t ImageBrowserThumbnailPane::PagingStep(float itemExtent) const
 {
     D2D1_RECT_F stripRect {};
@@ -90,36 +68,12 @@ size_t ImageBrowserThumbnailPane::PagingStep(float itemExtent) const
     return static_cast<size_t>((std::max)(1, count));
 }
 
-void ImageBrowserThumbnailPane::SetScrollStep(float step)
-{
-    if (m_thumbScroll)
-    {
-        m_thumbScroll->SetScrollStep(step);
-    }
-}
-
-void ImageBrowserThumbnailPane::SetScrollX(float x)
-{
-    if (m_thumbScroll)
-    {
-        m_thumbScroll->SetScrollX(x);
-    }
-}
-
-void ImageBrowserThumbnailPane::EnsureCentered(const D2D1_RECT_F& rect, bool immediate)
-{
-    if (m_thumbScroll)
-    {
-        m_thumbScroll->EnsureCentered(rect, immediate);
-    }
-}
-
 bool ImageBrowserThumbnailPane::OnInputEvent(const FD2D::InputEvent& event)
 {
     if (event.type == FD2D::InputEventType::MouseWheel && event.hasPoint && m_thumbScroll != nullptr)
     {
         const D2D1_RECT_F stripRect = m_thumbScroll->LayoutRect();
-        if (RectContainsPoint(stripRect, event.point))
+        if (FD2D::Util::RectContainsPoint(stripRect, event.point))
         {
             if (m_onWheelFocus)
             {

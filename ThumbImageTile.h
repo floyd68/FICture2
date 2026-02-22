@@ -43,6 +43,7 @@ private:
     float m_fixedHeight { 128.0f };
     bool m_useVariableWidth { false };
     D2D1_SIZE_F m_lastBitmapSize {};
+    std::wstring m_caption {};
     std::shared_ptr<FD2D::ThumbImage> m_image {};
     FD2D::Text m_label;
     ClickHandler m_onClick {};

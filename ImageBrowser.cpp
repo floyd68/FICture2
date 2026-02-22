@@ -1,5 +1,6 @@
 #include "ImageBrowser.h"
 #include "Version.h"
+#include "CommonUtil.h"
 
 #include "framework.h"
 #include "Resource.h"
@@ -10,19 +11,20 @@
 #include "ImageBrowserAsyncThumbLoader.h"
 #include "ImageBrowserSplitCoordinator.h"
 #include "ImageBrowserDeferredActions.h"
-#include "ImageBrowserDragDrop.h"
-#include "ImageBrowserDragOverlay.h"
+#include "ImageBrowserDragController.h"
 #include "ImageBrowserThumbTypes.h"
 #include "ImageBrowserThumbStripController.h"
+#include "ImageBrowserInfoPresenter.h"
+#include "ImageBrowserKeyboardController.h"
+#include "ImageBrowserThumbLayoutCoordinator.h"
+#include "ImageBrowserAssets.h"
 #include "IpcCompareRequest.h"
 #include "Ficture2Backplate.h"
-#include "AppSetup.h"
 
 #include "FD2D/FD2D.h"
-#include "FD2D/Core.h"
+#include "FD2D/Util.h"
 #include "FD2D/MainImage.h"
 #include "ImageCore/DecoderRegistry.h"
-#include "ImageCore/ImageDecodeDispatcher.h"
 #include "ImageCore/ImageCore.h"
 #include "VirtualPath.h"
 #include "VirtualFileSystem.h"
@@ -30,7 +32,6 @@
 #include <algorithm>
 #include <atomic>
 #include <cstdint>
-#include <cmath>
 #include <filesystem>
 #include <mutex>
 #include <memory>
@@ -42,9 +43,6 @@
 #include <sstream>
 #include <cwctype>
 #include <wrl/client.h>
-#include <wincodec.h>
-#include <shellapi.h>
-#include <commdlg.h>
 #include <commctrl.h>
 
 namespace
@@ -58,296 +56,26 @@ namespace
     constexpr float kThumbStripMaxH = (kThumbStripPadding * 2.0f) + kThumbMaxSide;
     constexpr float kSplitPanelDefaultHitThickness = 12.0f; // Splitter::m_hitAreaThickness default
 
-
-    static unsigned long long NowMs()
+    static std::wstring MakeStableThumbName(const wchar_t* prefix, const std::wstring& path)
     {
-        return static_cast<unsigned long long>(GetTickCount64());
-    }
+        std::wstring s = CommonUtil::ToLower(path);
 
-    static uint64_t Fnv1a64(const std::wstring& s)
-    {
-        // FNV-1a 64-bit over UTF-16 code units.
-        uint64_t h = 14695981039346656037ull;
-        for (wchar_t c : s)
-        {
-            h ^= static_cast<uint64_t>(c);
-            h *= 1099511628211ull;
-        }
-        return h;
-    }
-
-    static std::wstring Hex64(uint64_t v)
-    {
-        wchar_t buf[32] {};
-        (void)swprintf_s(buf, L"%016llX", static_cast<unsigned long long>(v));
-        return buf;
+        return std::wstring(prefix) + L"_" + CommonUtil::Hex64(CommonUtil::Fnv1a64(s)) + L"_tile";
     }
 
     static std::wstring MakeStableThumbName(const wchar_t* prefix, const std::filesystem::path& p)
     {
-        std::wstring s = p.wstring();
-        for (auto& c : s)
-        {
-            c = static_cast<wchar_t>(towlower(c));
-        }
-
-        return std::wstring(prefix) + L"_" + Hex64(Fnv1a64(s)) + L"_tile";
+		return MakeStableThumbName(prefix, p.wstring());
     }
 
     static std::wstring MakeStableThumbName(const wchar_t* prefix, const VirtualPath& vp)
     {
-        std::wstring s = vp.GetDisplayPath();
-        for (auto& c : s)
-        {
-            c = static_cast<wchar_t>(towlower(c));
-        }
-
-        return std::wstring(prefix) + L"_" + Hex64(Fnv1a64(s)) + L"_tile";
-    }
-
-    static std::wstring NormalizePathLowerForCompare(const std::filesystem::path& p)
-    {
-        std::wstring s = p.wstring();
-        for (auto& c : s)
-        {
-            if (c == L'/')
-            {
-                c = L'\\';
-            }
-            c = static_cast<wchar_t>(towlower(c));
-        }
-        while (!s.empty() && (s.back() == L'\\' || s.back() == L'/'))
-        {
-            s.pop_back();
-        }
-        return s;
-    }
-
-    static bool PathEqualsInsensitive(const std::filesystem::path& a, const std::filesystem::path& b)
-    {
-        return NormalizePathLowerForCompare(a) == NormalizePathLowerForCompare(b);
-    }
-
-    static bool PathEqualsInsensitive(const std::filesystem::path& a, const VirtualPath& b)
-    {
-        return NormalizePathLowerForCompare(a) == NormalizePathLowerForCompare(b.hostPath);
-    }
-
-    static std::wstring NormalizeInnerPathLowerForCompare(const std::wstring& inner)
-    {
-        std::wstring s = inner;
-        for (auto& c : s)
-        {
-            if (c == L'\\')
-            {
-                c = L'/';
-            }
-            c = static_cast<wchar_t>(towlower(c));
-        }
-        while (!s.empty() && (s.back() == L'/' || s.back() == L'\\'))
-        {
-            s.pop_back();
-        }
-        return s;
-    }
-
-    static bool PathEqualsInsensitive(const VirtualPath& a, const VirtualPath& b)
-    {
-        return NormalizePathLowerForCompare(a.hostPath) == NormalizePathLowerForCompare(b.hostPath) &&
-            NormalizeInnerPathLowerForCompare(a.archiveInnerPath) == NormalizeInnerPathLowerForCompare(b.archiveInnerPath);
-    }
-
-    static std::vector<std::wstring> GetSupportedImageExtensions()
-    {
-        return ImageCore::ImageDecodeDispatcher::GetSupportedExtensions();
-    }
-
-    static std::wstring BuildSupportedImageDialogFilter()
-    {
-        const std::vector<std::wstring> exts = GetSupportedImageExtensions();
-        std::wostringstream patternBuilder {};
-        for (size_t i = 0; i < exts.size(); ++i)
-        {
-            if (i != 0)
-            {
-                patternBuilder << L";";
-            }
-            patternBuilder << L"*" << exts[i];
-        }
-        std::wstring wildcardPattern = patternBuilder.str();
-        if (wildcardPattern.empty())
-        {
-            wildcardPattern = L"*.*";
-        }
-
-        std::wstring filter {};
-        filter.reserve(256 + wildcardPattern.size() * 2);
-        filter += L"Supported images (" + wildcardPattern + L")";
-        filter.push_back(L'\0');
-        filter += wildcardPattern;
-        filter.push_back(L'\0');
-        filter += L"All files (*.*)";
-        filter.push_back(L'\0');
-        filter += L"*.*";
-        filter.push_back(L'\0');
-        filter.push_back(L'\0');
-        return filter;
-    }
-
-    static bool TryGetIniFilePath(std::wstring& outIniFile)
-    {
-        outIniFile = FICture2App::GetIniFilePath();
-        return !outIniFile.empty();
-    }
-
-
-    static const wchar_t* DxgiFormatToString(DXGI_FORMAT fmt)
-    {
-        switch (fmt)
-        {
-        case DXGI_FORMAT_B8G8R8A8_UNORM:
-            return L"DXGI_FORMAT_B8G8R8A8_UNORM";
-        case DXGI_FORMAT_B8G8R8A8_UNORM_SRGB:
-            return L"DXGI_FORMAT_B8G8R8A8_UNORM_SRGB";
-        case DXGI_FORMAT_BC1_UNORM:
-            return L"DXGI_FORMAT_BC1_UNORM";
-        case DXGI_FORMAT_BC1_UNORM_SRGB:
-            return L"DXGI_FORMAT_BC1_UNORM_SRGB";
-        case DXGI_FORMAT_BC2_UNORM:
-            return L"DXGI_FORMAT_BC2_UNORM";
-        case DXGI_FORMAT_BC2_UNORM_SRGB:
-            return L"DXGI_FORMAT_BC2_UNORM_SRGB";
-        case DXGI_FORMAT_BC3_UNORM:
-            return L"DXGI_FORMAT_BC3_UNORM";
-        case DXGI_FORMAT_BC3_UNORM_SRGB:
-            return L"DXGI_FORMAT_BC3_UNORM_SRGB";
-        case DXGI_FORMAT_BC4_UNORM:
-            return L"DXGI_FORMAT_BC4_UNORM";
-        case DXGI_FORMAT_BC4_SNORM:
-            return L"DXGI_FORMAT_BC4_SNORM";
-        case DXGI_FORMAT_BC5_UNORM:
-            return L"DXGI_FORMAT_BC5_UNORM";
-        case DXGI_FORMAT_BC5_SNORM:
-            return L"DXGI_FORMAT_BC5_SNORM";
-        case DXGI_FORMAT_BC6H_UF16:
-            return L"DXGI_FORMAT_BC6H_UF16";
-        case DXGI_FORMAT_BC6H_SF16:
-            return L"DXGI_FORMAT_BC6H_SF16";
-        case DXGI_FORMAT_BC7_UNORM:
-            return L"DXGI_FORMAT_BC7_UNORM";
-        case DXGI_FORMAT_BC7_UNORM_SRGB:
-            return L"DXGI_FORMAT_BC7_UNORM_SRGB";
-        default:
-            return L"DXGI_FORMAT_UNKNOWN";
-        }
-    }
-
-    static std::wstring ToLowerString(std::wstring value)
-    {
-        std::transform(value.begin(), value.end(), value.begin(),
-            [](wchar_t c)
-            {
-                return static_cast<wchar_t>(towlower(c));
-            });
-        return value;
-    }
-
-    static std::wstring ArchiveFormatLabelForPath(const std::wstring& path)
-    {
-        if (path.empty())
-        {
-            return L"";
-        }
-
-        auto vpath = VirtualPath::Parse(path);
-        if (!vpath)
-        {
-            return L"";
-        }
-
-        if (!vpath->IsInArchive() && !vpath->IsArchiveFile())
-        {
-            return L"";
-        }
-
-        const std::wstring ext = ToLowerString(vpath->hostPath.extension().wstring());
-        if (ext == L".zip")
-        {
-            return L"ZIP";
-        }
-        if (ext == L".7z")
-        {
-            return L"7Z";
-        }
-        if (ext == L".rar")
-        {
-            return L"RAR";
-        }
-        if (ext == L".ba2")
-        {
-            return L"BA2";
-        }
-
-        return L"";
-    }
-
-    static int DxgiBitsPerPixel(DXGI_FORMAT fmt)
-    {
-        switch (fmt)
-        {
-        case DXGI_FORMAT_B8G8R8A8_UNORM:
-        case DXGI_FORMAT_B8G8R8A8_UNORM_SRGB:
-            return 32;
-        case DXGI_FORMAT_BC1_UNORM:
-        case DXGI_FORMAT_BC1_UNORM_SRGB:
-        case DXGI_FORMAT_BC4_UNORM:
-        case DXGI_FORMAT_BC4_SNORM:
-            return 4;
-        case DXGI_FORMAT_BC2_UNORM:
-        case DXGI_FORMAT_BC2_UNORM_SRGB:
-        case DXGI_FORMAT_BC3_UNORM:
-        case DXGI_FORMAT_BC3_UNORM_SRGB:
-        case DXGI_FORMAT_BC5_UNORM:
-        case DXGI_FORMAT_BC5_SNORM:
-        case DXGI_FORMAT_BC6H_UF16:
-        case DXGI_FORMAT_BC6H_SF16:
-        case DXGI_FORMAT_BC7_UNORM:
-        case DXGI_FORMAT_BC7_UNORM_SRGB:
-            return 8;
-        default:
-            return 0;
-        }
-    }
-
-    static bool RectContainsPoint(const D2D1_RECT_F& r, const POINT& pt)
-    {
-        return pt.x >= r.left &&
-            pt.x <= r.right &&
-            pt.y >= r.top &&
-            pt.y <= r.bottom;
-    }
-
-    static FD2D::Wnd* ResolveRootBrowserWndFromBus(const std::shared_ptr<Ficture2Backplate::EventBus>& bus)
-    {
-        if (!bus)
-        {
-            return nullptr;
-        }
-
-        const auto browsers = bus->ImageBrowsersSnapshot();
-        if (browsers.empty())
-        {
-            return nullptr;
-        }
-
-        return browsers.front();
+		return MakeStableThumbName(prefix, vp.GetDisplayPath());
     }
 
     class ImageBrowserImpl : public FD2D::Wnd, public IImageBrowserOps
     {
     public:
-        enum class OpenDialogMode;
-
         explicit ImageBrowserImpl(const std::wstring& name, const std::wstring& initialFile = L"")
             : Wnd(name)
             , m_initialFile(initialFile)
@@ -383,6 +111,10 @@ namespace
                 m_browserFocusedBackgroundColor = ficBp->FocusedBackgroundColor();
                 ApplyShowNavItems(m_showNavItems);
                 ApplyAlphaCheckerboard(ficBp->AlphaCheckerboardEnabled());
+                if (m_mainImage)
+                {
+                    m_mainImage->SetZoomStiffness(ficBp->ImageZoomStiffness());
+                }
             }
             // Default per-ImageBrowser background follows current global clear color.
             m_browserBackgroundColor = backplate.ClearColor();
@@ -597,7 +329,11 @@ namespace
             if (m_selectedFocus && m_thumbPane)
             {
                 const D2D1_RECT_F focusRect = m_selectedFocus->LayoutRect();
-                m_thumbPane->EnsureCentered(focusRect, true);
+                auto scroll = m_thumbPane->Scroll();
+                if (scroll)
+                {
+                    scroll->EnsureCentered(focusRect, true);
+                }
             }
 
         }
@@ -638,7 +374,7 @@ namespace
             // Throttle progressive UI list updates so large folders don't monopolize the UI thread.
             if (m_progressiveUiDirty && !m_progressiveLoadCompleted)
             {
-                const unsigned long long now = NowMs();
+                const unsigned long long now = CommonUtil::NowMs();
                 if (now - m_progressiveLastApplyMs >= 50)
                 {
                     ApplyProgressiveThumbUpdate(false);
@@ -681,15 +417,11 @@ namespace
             }
 
             // Drag&drop overlay (drawn on top of the main image area only).
-            if (m_dragOverlay != ImageBrowserDragOverlay::Kind::None && m_mainPane != nullptr)
+            if (m_dragOverlay != ImageBrowserDragController::OverlayKind::None && m_mainPane != nullptr)
             {
-                if (!m_dragOverlayLayer)
-                {
-                    m_dragOverlayLayer = std::make_unique<ImageBrowserDragOverlay>(target);
-                }
                 m_mainPane->RenderOnMainRect([this, target](const D2D1_RECT_F& mainRect)
                 {
-                    m_dragOverlayLayer->Draw(target, mainRect, m_dragOverlay);
+                    m_dragController.DrawOverlay(target, mainRect, m_dragOverlay);
                 });
             }
 
@@ -698,9 +430,9 @@ namespace
                 (m_items[m_selectedIndex].kind == ThumbItemKind::Folder || m_items[m_selectedIndex].kind == ThumbItemKind::Up) &&
                 m_mainPane != nullptr)
             {
-                if (EnsureFolderBitmap(target))
+                if (m_assets.EnsureFolderBitmap(target))
                 {
-                    m_mainPane->RenderCenteredMainOverlayBitmap(target, m_folderBitmap.Get(), 0.30f);
+                    m_mainPane->RenderCenteredMainOverlayBitmap(target, m_assets.FolderBitmap(), 0.30f);
                 }
             }
         }
@@ -796,7 +528,7 @@ namespace
                 {
                     continue;
                 }
-                if (RectContainsPoint(item.focus->LayoutRect(), pt))
+                if (FD2D::Util::RectContainsPoint(item.focus->LayoutRect(), pt))
                 {
                     return item.path;
                 }
@@ -807,37 +539,6 @@ namespace
                 return m_items[m_selectedIndex].path;
             }
             return VirtualPath();
-        }
-
-        void ShowImagePathInExplorer(const VirtualPath& target)
-        {
-            if (target.empty())
-            {
-                return;
-            }
-
-            const std::filesystem::path nativePath = target.hostPath;
-            if (nativePath.empty())
-            {
-                return;
-            }
-
-            const std::wstring params = L"/select,\"" + nativePath.wstring() + L"\"";
-            const HINSTANCE result = ShellExecuteW(
-                BackplateRef() ? BackplateRef()->Window() : nullptr,
-                L"open",
-                L"explorer.exe",
-                params.c_str(),
-                nullptr,
-                SW_SHOWNORMAL);
-            if (reinterpret_cast<intptr_t>(result) <= 32)
-            {
-                MessageBoxW(
-                    BackplateRef() ? BackplateRef()->Window() : nullptr,
-                    L"Failed to open Windows Explorer for the selected image.",
-                    L"FICture2",
-                    MB_OK | MB_ICONWARNING);
-            }
         }
 
         bool HandleDeferredActionMessage()
@@ -917,156 +618,24 @@ namespace
 
         bool HandleTypeToSelectKeyDown(const FD2D::InputEvent& event)
         {
-            if (m_items.empty())
-            {
-                return false;
-            }
-
-            if (event.modifiers.control || event.modifiers.alt)
-            {
-                return false;
-            }
-
-            const unsigned long long now = NowMs();
-            if (now - m_typeSelectLastInputMs > 1200)
-            {
-                m_typeSelectQuery.clear();
-            }
-
-            // Let navigation/edit/system keys flow to normal key handlers.
-            if (IsNavigationOrSystemKey(event.keyCode))
-            {
-                return false;
-            }
-
-            wchar_t ch = 0;
-            if (!TryGetPrintableKey(event, ch))
-            {
-                return false;
-            }
-
-            std::wstring nextQuery = m_typeSelectQuery;
-            nextQuery.push_back(ch);
-
-            if (!TrySelectByTypeToSelectQuery(nextQuery) && nextQuery.size() > 1)
-            {
-                nextQuery.assign(1, ch);
-                (void)TrySelectByTypeToSelectQuery(nextQuery);
-            }
-
-            m_typeSelectQuery = nextQuery;
-            m_typeSelectLastInputMs = now;
-            return true;
-        }
-
-        bool TrySelectByTypeToSelectQuery(const std::wstring& query)
-        {
-            if (query.empty() || m_items.empty())
-            {
-                return false;
-            }
-
-            const size_t count = m_items.size();
-            size_t start = 0;
-            if (m_selectedIndex < count)
-            {
-                start = (m_selectedIndex + 1) % count;
-            }
-
-            for (size_t offset = 0; offset < count; ++offset)
-            {
-                const size_t idx = (start + offset) % count;
-                if (StartsWithInsensitive(TypeToSelectItemLabel(idx), query))
+            return ImageBrowserKeyboardController::HandleTypeToSelectWithStateStorage(
+                event.keyCode,
+                event.scanCode,
+                event.modifiers.control,
+                event.modifiers.alt,
+                CommonUtil::NowMs(),
+                m_items.size(),
+                m_selectedIndex,
+                [this](size_t index)
                 {
-                    SelectItemByIndex(idx);
-                    return true;
-                }
-            }
-
-            return false;
-        }
-
-        bool IsNavigationOrSystemKey(UINT keyCode) const
-        {
-            switch (keyCode)
-            {
-            case VK_LEFT:
-            case VK_RIGHT:
-            case VK_UP:
-            case VK_DOWN:
-            case VK_HOME:
-            case VK_END:
-            case VK_PRIOR:
-            case VK_NEXT:
-            case VK_RETURN:
-            case VK_TAB:
-            case VK_DELETE:
-            case VK_INSERT:
-            case VK_F1:
-            case VK_F2:
-            case VK_F3:
-            case VK_F4:
-            case VK_F5:
-            case VK_F6:
-            case VK_F7:
-            case VK_F8:
-            case VK_F9:
-            case VK_F10:
-            case VK_F11:
-            case VK_F12:
-                return true;
-            default:
-                return false;
-            }
-        }
-
-        bool TryGetPrintableKey(const FD2D::InputEvent& event, wchar_t& outChar) const
-        {
-            wchar_t chars[4] {};
-            BYTE keyState[256] {};
-            if (!GetKeyboardState(keyState))
-            {
-                return false;
-            }
-
-            const UINT scanCode = event.scanCode;
-            int converted = ToUnicode(event.keyCode, scanCode, keyState, chars, 4, 0);
-            if (converted < 0)
-            {
-                wchar_t clearBuf[4] {};
-                (void)ToUnicode(event.keyCode, scanCode, keyState, clearBuf, 4, 0);
-                return false;
-            }
-            if (converted <= 0)
-            {
-                return false;
-            }
-
-            wchar_t ch = chars[0];
-            if (!iswprint(ch))
-            {
-                return false;
-            }
-            outChar = static_cast<wchar_t>(towlower(ch));
-            return true;
-        }
-
-        static bool StartsWithInsensitive(const std::wstring& text, const std::wstring& prefix)
-        {
-            if (prefix.size() > text.size())
-            {
-                return false;
-            }
-            for (size_t i = 0; i < prefix.size(); ++i)
-            {
-                const wchar_t tc = static_cast<wchar_t>(towlower(text[i]));
-                const wchar_t pc = static_cast<wchar_t>(towlower(prefix[i]));
-                if (tc != pc)
+                    return TypeToSelectItemLabel(index);
+                },
+                [this](size_t index)
                 {
-                    return false;
-                }
-            }
-            return true;
+                    SelectItemByIndex(index);
+                },
+                m_typeSelectQuery,
+                m_typeSelectLastInputMs);
         }
 
         std::wstring TypeToSelectItemLabel(size_t index) const
@@ -1135,28 +704,29 @@ namespace
 
             // Only accept drops onto the main image region (not the thumbnail strip).
             D2D1_RECT_F mainRect {};
-            if (!m_mainPane || !m_mainPane->TryGetMainRectForPoint(clientPt, mainRect))
+            if (!m_mainPane ||
+                !m_mainPane->TryGetMainImageRect(mainRect) ||
+                !FD2D::Util::RectContainsPoint(mainRect, clientPt))
             {
                 return false;
             }
 
             ClearDragOverlay();
-            const ImageBrowserDragDrop dragDrop {};
-            ImageBrowserDragDrop::Action action {};
-            if (!dragDrop.HandleFileDrop(path, clientPt, mainRect, action))
+            ImageBrowserDragController::Action action {};
+            if (!m_dragController.HandleFileDrop(path, clientPt, mainRect, action))
             {
                 return false;
             }
 
             switch (action.kind)
             {
-            case ImageBrowserDragDrop::ActionKind::InsertHorizontal:
-                QueueInsertHorizontalWithPathAfterThis(action.path);
+            case ImageBrowserDragController::ActionKind::InsertHorizontal:
+                QueueDeferredActionCore(DeferredActionKind::InsertHorizontalWithPathAfterName, action.path, Name());
                 return true;
-            case ImageBrowserDragDrop::ActionKind::NavigateToFolder:
+            case ImageBrowserDragController::ActionKind::NavigateToFolder:
                 QueueDeferredAction(DeferredActionKind::NavigateToFolder, action.path);
                 return true;
-            case ImageBrowserDragDrop::ActionKind::NavigateToFile:
+            case ImageBrowserDragController::ActionKind::NavigateToFile:
                 QueueDeferredAction(DeferredActionKind::NavigateToFile, action.path);
                 return true;
             default:
@@ -1173,15 +743,16 @@ namespace
             }
 
             D2D1_RECT_F mainRect {};
-            if (!m_mainPane || !m_mainPane->TryGetMainRectForPoint(clientPt, mainRect))
+            if (!m_mainPane ||
+                !m_mainPane->TryGetMainImageRect(mainRect) ||
+                !FD2D::Util::RectContainsPoint(mainRect, clientPt))
             {
                 outVisual = FD2D::FileDragVisual::None;
                 ClearDragOverlay();
                 return false;
             }
 
-            const ImageBrowserDragDrop dragDrop {};
-            if (!dragDrop.HandleFileDrag(path, clientPt, mainRect, outVisual, m_dragOverlay))
+            if (!m_dragController.HandleFileDrag(path, clientPt, mainRect, outVisual, m_dragOverlay))
             {
                 outVisual = FD2D::FileDragVisual::None;
                 ClearDragOverlay();
@@ -1445,164 +1016,54 @@ namespace
             ActivateSelected,
         };
 
-        enum class OpenDialogMode
-        {
-            ReplaceCurrent,
-            SplitHorizontalNewBrowser,
-        };
-
-        bool EnsureFolderBitmap(ID2D1RenderTarget* target)
-        {
-            if (target == nullptr)
-            {
-                return false;
-            }
-
-            if (m_folderBitmap && m_folderBitmapTarget == target)
-            {
-                return true;
-            }
-
-            m_folderBitmap.Reset();
-            m_folderBitmapTarget = nullptr;
-
-            HMODULE module = GetModuleHandleW(nullptr);
-            HRSRC hrsrc = FindResourceW(module, MAKEINTRESOURCEW(IDR_PNG_FOLDER), RT_RCDATA);
-            if (!hrsrc)
-            {
-                return false;
-            }
-
-            HGLOBAL hglob = LoadResource(module, hrsrc);
-            if (!hglob)
-            {
-                return false;
-            }
-
-            void* data = LockResource(hglob);
-            DWORD size = SizeofResource(module, hrsrc);
-            if (!data || size == 0)
-            {
-                return false;
-            }
-
-            Microsoft::WRL::ComPtr<IWICImagingFactory> wic;
-            HRESULT hr = CoCreateInstance(
-                CLSID_WICImagingFactory,
-                nullptr,
-                CLSCTX_INPROC_SERVER,
-                IID_PPV_ARGS(&wic));
-            if (FAILED(hr) || !wic)
-            {
-                return false;
-            }
-
-            Microsoft::WRL::ComPtr<IWICStream> stream;
-            hr = wic->CreateStream(&stream);
-            if (FAILED(hr) || !stream)
-            {
-                return false;
-            }
-
-            hr = stream->InitializeFromMemory(reinterpret_cast<BYTE*>(data), size);
-            if (FAILED(hr))
-            {
-                return false;
-            }
-
-            Microsoft::WRL::ComPtr<IWICBitmapDecoder> decoder;
-            hr = wic->CreateDecoderFromStream(stream.Get(), nullptr, WICDecodeMetadataCacheOnLoad, &decoder);
-            if (FAILED(hr) || !decoder)
-            {
-                return false;
-            }
-
-            Microsoft::WRL::ComPtr<IWICBitmapFrameDecode> frame;
-            hr = decoder->GetFrame(0, &frame);
-            if (FAILED(hr) || !frame)
-            {
-                return false;
-            }
-
-            Microsoft::WRL::ComPtr<IWICFormatConverter> converter;
-            hr = wic->CreateFormatConverter(&converter);
-            if (FAILED(hr) || !converter)
-            {
-                return false;
-            }
-
-            hr = converter->Initialize(
-                frame.Get(),
-                GUID_WICPixelFormat32bppPBGRA,
-                WICBitmapDitherTypeNone,
-                nullptr,
-                0.0,
-                WICBitmapPaletteTypeCustom);
-            if (FAILED(hr))
-            {
-                return false;
-            }
-
-            hr = target->CreateBitmapFromWicBitmap(converter.Get(), nullptr, &m_folderBitmap);
-            if (FAILED(hr) || !m_folderBitmap)
-            {
-                return false;
-            }
-
-            m_folderBitmapTarget = target;
-            return true;
-        }
-
         bool UpdateThumbSizingFromPane()
         {
             float paneH = 0.0f;
-            if (m_thumbPane == nullptr || !m_thumbPane->TryGetStripHeight(paneH))
+            if (m_thumbPane == nullptr)
             {
                 // Fall back to backplate-synced height only when local layout is not ready yet.
                 (void)TryGetSyncedThumbStripHeight(paneH);
             }
-            if (paneH <= 1.0f)
+            else
             {
-                return false;
-            }
-
-            // Keep thumbnail spacing constant; only scale the thumbnail height with the pane height.
-            // Controller uses thumbs->SetPadding(4), so keep this value aligned.
-            constexpr float contentPadding = 4.0f;
-            const float availableForThumb = paneH - (contentPadding * 2.0f);
-
-            // Use continuous sizing so splitter drag is reflected immediately.
-            // Coarse snap steps (e.g. 96/128/192) make the strip look "stuck" at one size.
-            float newHeight = (std::max)(kThumbMinSide, (std::min)(kThumbMaxSide, availableForThumb));
-
-            // Quantize lightly to reduce jitter from fractional layout values.
-            newHeight = std::round(newHeight);
-
-            const bool splitterDragging = (m_rootSplit != nullptr && m_rootSplit->IsSplitterDragging());
-            const float minDelta = splitterDragging ? 1.5f : 0.5f;
-
-            // While dragging splitter, limit expensive thumbnail retargeting frequency.
-            if (splitterDragging)
-            {
-                const unsigned long long now = NowMs();
-                if ((now - m_lastThumbSizingApplyMs) < 33ULL && std::abs(newHeight - m_thumbH) < 6.0f)
+                D2D1_RECT_F stripRect {};
+                if (!m_thumbPane->TryGetStripRect(stripRect))
                 {
-                    return false;
+                    (void)TryGetSyncedThumbStripHeight(paneH);
+                }
+                else
+                {
+                    paneH = (std::max)(0.0f, stripRect.bottom - stripRect.top);
                 }
             }
-
-            // Ignore tiny sub-pixel changes only.
-            if (std::abs(newHeight - m_thumbH) < minDelta)
+            const ImageBrowserThumbLayoutCoordinator::ThumbSizeInput sizingInput
+            {
+                paneH,
+                m_thumbH,
+                (m_rootSplit != nullptr && m_rootSplit->IsSplitterDragging()),
+                CommonUtil::NowMs(),
+                m_lastThumbSizingApplyMs,
+                kThumbMinSide,
+                kThumbMaxSide,
+                4.0f
+            };
+            const auto sizing = ImageBrowserThumbLayoutCoordinator::EvaluateThumbSize(sizingInput);
+            if (!sizing.shouldApply)
             {
                 return false;
             }
+            const float newHeight = sizing.newThumbSide;
 
             m_thumbW = newHeight; // Keep this for navigation tiles
             m_thumbH = newHeight;
 
             if (m_thumbPane)
             {
-                m_thumbPane->SetScrollStep((std::max)(48.0f, newHeight * 0.75f));
+                auto scroll = m_thumbPane->Scroll();
+                if (scroll)
+                {
+                    scroll->SetScrollStep((std::max)(48.0f, newHeight * 0.75f));
+                }
             }
 
             for (auto& item : m_items)
@@ -1624,7 +1085,7 @@ namespace
             {
                 BackplateRef()->RequestLayout();
             }
-            m_lastThumbSizingApplyMs = NowMs();
+            m_lastThumbSizingApplyMs = sizing.updatedApplyMs;
             return true;
         }
 
@@ -1736,22 +1197,6 @@ namespace
             ApplyAlphaCheckerboard(checkerEnabled);
         }
 
-        // Command domain: file/viewer lifecycle.
-        void BrowserCmdOpenImage() override
-        {
-            OpenFileDialog(OpenDialogMode::ReplaceCurrent);
-        }
-
-        void BrowserCmdOpenImageSplitNew() override
-        {
-            OpenFileDialog(OpenDialogMode::SplitHorizontalNewBrowser);
-        }
-
-        void BrowserCmdOpenNewImage() override
-        {
-            HandleOpenNewImageCommand();
-        }
-
         // Command domain: selection/navigation.
         void BrowserCmdActivateSelected() override
         {
@@ -1814,17 +1259,6 @@ namespace
             QueueCloseHorizontalThisBrowser();
         }
 
-        // Command domain: view/appearance toggles.
-        void BrowserCmdBackgroundColor() override
-        {
-            PickAndApplyBackgroundColor();
-        }
-
-        void BrowserCmdFocusedBackgroundColor() override
-        {
-            PickAndApplyFocusedBackgroundColor();
-        }
-
         void BrowserCmdFitToScreen() override
         {
             FitToScreen();
@@ -1845,36 +1279,12 @@ namespace
             ToggleSamplingQualityFromContextMenu();
         }
 
-        // Command domain: integration/system actions.
-        void BrowserCmdShowInExplorerAtPoint(const POINT& ptClient) override
-        {
-            ShowImagePathInExplorer(GetContextMenuTargetImagePathAtPoint(ptClient));
-        }
-
-        void BrowserCmdRegisterAssociations() override
-        {
-#if FICTURE2_ENABLE_REGISTRATION_MENU
-            FICture2App::RegisterSupportedFileAssociations(ContextMenuOwnerWindow());
-#endif
-        }
-
-        void BrowserCmdRegisterThumbnailProvider() override
-        {
-#if FICTURE2_ENABLE_REGISTRATION_MENU
-            FICture2App::RegisterThumbnailProvider(ContextMenuOwnerWindow(), false);
-#endif
-        }
-
-        void BrowserCmdUnregisterThumbnailProvider() override
-        {
-#if FICTURE2_ENABLE_REGISTRATION_MENU
-            FICture2App::RegisterThumbnailProvider(ContextMenuOwnerWindow(), true);
-#endif
-        }
-
         bool BrowserContextMenuPrepareForDisplay(const POINT& ptClient) override
         {
-            if (m_mainPane == nullptr || !m_mainPane->ContainsMainPoint(ptClient))
+            D2D1_RECT_F mainRect {};
+            if (m_mainPane == nullptr ||
+                !m_mainPane->TryGetMainImageRect(mainRect) ||
+                !FD2D::Util::RectContainsPoint(mainRect, ptClient))
             {
                 return false;
             }
@@ -1891,6 +1301,11 @@ namespace
             snapshot.highQualitySampling = mainImage ? mainImage->HighQualitySampling() : true;
             snapshot.hasExplorerTarget = !GetContextMenuTargetImagePathAtPoint(ptClient).empty();
             return snapshot;
+        }
+
+        std::wstring BrowserGetExplorerTargetPathAtPoint(const POINT& ptClient) const override
+        {
+            return GetContextMenuTargetImagePathAtPoint(ptClient).wstring();
         }
 
         bool BrowserHasFocusForTitle() const override
@@ -1951,12 +1366,21 @@ namespace
             rootSplit->OnSplitChanged([this](float)
             {
                 float h = 0.0f;
-                if (m_thumbPane == nullptr || !m_thumbPane->TryGetStripHeight(h))
+                if (m_thumbPane == nullptr)
                 {
                     return;
                 }
+                D2D1_RECT_F stripRect {};
+                if (!m_thumbPane->TryGetStripRect(stripRect))
+                {
+                    return;
+                }
+                h = (std::max)(0.0f, stripRect.bottom - stripRect.top);
 
-                const float clampedHeight = (std::max)(kThumbStripMinH, (std::min)(kThumbStripMaxH, h));
+                const float clampedHeight = ImageBrowserThumbLayoutCoordinator::ClampThumbStripHeight(
+                    h,
+                    kThumbStripMinH,
+                    kThumbStripMaxH);
                 SetSyncedThumbStripHeight(clampedHeight);
                 const bool splitterDragging = (m_rootSplit != nullptr && m_rootSplit->IsSplitterDragging());
                 if (splitterDragging)
@@ -2038,31 +1462,38 @@ namespace
 
             const D2D1_RECT_F rootR = m_rootSplit->LayoutRect();
             const float totalH = (std::max)(0.0f, rootR.bottom - rootR.top);
-            if (totalH <= 0.0f)
+            const auto ratioResult = ImageBrowserThumbLayoutCoordinator::ComputeSyncedSplitRatio(
+                {
+                    totalH,
+                    syncedHeight,
+                    kThumbStripMinH,
+                    kThumbStripMaxH,
+                    kSplitPanelDefaultHitThickness
+                });
+            if (!ratioResult.valid)
             {
                 return false;
             }
-
-            const float desiredSecond = (std::max)(kThumbStripMinH, (std::min)(kThumbStripMaxH, syncedHeight));
-
-            // Estimate available height like SplitPanel::Arrange (childArea minus splitter thickness).
-            const float availableH = (std::max)(1.0f, totalH - kSplitPanelDefaultHitThickness);
-            const float ratio = 1.0f - (desiredSecond / availableH);
 
             if (!force)
             {
                 // If we're already close, avoid churning layouts.
                 float cur = 0.0f;
-                if (m_thumbPane != nullptr && m_thumbPane->TryGetStripHeight(cur))
+                if (m_thumbPane != nullptr)
                 {
-                    if (std::abs(cur - desiredSecond) < 1.0f)
+                    D2D1_RECT_F stripRect {};
+                    if (m_thumbPane->TryGetStripRect(stripRect))
                     {
-                        return false;
+                        cur = (std::max)(0.0f, stripRect.bottom - stripRect.top);
+                        if (std::abs(cur - ratioResult.desiredSecondHeight) < 1.0f)
+                        {
+                            return false;
+                        }
                     }
                 }
             }
 
-            m_rootSplit->SetSplitRatio((std::max)(0.0f, (std::min)(1.0f, ratio)));
+            m_rootSplit->SetSplitRatio(ratioResult.splitRatio);
 
             if (BackplateRef() != nullptr)
             {
@@ -2144,7 +1575,7 @@ namespace
                     p = li.sourcePath;
                 }
             }
-            return ToLower(std::filesystem::path(p).filename().wstring());
+            return CommonUtil::ToLower(std::filesystem::path(p).filename().wstring());
         }
 
         void RefreshInfoPanel()
@@ -2155,134 +1586,45 @@ namespace
             }
 
             auto main = ActiveMainImage();
-            const std::wstring activePath = ActiveMainPath();
-
-            std::wstring displayedFullPath = activePath;
-            if (main)
-            {
-                const auto li = main->GetLoadedInfo();
-                if (!li.sourcePath.empty())
-                {
-                    displayedFullPath = li.sourcePath;
-                }
-            }
-            if (m_selectedIndex < m_items.size() &&
-                (m_items[m_selectedIndex].kind == ThumbItemKind::Folder || m_items[m_selectedIndex].kind == ThumbItemKind::Up))
-            {
-                if (m_items[m_selectedIndex].kind == ThumbItemKind::Up && !m_currentFolder.empty())
-                {
-                    displayedFullPath = m_currentFolder.GetDisplayPath();
-                }
-                else
-                {
-                    displayedFullPath = m_items[m_selectedIndex].path.GetDisplayPath();
-                }
-            }
-
-            const std::wstring pathDisp = displayedFullPath.empty() ? L"-" : displayedFullPath;
-            const bool isFolderSelected = (m_selectedIndex < m_items.size() &&
-                (m_items[m_selectedIndex].kind == ThumbItemKind::Folder || m_items[m_selectedIndex].kind == ThumbItemKind::Up));
-            const std::wstring archiveLabel = ArchiveFormatLabelForPath(pathDisp);
-
-            uint32_t w = 0;
-            uint32_t h = 0;
-            DXGI_FORMAT fmt = DXGI_FORMAT_UNKNOWN;
-            if (isFolderSelected)
-            {
-                w = 0;
-                h = 0;
-                fmt = DXGI_FORMAT_UNKNOWN;
-            }
-            else if (main)
-            {
-                const auto li = main->GetLoadedInfo();
-                w = li.width;
-                h = li.height;
-                fmt = li.format;
-            }
-
             int zoomPct = 100;
             if (main)
             {
                 zoomPct = static_cast<int>(std::round(main->ZoomScale() * 100.0f));
             }
 
-            std::wstring dim;
-            if (!isFolderSelected && w > 0 && h > 0)
+            ImageBrowserInfoPresenter::Input input {};
+            input.activePath = ActiveMainPath();
+            input.hasSelection = (m_selectedIndex < m_items.size());
+            if (input.hasSelection)
             {
-                const int bpp = DxgiBitsPerPixel(fmt);
-                if (bpp > 0)
-                {
-                    dim = std::to_wstring(w) + L" x " + std::to_wstring(h) + L" x " + std::to_wstring(bpp);
-                }
-                else
-                {
-                    dim = std::to_wstring(w) + L" x " + std::to_wstring(h) + L" x ?";
-                }
+                input.selectedKind = m_items[m_selectedIndex].kind;
+                input.selectedPath = m_items[m_selectedIndex].path;
             }
-            else
+            input.currentFolder = m_currentFolder;
+            input.hasLoadedInfo = (main != nullptr);
+            if (main)
             {
-                dim = L"-";
+                input.loadedInfo = main->GetLoadedInfo();
             }
-
-            std::wstring text;
-            text.reserve(256);
-            if (isFolderSelected)
+            input.zoomPercent = zoomPct;
+            input.hasSamplingState = (m_mainImage != nullptr);
+            if (m_mainImage != nullptr)
             {
-                text = archiveLabel.empty() ? L"-" : archiveLabel;
-            }
-            else
-            {
-                text += dim;
-                text += L" | ";
-                text += DxgiFormatToString(fmt);
-                if (!archiveLabel.empty())
-                {
-                    text += L" | ";
-                    text += archiveLabel;
-                }
-                if (m_mainImage)
-                {
-                    text += L" | ";
-                    if (auto* ficBp = FictureBackplateRef())
-                    {
-                        text += ficBp->SamplingLabelForRenderer(m_mainImage->HighQualitySampling());
-                    }
-                    else
-                    {
-                        const FD2D::D2DVersion d2dVersion = FD2D::Core::GetSupportedD2DVersion();
-                        text += (m_mainImage->HighQualitySampling()
-                            ? ((d2dVersion >= FD2D::D2DVersion::D2D1_1) ? L"D2D HQ Cubic" : L"D2D Linear")
-                            : ((d2dVersion >= FD2D::D2DVersion::D2D1_1) ? L"D2D Nearest" : L"D2D Linear"));
-                    }
-                }
+                input.highQualitySampling = m_mainImage->HighQualitySampling();
+                auto* ficBp = FictureBackplateRef();
+                input.useD3DRenderer = (ficBp != nullptr && ficBp->D3DDevice() != nullptr);
             }
 
-            const std::wstring zoomText = std::to_wstring(zoomPct) + L"%";
-            m_mainPane->UpdateInfo(pathDisp, text, zoomText);
+            const auto output = ImageBrowserInfoPresenter::Build(input);
+            m_mainPane->UpdateInfo(output.pathText, output.infoText, output.zoomText);
         }
 
         void ApplyIniToMainImage(FD2D::MainImage& mainImage)
         {
-            std::wstring iniFile {};
-            if (TryGetIniFilePath(iniFile))
+            auto* ficBp = FictureBackplateRef();
+            if (ficBp != nullptr)
             {
-                wchar_t zoomStiffnessStr[32];
-                DWORD result = GetPrivateProfileStringW(
-                    L"Image",
-                    L"ZoomStiffness",
-                    L"80.0",
-                    zoomStiffnessStr,
-                    static_cast<DWORD>(std::size(zoomStiffnessStr)),
-                    iniFile.c_str());
-                if (result > 0)
-                {
-                    float zoomStiffness = static_cast<float>(_wtof(zoomStiffnessStr));
-                    if (zoomStiffness >= 10.0f && zoomStiffness <= 500.0f)
-                    {
-                        mainImage.SetZoomStiffness(zoomStiffness);
-                    }
-                }
+                mainImage.SetZoomStiffness(ficBp->ImageZoomStiffness());
             }
         }
 
@@ -2334,7 +1676,11 @@ namespace
                     (focusRect.bottom > focusRect.top);
                 if (layoutReady)
                 {
-                    m_thumbPane->EnsureCentered(focusRect);
+                    auto scroll = m_thumbPane->Scroll();
+                    if (scroll)
+                    {
+                        scroll->EnsureCentered(focusRect);
+                    }
                 }
             };
             context.syncSuppressBroadcast = m_syncSuppressBroadcast;
@@ -2390,15 +1736,6 @@ namespace
             }
         }
 
-        static std::wstring ToLower(std::wstring s)
-        {
-            for (auto& c : s)
-            {
-                c = static_cast<wchar_t>(towlower(c));
-            }
-            return s;
-        }
-
         void OnSyncedFileNameSelected(const std::wstring& fileNameLower)
         {
             if (fileNameLower.empty())
@@ -2415,7 +1752,7 @@ namespace
             // If we already have this file selected, do nothing.
             if (m_selectedIndex < m_items.size() && m_items[m_selectedIndex].kind == ThumbItemKind::Image)
             {
-                const std::wstring curLower = ToLower(m_items[m_selectedIndex].path.filename().wstring());
+                const std::wstring curLower = CommonUtil::ToLower(m_items[m_selectedIndex].path.filename().wstring());
                 if (!curLower.empty() && curLower == fileNameLower)
                 {
                     return;
@@ -2431,7 +1768,7 @@ namespace
                     continue;
                 }
 
-                const std::wstring nameLower = ToLower(m_items[i].path.filename().wstring());
+                const std::wstring nameLower = CommonUtil::ToLower(m_items[i].path.filename().wstring());
                 if (!nameLower.empty() && nameLower == fileNameLower)
                 {
                     match = i;
@@ -2561,7 +1898,11 @@ namespace
             RebuildThumbList(previousFolder);
             if (m_thumbPane)
             {
-                m_thumbPane->SetScrollX(0.0f);
+                auto scroll = m_thumbPane->Scroll();
+                if (scroll)
+                {
+                    scroll->SetScrollX(0.0f);
+                }
             }
         }
 
@@ -2689,7 +2030,7 @@ namespace
                 return;
             }
 
-            const unsigned long long now = NowMs();
+            const unsigned long long now = CommonUtil::NowMs();
             const bool shouldApplyNow = ImageBrowserAsyncThumbLoader::ShouldApplyNow(
                 m_progressiveLoadCompleted,
                 now,
@@ -2714,7 +2055,7 @@ namespace
                 applySelection);
 
             m_progressiveUiDirty = false;
-            m_progressiveLastApplyMs = NowMs();
+            m_progressiveLastApplyMs = CommonUtil::NowMs();
             if (m_progressiveLoadCompleted)
             {
                 m_thumbListLoading = false;
@@ -2814,7 +2155,11 @@ namespace
             };
             context.pathEquals = [](const VirtualPath& a, const VirtualPath& b)
             {
-                return PathEqualsInsensitive(a, b);
+                return CommonUtil::PathEqualsInsensitive(
+                    a.hostPath,
+                    a.archiveInnerPath,
+                    b.hostPath,
+                    b.archiveInnerPath);
             };
             context.makeStableName = [this](const wchar_t* prefix, const VirtualPath& p)
             {
@@ -2828,57 +2173,9 @@ namespace
             return context;
         }
 
-        void OpenFileDialog(OpenDialogMode mode)
-        {
-            wchar_t fileName[MAX_PATH] {};
-
-            const std::wstring filter = BuildSupportedImageDialogFilter();
-
-            OPENFILENAMEW ofn {};
-            ofn.lStructSize = sizeof(ofn);
-            ofn.hwndOwner = BackplateRef() ? BackplateRef()->Window() : nullptr;
-            ofn.lpstrFile = fileName;
-            ofn.nMaxFile = static_cast<DWORD>(std::size(fileName));
-            ofn.lpstrFilter = filter.c_str();
-            ofn.nFilterIndex = 1;
-            ofn.Flags = OFN_FILEMUSTEXIST | OFN_PATHMUSTEXIST | OFN_EXPLORER | OFN_HIDEREADONLY;
-            ofn.lpstrTitle = L"Open Image";
-
-            std::wstring initialDir;
-            if (!m_currentFolder.empty() && m_currentFolder.IsFilesystemPath())
-            {
-                if (std::filesystem::exists(m_currentFolder.hostPath) && std::filesystem::is_directory(m_currentFolder.hostPath))
-                {
-                    initialDir = m_currentFolder.hostPath.wstring();
-                ofn.lpstrInitialDir = initialDir.c_str();
-                }
-            }
-
-            if (!GetOpenFileNameW(&ofn))
-            {
-                return; // cancelled
-            }
-
-            const std::filesystem::path chosen = std::filesystem::path(fileName);
-            if (!std::filesystem::exists(chosen) || !std::filesystem::is_regular_file(chosen))
-            {
-                return;
-            }
-
-            if (!ImageCore::DecoderRegistry::Instance().IsSupportedPath(chosen.wstring()))
-            {
-                MessageBoxW(ofn.hwndOwner, L"Selected file type is not supported.", L"FICture2", MB_OK | MB_ICONWARNING);
-                return;
-            }
-
-            // Defer UI tree mutation to avoid reentrancy issues during input dispatch.
-            QueueDeferredAction(mode == OpenDialogMode::SplitHorizontalNewBrowser ? DeferredActionKind::SplitHorizontalWithFile : DeferredActionKind::NavigateToFile, VirtualPath::FromFilesystem(chosen));
-        }
-
         int HorizontalViewerCount() const
         {
-            const auto bus = m_eventBus.lock();
-            auto* rootHost = static_cast<ImageBrowserImpl*>(ResolveRootBrowserWndFromBus(bus));
+            auto* rootHost = RootHostFromEventBus();
             if (rootHost == nullptr)
             {
                 return 1;
@@ -2890,53 +2187,6 @@ namespace
             }
 
             return static_cast<int>(rootHost->m_hPanes.size());
-        }
-
-        bool TryPickImageFile(std::filesystem::path& outPath, const wchar_t* title)
-        {
-            wchar_t fileName[MAX_PATH] {};
-
-            const std::wstring filter = BuildSupportedImageDialogFilter();
-
-            OPENFILENAMEW ofn {};
-            ofn.lStructSize = sizeof(ofn);
-            ofn.hwndOwner = BackplateRef() ? BackplateRef()->Window() : nullptr;
-            ofn.lpstrFile = fileName;
-            ofn.nMaxFile = static_cast<DWORD>(std::size(fileName));
-            ofn.lpstrFilter = filter.c_str();
-            ofn.nFilterIndex = 1;
-            ofn.Flags = OFN_FILEMUSTEXIST | OFN_PATHMUSTEXIST | OFN_EXPLORER | OFN_HIDEREADONLY;
-            ofn.lpstrTitle = (title != nullptr) ? title : L"Open Image";
-
-            std::wstring initialDir;
-            if (!m_currentFolder.empty() && m_currentFolder.IsFilesystemPath())
-            {
-                if (std::filesystem::exists(m_currentFolder.hostPath) && std::filesystem::is_directory(m_currentFolder.hostPath))
-                {
-                    initialDir = m_currentFolder.hostPath.wstring();
-                ofn.lpstrInitialDir = initialDir.c_str();
-                }
-            }
-
-            if (!GetOpenFileNameW(&ofn))
-            {
-                return false; // cancelled
-            }
-
-            const std::filesystem::path chosen = std::filesystem::path(fileName);
-            if (!std::filesystem::exists(chosen) || !std::filesystem::is_regular_file(chosen))
-            {
-                return false;
-            }
-
-            if (!ImageCore::DecoderRegistry::Instance().IsSupportedPath(chosen.wstring()))
-            {
-                MessageBoxW(ofn.hwndOwner, L"Selected file type is not supported.", L"FICture2", MB_OK | MB_ICONWARNING);
-                return false;
-            }
-
-            outPath = chosen;
-            return true;
         }
 
         void FitToScreen()
@@ -2961,20 +2211,6 @@ namespace
             RefreshInfoPanel();
         }
 
-        void HandleOpenNewImageCommand()
-        {
-            if (HorizontalViewerCount() > 3)
-            {
-                return;
-            }
-
-            std::filesystem::path chosen {};
-            if (TryPickImageFile(chosen, L"Open New Image"))
-            {
-                QueueInsertHorizontalWithPathAfterThis(VirtualPath::FromFilesystem(chosen));
-            }
-        }
-
         void ToggleSamplingQualityFromContextMenu()
         {
             RequestFocus();
@@ -2982,117 +2218,6 @@ namespace
             {
                 m_mainImage->ToggleSamplingQuality();
                 RefreshInfoPanel();
-            }
-        }
-
-        HWND ContextMenuOwnerWindow() const
-        {
-            FD2D::Backplate* bp = BackplateRef();
-            return bp ? bp->Window() : nullptr;
-        }
-
-        void PickAndApplyBackgroundColor()
-        {
-            FD2D::Backplate* bp = BackplateRef();
-            if (bp == nullptr || bp->Window() == nullptr)
-            {
-                return;
-            }
-
-            static COLORREF s_custom[16] {};
-
-            const D2D1_COLOR_F cur = bp->ClearColor();
-            const auto toByte = [](float v) -> BYTE
-            {
-                if (v < 0.0f) v = 0.0f;
-                if (v > 1.0f) v = 1.0f;
-                return static_cast<BYTE>(std::floor(v * 255.0f + 0.5f));
-            };
-
-            CHOOSECOLORW cc {};
-            cc.lStructSize = sizeof(cc);
-            cc.hwndOwner = bp->Window();
-            cc.lpCustColors = s_custom;
-            cc.rgbResult = RGB(toByte(cur.r), toByte(cur.g), toByte(cur.b));
-            cc.Flags = CC_FULLOPEN | CC_RGBINIT;
-
-            if (!ChooseColorW(&cc))
-            {
-                return; // cancelled
-            }
-
-            const BYTE r = GetRValue(cc.rgbResult);
-            const BYTE g = GetGValue(cc.rgbResult);
-            const BYTE b = GetBValue(cc.rgbResult);
-            const D2D1_COLOR_F next = D2D1::ColorF(
-                static_cast<float>(r) / 255.0f,
-                static_cast<float>(g) / 255.0f,
-                static_cast<float>(b) / 255.0f,
-                1.0f);
-
-            bp->SetClearColor(next);
-            // Keep per-ImageBrowser backgrounds in sync with global clear.
-            ApplyBrowserBackgroundColor(next);
-            auto* ficBp = FictureBackplateRef();
-            if (ficBp != nullptr)
-            {
-                ficBp->SynchronizeBackgroundColor(this, next);
-            }
-        }
-
-        void PickAndApplyFocusedBackgroundColor()
-        {
-            FD2D::Backplate* bp = BackplateRef();
-            if (bp == nullptr || bp->Window() == nullptr)
-            {
-                return;
-            }
-
-            static COLORREF s_custom[16] {};
-
-            const auto toByte = [](float v) -> BYTE
-            {
-                if (v < 0.0f) v = 0.0f;
-                if (v > 1.0f) v = 1.0f;
-                return static_cast<BYTE>(std::floor(v * 255.0f + 0.5f));
-            };
-
-            CHOOSECOLORW cc {};
-            cc.lStructSize = sizeof(cc);
-            cc.hwndOwner = bp->Window();
-            cc.lpCustColors = s_custom;
-            const D2D1_COLOR_F currentFocused = m_browserFocusedBackgroundColor;
-            cc.rgbResult = RGB(
-                toByte(currentFocused.r),
-                toByte(currentFocused.g),
-                toByte(currentFocused.b));
-            cc.Flags = CC_FULLOPEN | CC_RGBINIT;
-
-            if (!ChooseColorW(&cc))
-            {
-                return; // cancelled
-            }
-
-            const BYTE r = GetRValue(cc.rgbResult);
-            const BYTE g = GetGValue(cc.rgbResult);
-            const BYTE b = GetBValue(cc.rgbResult);
-
-            const D2D1_COLOR_F nextFocused = D2D1::ColorF(
-                static_cast<float>(r) / 255.0f,
-                static_cast<float>(g) / 255.0f,
-                static_cast<float>(b) / 255.0f,
-                1.0f);
-
-            ApplyFocusedBackgroundColor(nextFocused);
-            auto* ficBp = FictureBackplateRef();
-            if (ficBp != nullptr)
-            {
-                ficBp->SynchronizeFocusedBackgroundColor(this, nextFocused);
-            }
-
-            if (bp->Window() != nullptr)
-            {
-                bp->Render();
             }
         }
 
@@ -3138,11 +2263,6 @@ namespace
             // Ensure any deferred action runs on the ImageBrowser that originated it.
             // (Pointer input is often handled by child tiles, so the parent ImageBrowser may not receive it directly.)
             QueueDeferredActionCore(kind, path);
-        }
-
-        void QueueInsertHorizontalWithPathAfterThis(const VirtualPath& path)
-        {
-            QueueDeferredActionCore(DeferredActionKind::InsertHorizontalWithPathAfterName, path, Name());
         }
 
         void QueueDeferredActionCore(
@@ -3265,19 +2385,34 @@ namespace
 
         bool IsRootHorizontalHostBrowser() const
         {
-            const auto bus = m_eventBus.lock();
-            return static_cast<ImageBrowserImpl*>(ResolveRootBrowserWndFromBus(bus)) == this;
+            return RootHostFromEventBus() == this;
         }
 
         ImageBrowserImpl* DelegatedRootHostBrowser() const
         {
-            const auto bus = m_eventBus.lock();
-            auto* rootHost = static_cast<ImageBrowserImpl*>(ResolveRootBrowserWndFromBus(bus));
+            auto* rootHost = RootHostFromEventBus();
             if (rootHost == nullptr || rootHost == this)
             {
                 return nullptr;
             }
             return rootHost;
+        }
+
+        ImageBrowserImpl* RootHostFromEventBus() const
+        {
+            const auto bus = m_eventBus.lock();
+            if (!bus)
+            {
+                return nullptr;
+            }
+
+            const auto browsers = bus->ImageBrowsersSnapshot();
+            if (browsers.empty())
+            {
+                return nullptr;
+            }
+
+            return static_cast<ImageBrowserImpl*>(browsers.front());
         }
 
         void RequestLayoutIfAvailable()
@@ -3519,17 +2654,16 @@ namespace
 
         void ClearDragOverlay()
         {
-            if (m_dragOverlay != ImageBrowserDragOverlay::Kind::None)
+            if (m_dragOverlay != ImageBrowserDragController::OverlayKind::None)
             {
-                m_dragOverlay = ImageBrowserDragOverlay::Kind::None;
+                m_dragOverlay = ImageBrowserDragController::OverlayKind::None;
                 Invalidate();
             }
         }
 
-        std::unique_ptr<ImageBrowserDragOverlay> m_dragOverlayLayer {};
-        ImageBrowserDragOverlay::Kind m_dragOverlay { ImageBrowserDragOverlay::Kind::None };
-        Microsoft::WRL::ComPtr<ID2D1Bitmap> m_folderBitmap {};
-        ID2D1RenderTarget* m_folderBitmapTarget { nullptr };
+        ImageBrowserDragController m_dragController {};
+        ImageBrowserDragController::OverlayKind m_dragOverlay { ImageBrowserDragController::OverlayKind::None };
+        ImageBrowserAssets m_assets {};
 
         // ImageBrowser background colors (used for focus indication).
         // NOTE: base defaults match the global clear; focused defaults to a dark yellow accent.
