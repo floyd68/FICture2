@@ -2,9 +2,11 @@
 
 #include <string>
 
-// Forward declare Win32 HWND without pulling in <windows.h> from this header.
+// Forward declare Win32 types without pulling in <windows.h> from this header.
 struct HWND__;
 using HWND = HWND__*;
+struct tagRECT;
+using RECT = tagRECT;
 
 namespace FICture2App
 {
@@ -26,8 +28,18 @@ namespace FICture2App
     bool IsThumbnailProviderRegistered();
 
     // Window placement persistence (per-user, via INI).
-    // Restores/saves the main window's last normal position and show state.
-    void LoadWindowPlacement(HWND hwnd);
+
+    // Reads the saved normal window rect and show command from the INI file.
+    // outRect is clamped to the nearest monitor's work area.
+    // outShowCmd is SW_SHOWNORMAL or SW_SHOWMAXIMIZED.
+    // Returns false if no placement has been saved yet (first run).
+    bool ReadWindowPlacement(RECT& outRect, int& outShowCmd);
+
+    // Saves the current window position and show state to the INI file.
     void SaveWindowPlacement(HWND hwnd);
+
+    // Legacy: applies the saved placement to an already-created window.
+    // Prefer ReadWindowPlacement + passing position to CreateWindowed instead.
+    void LoadWindowPlacement(HWND hwnd);
 }
 

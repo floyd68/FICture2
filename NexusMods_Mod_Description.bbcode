@@ -1,8 +1,8 @@
 [center][size=5][b]FICture2 – Ultra-Fast Image Compare & DDS Texture Viewer for Modders[/b][/size][/center]
-[color=#d9ead3][size=5]The quarantine processing is being delayed in Nexusmods, so it hasn't been released yet. Those who want to get v1.1 can get it at github in the link below.[/size][/color]
+[color=#d9ead3][size=5]Latest stable build: v1.4 (download link below).[/size][/color]
 
 
-[size=6][url=https://github.com/floyd68/FICture2/releases/tag/1.3][center]v1.3 Releases[/center][/url][/size]
+[size=6][url=https://github.com/floyd68/FICture2/releases/tag/1.4][center]v1.4 Release[/center][/url][/size]
 
 [b]FICture2[/b] is an ultra-lightweight, high-performance image viewer and comparison tool built specifically for game modders and texture artists.
 
@@ -12,12 +12,30 @@ Double-click a texture and you're already comparing it.
 [center][size=4][b]📺 Demo Video[/b][/size]
 [youtube]2eowYOEa5dw[/youtube][/center]
 
-[size=4][b]🆕 What's New Since v1.1 (v1.2 / v1.3)[/b][/size]
+[size=4][b]🆕 What's New in v1.4[/b][/size]
+
+[list]
+[*]Faster thumbnail loading and smoother browsing in large folders
+[*]Improved split-view stability for compare workflows (selection / zoom-pan / pane behavior)
+[*]More consistent focused/background rendering with reduced visual flicker
+[*]Improved reliability for context menu and keyboard command handling
+[*]Stronger session restore and UI-state persistence between launches
+[*]New context menu action: [b]Open Folder...[/b]
+[/list]
+
+[size=3][b]v1.4 Patch — Recent Fixes[/b][/size]
+
+[list]
+[*][b]Fixed:[/b] When opening two files with the same filename from different folders in quick succession, both could open as separate windows instead of a side-by-side comparison — now reliably opens as a split pane
+[*][b]Improved:[/b] Startup is noticeably faster — the window now restores its last position instantly, without an extra OS round-trip that previously added ~50 ms
+[/list]
+
+[size=4][b]Recent Improvements (v1.2 / v1.3)[/b][/size]
 
 [list]
 [*]Smoother UI while resizing windows and split views
-[*]Thumbnails now keep image proportions more naturally
-[*]New: right-click a thumbnail and choose [b]Show in Explorer[/b]
+[*]Thumbnails keep image proportions more naturally
+[*]Right-click a thumbnail and choose [b]Show in Explorer[/b]
 [*]Clearer active image/title feedback while browsing and comparing
 [*]More reliable filename matching in compare mode (including case differences)
 [*]Improved file association setup with clearer Windows Default Apps guidance

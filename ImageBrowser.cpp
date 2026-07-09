@@ -20,6 +20,7 @@
 #include "ImageBrowserAssets.h"
 #include "IpcCompareRequest.h"
 #include "Ficture2Backplate.h"
+#include "AppLog.h"
 
 #include "FD2D/FD2D.h"
 #include "FD2D/Util.h"
@@ -80,12 +81,16 @@ namespace
             : Wnd(name)
             , m_initialFile(initialFile)
         {
+            FIC2_TIMER_START(t_ctor);
             m_asyncThumbReadyEvent = CreateEventW(nullptr, TRUE, FALSE, nullptr);
+            FIC2_LOG_STEP(t_ctor, "ctor: CreateEventW");
             if (m_asyncThumbReadyEvent != nullptr)
             {
                 ImageBrowserAsyncThumbLoader::RegisterBrowser(Name(), m_asyncThumbReadyEvent);
+                FIC2_LOG_STEP(t_ctor, "ctor: AsyncThumbLoader::RegisterBrowser");
             }
             BuildUi();
+            FIC2_LOG_STEP(t_ctor, "ctor: BuildUi total");
         }
 
         ~ImageBrowserImpl() override
@@ -101,12 +106,19 @@ namespace
 
         void OnAttached(FD2D::Backplate& backplate) override
         {
+            FIC2_TIMER_START(t_attach);
             Wnd::OnAttached(backplate);
+            FIC2_LOG_STEP(t_attach, "[OnAttached] Wnd::OnAttached (recursive child attach + layout)");
+
             RegisterWithEventBus();
+            FIC2_LOG_STEP(t_attach, "[OnAttached] RegisterWithEventBus");
+
             auto* ficBp = FictureBackplateRef();
             if (ficBp != nullptr)
             {
                 ficBp->EnsureImageBrowserIniInitialized();
+                FIC2_LOG_STEP(t_attach, "[OnAttached] EnsureImageBrowserIniInitialized");
+
                 m_showNavItems = ficBp->ShowNavItemsEnabled();
                 m_browserFocusedBackgroundColor = ficBp->FocusedBackgroundColor();
                 ApplyShowNavItems(m_showNavItems);
@@ -115,6 +127,7 @@ namespace
                 {
                     m_mainImage->SetZoomStiffness(ficBp->ImageZoomStiffness());
                 }
+                FIC2_LOG_STEP(t_attach, "[OnAttached] apply INI settings");
             }
             // Default per-ImageBrowser background follows current global clear color.
             m_browserBackgroundColor = backplate.ClearColor();
@@ -122,6 +135,8 @@ namespace
             {
                 RequestFocus();
             }
+            FIC2_LOG_STEP(t_attach, "[OnAttached] ClearColor + RequestFocus");
+            FIC2_LOG_DEBUG("[OnAttached] complete");
         }
 
         void OnDetached() override
@@ -500,7 +515,11 @@ namespace
             auto* req = reinterpret_cast<IpcCompareRequest*>(lParam);
             if (req != nullptr)
             {
+                FIC2_LOG_INFO("[IPC] UI: HandleIpcCompareMessage received path='{}'",
+                    std::filesystem::path(req->path).string());
                 req->compareStarted = TryStartCompareWithFileNameMatch(req->path);
+                FIC2_LOG_INFO("[IPC] UI: TryStartCompareWithFileNameMatch result={}",
+                    req->compareStarted ? "true (compare started)" : "false (no match)");
                 if (req->doneEvent != nullptr)
                 {
                     SetEvent(reinterpret_cast<HANDLE>(req->doneEvent));
@@ -773,12 +792,14 @@ namespace
         {
             if (incomingFilePath.empty())
             {
+                FIC2_LOG_DEBUG("[IPC] UI: TryStartCompareWithFileNameMatch — incoming path empty, skipping.");
                 return false;
             }
 
             const std::wstring currentPath = ActiveMainPath();
             if (currentPath.empty())
             {
+                FIC2_LOG_WARN("[IPC] UI: TryStartCompareWithFileNameMatch — current browser has no file open (m_mainPath empty).");
                 return false;
             }
 
@@ -795,6 +816,11 @@ namespace
 
             const std::wstring incomingName = NormalizeLowerName(incomingFilePath);
             const std::wstring currentName = NormalizeLowerName(currentPath);
+
+            FIC2_LOG_DEBUG("[IPC] UI: compare '{}' vs current '{}'", 
+                std::filesystem::path(incomingName).string(),
+                std::filesystem::path(currentName).string());
+
             if (incomingName.empty() || currentName.empty())
             {
                 return false;
@@ -802,9 +828,14 @@ namespace
 
             if (incomingName != currentName)
             {
+                FIC2_LOG_INFO("[IPC] UI: filename mismatch ('{}' != '{}') — Ignore.",
+                    std::filesystem::path(incomingName).string(),
+                    std::filesystem::path(currentName).string());
                 return false;
             }
 
+            FIC2_LOG_INFO("[IPC] UI: filename match! Opening incoming path in split pane: {}",
+                std::filesystem::path(incomingFilePath).string());
             auto vp = VirtualPath::Parse(incomingFilePath);
             if (vp)
             {
@@ -1320,9 +1351,8 @@ namespace
 
         void BuildUi()
         {
-#if defined(_DEBUG)
-            OutputDebugStringW(L"[ImageBrowser] BuildUi: Starting UI construction\n");
-#endif
+            FIC2_TIMER_START(t_build);
+            FIC2_LOG_DEBUG("[BuildUi] start (name='{}')", std::string(Name().begin(), Name().end()));
 
             // Root: vertical split (main pane + thumb strip)
             auto rootSplit = std::make_shared<FD2D::SplitPanel>(L"rootSplit", FD2D::SplitterOrientation::Vertical);
@@ -1337,12 +1367,10 @@ namespace
 
             AddChild(rootSplit);
             m_rootSplit = rootSplit;
-
-#if defined(_DEBUG)
-            OutputDebugStringW((L"[ImageBrowser] BuildUi: rootSplit created, ratio=0.85, minH=" + std::to_wstring(kThumbStripMinH) + L", maxH=" + std::to_wstring(kThumbStripMaxH) + L"\n").c_str());
-#endif
+            FIC2_LOG_STEP(t_build, "[BuildUi] rootSplit created");
 
             BuildMainPanes();
+            FIC2_LOG_STEP(t_build, "[BuildUi] BuildMainPanes (ImageBrowserMainPane + FD2D::MainImage)");
 
             if (!m_thumbPane)
             {
@@ -1358,10 +1386,7 @@ namespace
                 {
                     RequestFocus();
                 });
-
-#if defined(_DEBUG)
-            OutputDebugStringW(L"[ImageBrowser] BuildUi: thumbScroll created and set as SecondChild\n");
-#endif
+            FIC2_LOG_STEP(t_build, "[BuildUi] ImageBrowserThumbnailPane::Build");
 
             rootSplit->OnSplitChanged([this](float)
             {
@@ -1401,15 +1426,10 @@ namespace
             m_thumbItemSpacing = 0.0f;
             m_thumbOuterSpacing = 8.0f;
 
-#if defined(_DEBUG)
-            OutputDebugStringW(L"[ImageBrowser] BuildUi: thumbnail pane assigned\n");
-#endif
-
             if (!m_initialFile.empty())
             {
-#if defined(_DEBUG)
-                OutputDebugStringW((L"[ImageBrowser] BuildUi: Initializing with file: " + m_initialFile + L"\n").c_str());
-#endif
+                FIC2_LOG_DEBUG("[BuildUi] initial file: '{}'",
+                    std::filesystem::path(m_initialFile).string());
                 auto parsed = VirtualPath::Parse(m_initialFile);
                 if (parsed)
                 {
@@ -1424,20 +1444,18 @@ namespace
                         RebuildThumbList(*parsed);
                     }
                 }
+                FIC2_LOG_STEP(t_build, "[BuildUi] RebuildThumbList (initial file)");
             }
             else
             {
-#if defined(_DEBUG)
-                OutputDebugStringW(L"[ImageBrowser] BuildUi: No initial file, starting empty\n");
-#endif
+                FIC2_LOG_DEBUG("[BuildUi] no initial file — starting empty");
                 // Start empty; a session restore or user navigation will populate.
                 m_currentFolder = VirtualPath();
                 RebuildThumbList(VirtualPath());
+                FIC2_LOG_STEP(t_build, "[BuildUi] RebuildThumbList (empty)");
             }
 
-#if defined(_DEBUG)
-            OutputDebugStringW(L"[ImageBrowser] BuildUi: UI construction complete\n");
-#endif
+            FIC2_LOG_DEBUG("[BuildUi] complete");
         }
 
         bool ApplySyncedThumbStripHeightIfNeeded(bool force = false)
@@ -2072,14 +2090,18 @@ namespace
                 return;
             }
 
+            FIC2_TIMER_START(t_rebuild);
+
             m_items.clear();
             m_typeSelectQuery.clear();
             m_selectedIndex = static_cast<size_t>(-1);
             m_selectedFocus.reset();
 
             auto context = MakeThumbRebuildContext(preferSelectPath, preloadedEntries);
+            FIC2_LOG_STEP(t_rebuild, "[RebuildImmediate] MakeThumbRebuildContext");
 
             auto result = m_thumbStripController.RebuildList(context);
+            FIC2_LOG_STEP(t_rebuild, "[RebuildImmediate] ThumbStripController::RebuildList");
 
             // Restore selection without scrolling yet; layout hasn't been updated.
             if (!result.hasItems)

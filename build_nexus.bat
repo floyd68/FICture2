@@ -7,7 +7,7 @@ if not exist "%BUILD_DIR%" (
     mkdir "%BUILD_DIR%"
 )
 
-cmake -S . -B "%BUILD_DIR%" -G "Visual Studio 17 2022" -A x64 -DFICTURE2_DISTRIBUTION_CHANNEL=nexus_github
+cmake -S . -B "%BUILD_DIR%" -G "Visual Studio 18 2026" -A x64 -DFICTURE2_DISTRIBUTION_CHANNEL=nexus_github
 if errorlevel 1 exit /b 1
 
 cmake --build "%BUILD_DIR%" --config MinSizeRel
