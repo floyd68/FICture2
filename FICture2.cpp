@@ -195,16 +195,26 @@ int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
     const std::wstring initialFile = GetInitialFileFromCommandLine();
 
     {
-        // Initialize spdlog early so IPC / mutex logs are captured.
-        // Active in both Debug and Release builds.
-        wchar_t exePath[MAX_PATH] {};
-        GetModuleFileNameW(nullptr, exePath, static_cast<DWORD>(std::size(exePath)));
-        std::filesystem::path exeDir = std::filesystem::path(exePath).parent_path();
-        AppLog::Init(exeDir.wstring());
+        // Logging is opt-in for Release (-logon) and opt-out for Debug (-logoff).
+        // If Init is never called, spdlog::get("fic2") returns null and every
+        // FIC2_LOG_* macro becomes a silent no-op — no overhead at all.
+#ifdef _DEBUG
+        const bool enableLog = (cmdLower.find(L"-logoff") == std::wstring::npos);
+#else
+        const bool enableLog = (cmdLower.find(L"-logon") != std::wstring::npos);
+#endif
 
-        FIC2_LOG_INFO("=== FICture2 startup ===");
-        FIC2_LOG_INFO("Executable : {}", std::filesystem::path(exePath).string());
-        FIC2_LOG_INFO("CommandLine: {}", std::filesystem::path(initialFile).string());
+        if (enableLog)
+        {
+            wchar_t exePath[MAX_PATH] {};
+            GetModuleFileNameW(nullptr, exePath, static_cast<DWORD>(std::size(exePath)));
+            std::filesystem::path exeDir = std::filesystem::path(exePath).parent_path();
+            AppLog::Init(exeDir.wstring());
+
+            FIC2_LOG_INFO("=== FICture2 startup ===");
+            FIC2_LOG_INFO("Executable : {}", std::filesystem::path(exePath).string());
+            FIC2_LOG_INFO("CommandLine: {}", std::filesystem::path(initialFile).string());
+        }
     }
 
     // Single-instance detection (Named Mutex):
