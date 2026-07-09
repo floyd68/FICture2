@@ -321,6 +321,7 @@ add_executable(FICture2 WIN32)
 
 target_sources(FICture2 PRIVATE
     AppIpc.cpp
+    AppLog.cpp
     AppSetup.cpp
     ArchiveReader.cpp
     FICture2.cpp
@@ -362,6 +363,8 @@ target_include_directories(FICture2 PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/FD2D
     ${CMAKE_CURRENT_SOURCE_DIR}/ImageCore
     ${CMAKE_CURRENT_BINARY_DIR}
+    # spdlog: header-only, included only in debug builds via #ifdef _DEBUG in AppLog.h
+    ${CMAKE_CURRENT_SOURCE_DIR}/external/spdlog/include
 )
 
 target_compile_definitions(FICture2 PRIVATE
@@ -444,4 +447,30 @@ if(MSVC)
     endif()
 
     target_compile_options(FICture2 PRIVATE /permissive-)
+
+    # /utf-8: treat source files as UTF-8 (required by spdlog/fmt and prevents C4819 warnings
+    # with MSVC on non-English Windows locales).
+    target_compile_options(FICture2 PRIVATE /utf-8)
+endif()
+
+# ---------------------------------------------------------------------------
+# Debug helper: register per-user file associations without the installer.
+# Usage (from the build directory):  cmake --build . --target register_debug
+#        (or unregister):            cmake --build . --target unregister_debug
+# The script writes only to HKCU so no administrator rights are required.
+# ---------------------------------------------------------------------------
+if(WIN32)
+    set(_reg_script "${CMAKE_SOURCE_DIR}/scripts/register_debug.ps1")
+    set(_reg_exe    "$<TARGET_FILE:FICture2>")
+
+    add_custom_target(register_debug
+        COMMAND powershell -ExecutionPolicy Bypass -File "${_reg_script}" -ExePath "${_reg_exe}"
+        DEPENDS FICture2
+        COMMENT "Registering per-user file associations for the debug build..."
+    )
+
+    add_custom_target(unregister_debug
+        COMMAND powershell -ExecutionPolicy Bypass -File "${_reg_script}" -ExePath "${_reg_exe}" -Unregister
+        COMMENT "Removing per-user file associations registered by register_debug..."
+    )
 endif()

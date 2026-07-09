@@ -1,5 +1,5 @@
-﻿// header.h: 표준 시스템 포함 파일
-// 또는 프로젝트 특정 포함 파일이 들어 있는 포함 파일입니다.
+// framework.h: Standard system include files
+// or include files for project-specific headers.
 //
 
 #pragma once
@@ -8,8 +8,8 @@
 #ifndef NOMINMAX
 #define NOMINMAX
 #endif
-#define WIN32_LEAN_AND_MEAN             // 거의 사용되지 않는 내용을 Windows 헤더에서 제외합니다.
-// Windows 헤더 파일
+#define WIN32_LEAN_AND_MEAN             // Exclude rarely-used content from Windows headers.
+// Windows header files
 #include <windows.h>
 #include <d2d1.h>
 #include <d2d1helper.h>

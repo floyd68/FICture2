@@ -1,4 +1,5 @@
 #include "ImageBrowserSessionPersistence.h"
+#include "SimpleIniFile.h"
 
 #include <Windows.h>
 
@@ -91,71 +92,42 @@ namespace ImageBrowserSessionPersistence
             return false;
         }
 
+        // Read the file once; all individual GetPrivateProfile* calls
+        // re-open the file on every call and cause significant startup latency.
+        const auto ini = SimpleIniFile::Load(iniFile);
+        if (!ini.IsLoaded())
+        {
+            return false;
+        }
+
         outPayload = RestorePayload {};
-        outPayload.viewerCount = GetPrivateProfileIntW(L"Session", L"ViewerCount", 0, iniFile.c_str());
+        outPayload.viewerCount = ini.GetInt(L"Session", L"ViewerCount", 0);
         if (outPayload.viewerCount <= 0)
         {
             return false;
         }
         outPayload.clampedViewerCount = (std::max)(1, (std::min)(4, outPayload.viewerCount));
 
-        wchar_t buf[8192] {};
-        const DWORD nThumb = GetPrivateProfileStringW(
-            L"Session",
-            L"ThumbStripHeight",
-            L"",
-            buf,
-            static_cast<DWORD>(std::size(buf)),
-            iniFile.c_str());
-        if (nThumb > 0)
+        const float thumbH = ini.GetFloat(L"Session", L"ThumbStripHeight", 0.0f);
+        if (thumbH > 1.0f)
         {
-            const float h = static_cast<float>(_wtof(buf));
-            if (h > 1.0f)
-            {
-                outPayload.hasThumbStripHeight = true;
-                outPayload.thumbStripHeight = h;
-            }
+            outPayload.hasThumbStripHeight = true;
+            outPayload.thumbStripHeight = thumbH;
         }
 
         outPayload.viewers.reserve(static_cast<size_t>(outPayload.clampedViewerCount));
         for (int i = 0; i < outPayload.clampedViewerCount; ++i)
         {
             const std::wstring sec = L"Viewer" + std::to_wstring(i);
-
-            buf[0] = 0;
-            const DWORD nFile = GetPrivateProfileStringW(
-                sec.c_str(),
-                L"DisplayedFile",
-                L"",
-                buf,
-                static_cast<DWORD>(std::size(buf)),
-                iniFile.c_str());
-            std::wstring file = (nFile > 0 && buf[0] != 0) ? std::wstring(buf) : std::wstring();
-
-            buf[0] = 0;
-            const DWORD nFolder = GetPrivateProfileStringW(
-                sec.c_str(),
-                L"CurrentFolder",
-                L"",
-                buf,
-                static_cast<DWORD>(std::size(buf)),
-                iniFile.c_str());
-            std::wstring folder = (nFolder > 0 && buf[0] != 0) ? std::wstring(buf) : std::wstring();
-
+            std::wstring file   = ini.GetString(sec, L"DisplayedFile");
+            std::wstring folder = ini.GetString(sec, L"CurrentFolder");
             outPayload.viewers.push_back({ std::move(file), std::move(folder) });
         }
 
-        buf[0] = 0;
-        const DWORD nRat = GetPrivateProfileStringW(
-            L"Session",
-            L"HorizontalSplitRatios",
-            L"",
-            buf,
-            static_cast<DWORD>(std::size(buf)),
-            iniFile.c_str());
-        if (nRat > 0 && buf[0] != 0)
+        const std::wstring ratStr = ini.GetString(L"Session", L"HorizontalSplitRatios");
+        if (!ratStr.empty())
         {
-            outPayload.horizontalSplitRatios = ParseFloatsCsv(buf);
+            outPayload.horizontalSplitRatios = ParseFloatsCsv(ratStr);
         }
 
         return true;

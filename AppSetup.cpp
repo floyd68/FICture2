@@ -1,5 +1,7 @@
 #include "AppSetup.h"
+#include "AppLog.h"
 #include "ImageCore/ImageDecodeDispatcher.h"
+#include "SimpleIniFile.h"
 
 #include "framework.h"
 
@@ -253,24 +255,6 @@ namespace
         return ok;
     }
 
-    bool ReadIniInt(const std::wstring& iniFile, const wchar_t* section, const wchar_t* key, int& outValue)
-    {
-        if (iniFile.empty() || section == nullptr || key == nullptr)
-        {
-            return false;
-        }
-
-        wchar_t buf[64] {};
-        const DWORD n = GetPrivateProfileStringW(section, key, L"", buf, static_cast<DWORD>(std::size(buf)), iniFile.c_str());
-        if (n == 0)
-        {
-            return false;
-        }
-
-        outValue = _wtoi(buf);
-        return true;
-    }
-
     void WriteIniInt(const std::wstring& iniFile, const wchar_t* section, const wchar_t* key, int value)
     {
         if (iniFile.empty() || section == nullptr || key == nullptr)
@@ -283,7 +267,7 @@ namespace
         (void)WritePrivateProfileStringW(section, key, buf, iniFile.c_str());
     }
 
-    void ClampRectToMonitorWorkArea(RECT& rc)
+    void ClampRectToMonitorWorkArea(RECT& rc, bool enableLog = false)
     {
         // If the rect is invalid, bail.
         if (rc.right <= rc.left || rc.bottom <= rc.top)
@@ -291,13 +275,17 @@ namespace
             return;
         }
 
+        FIC2_TIMER_START(t_clamp);
         const HMONITOR mon = MonitorFromRect(&rc, MONITOR_DEFAULTTONEAREST);
+        if (enableLog) FIC2_LOG_STEP(t_clamp, "[LoadWP]   MonitorFromRect");
+
         MONITORINFO mi {};
         mi.cbSize = sizeof(mi);
         if (!GetMonitorInfoW(mon, &mi))
         {
             return;
         }
+        if (enableLog) FIC2_LOG_STEP(t_clamp, "[LoadWP]   GetMonitorInfoW");
 
         const RECT wa = mi.rcWork;
 
@@ -597,36 +585,67 @@ namespace FICture2App
         return hasProvider(HKEY_CURRENT_USER) || hasProvider(HKEY_LOCAL_MACHINE);
     }
 
+    bool ReadWindowPlacement(RECT& outRect, int& outShowCmd)
+    {
+        const std::wstring iniFile = GetIniFilePath();
+        if (iniFile.empty())
+        {
+            return false;
+        }
+
+        const auto ini = SimpleIniFile::Load(iniFile);
+        if (!ini.IsLoaded())
+        {
+            return false;
+        }
+
+        const std::wstring leftStr   = ini.GetString(L"Window", L"Left");
+        const std::wstring topStr    = ini.GetString(L"Window", L"Top");
+        const std::wstring rightStr  = ini.GetString(L"Window", L"Right");
+        const std::wstring bottomStr = ini.GetString(L"Window", L"Bottom");
+        const std::wstring showStr   = ini.GetString(L"Window", L"ShowCmd");
+
+        if (leftStr.empty() || topStr.empty() || rightStr.empty() ||
+            bottomStr.empty() || showStr.empty())
+        {
+            return false;
+        }
+
+        RECT rc {
+            _wtoi(leftStr.c_str()),
+            _wtoi(topStr.c_str()),
+            _wtoi(rightStr.c_str()),
+            _wtoi(bottomStr.c_str())
+        };
+
+        if (rc.right <= rc.left || rc.bottom <= rc.top)
+        {
+            return false;
+        }
+
+        ClampRectToMonitorWorkArea(rc);
+
+        outRect    = rc;
+        outShowCmd = _wtoi(showStr.c_str());
+        return true;
+    }
+
     void LoadWindowPlacement(HWND hwnd)
     {
+        // This function is kept for fallback use only.
+        // Normal startup applies placement via CreateWindowed + Show(showCmd)
+        // to avoid the ~50 ms SetWindowPlacement DWM IPC cost.
         if (hwnd == nullptr)
         {
             return;
         }
 
-        const std::wstring iniFile = GetIniFilePath();
-        if (iniFile.empty() || !std::filesystem::exists(iniFile))
-        {
-            return;
-        }
-
-        int left = 0;
-        int top = 0;
-        int right = 0;
-        int bottom = 0;
+        RECT rc {};
         int showCmd = 0;
-
-        if (!ReadIniInt(iniFile, L"Window", L"Left", left) ||
-            !ReadIniInt(iniFile, L"Window", L"Top", top) ||
-            !ReadIniInt(iniFile, L"Window", L"Right", right) ||
-            !ReadIniInt(iniFile, L"Window", L"Bottom", bottom) ||
-            !ReadIniInt(iniFile, L"Window", L"ShowCmd", showCmd))
+        if (!ReadWindowPlacement(rc, showCmd))
         {
             return;
         }
-
-        RECT rc { left, top, right, bottom };
-        ClampRectToMonitorWorkArea(rc);
 
         WINDOWPLACEMENT wp {};
         wp.length = sizeof(wp);

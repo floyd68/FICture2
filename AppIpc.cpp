@@ -1,8 +1,11 @@
 #include "AppIpc.h"
+#include "AppLog.h"
 
 #include <windows.h>
 
+#include <chrono>
 #include <cstdint>
+#include <filesystem>
 #include <thread>
 #include <vector>
 
@@ -91,8 +94,10 @@ namespace AppIpc
 {
     void StartServer(const std::function<Decision(const std::wstring&)>& onRequest)
     {
+        FIC2_LOG_INFO("[IPC] StartServer: launching named-pipe server thread.");
         std::thread([onRequest]()
         {
+            FIC2_LOG_DEBUG("[IPC] Server thread started. Pipe: {}", std::filesystem::path(kPipeName).string());
             for (;;)
             {
                 HANDLE pipe = CreateNamedPipeW(
@@ -107,23 +112,28 @@ namespace AppIpc
 
                 if (pipe == INVALID_HANDLE_VALUE)
                 {
+                    FIC2_LOG_ERROR("[IPC] Server: CreateNamedPipeW failed (err={}), retrying in 250ms.", GetLastError());
                     // Nothing we can do; retry after a short delay.
                     Sleep(250);
                     continue;
                 }
 
+                FIC2_LOG_DEBUG("[IPC] Server: pipe created, waiting for client connection...");
                 const BOOL ok = ConnectNamedPipe(pipe, nullptr) ? TRUE : (GetLastError() == ERROR_PIPE_CONNECTED);
                 if (!ok)
                 {
+                    FIC2_LOG_WARN("[IPC] Server: ConnectNamedPipe failed (err={}), discarding pipe.", GetLastError());
                     CloseHandle(pipe);
                     continue;
                 }
 
+                FIC2_LOG_DEBUG("[IPC] Server: client connected, handling request.");
                 (void)HandleOneClient(pipe, onRequest);
 
                 FlushFileBuffers(pipe);
                 DisconnectNamedPipe(pipe);
                 CloseHandle(pipe);
+                FIC2_LOG_DEBUG("[IPC] Server: client disconnected, looping for next connection.");
             }
         }).detach();
     }
@@ -137,25 +147,88 @@ namespace AppIpc
             return false;
         }
 
-        // If the server isn't up yet, don't block long; we want the new instance to continue.
-        if (!WaitNamedPipeW(kPipeName, 150))
-        {
-            return false;
-        }
+        // Connect to the server pipe with retry logic.
+        //
+        // There are two distinct failure modes:
+        //   ERROR_FILE_NOT_FOUND (2)  — pipe not yet created; server thread hasn't started.
+        //                               WaitNamedPipeW returns immediately for this case,
+        //                               so we must poll until the pipe appears.
+        //   ERROR_PIPE_BUSY           — pipe exists but all server instances are occupied;
+        //                               WaitNamedPipeW will block until one is free.
+        //
+        // Overall budget: 500 ms. The server typically creates the pipe within ~15 ms of
+        // the mutex being visible, so polling at 5 ms intervals is more than sufficient.
+        constexpr DWORD kTotalBudgetMs  = 500;
+        constexpr DWORD kPollIntervalMs = 5;
 
-        HANDLE h = CreateFileW(
-            kPipeName,
-            GENERIC_READ | GENERIC_WRITE,
-            0,
-            nullptr,
-            OPEN_EXISTING,
-            FILE_ATTRIBUTE_NORMAL,
-            nullptr);
+        const auto deadline = std::chrono::steady_clock::now()
+                            + std::chrono::milliseconds(kTotalBudgetMs);
+        int retryCount = 0;
+
+        HANDLE h = INVALID_HANDLE_VALUE;
+        while (std::chrono::steady_clock::now() < deadline)
+        {
+            h = CreateFileW(kPipeName, GENERIC_READ | GENERIC_WRITE, 0, nullptr,
+                            OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+
+            if (h != INVALID_HANDLE_VALUE)
+            {
+                break;  // connected
+            }
+
+            const DWORD err = GetLastError();
+            if (err == ERROR_FILE_NOT_FOUND)
+            {
+                // Pipe not yet created — server thread is still starting up.
+                // Sleep briefly and retry.
+                if (retryCount == 0)
+                {
+                    FIC2_LOG_INFO("[IPC] Client: pipe not yet created (server starting), polling every {}ms...",
+                        kPollIntervalMs);
+                }
+                ++retryCount;
+                Sleep(kPollIntervalMs);
+                continue;
+            }
+            else if (err == ERROR_PIPE_BUSY)
+            {
+                // Pipe exists but busy — wait for a free slot then retry.
+                FIC2_LOG_DEBUG("[IPC] Client: pipe busy, calling WaitNamedPipeW...");
+                const auto remaining = std::chrono::duration_cast<std::chrono::milliseconds>(
+                    deadline - std::chrono::steady_clock::now()).count();
+                if (remaining <= 0 || !WaitNamedPipeW(kPipeName, static_cast<DWORD>(remaining)))
+                {
+                    FIC2_LOG_WARN("[IPC] Client: WaitNamedPipeW timed out (err={}).", GetLastError());
+                    break;
+                }
+                continue;
+            }
+            else
+            {
+                FIC2_LOG_ERROR("[IPC] Client: CreateFileW (pipe connect) failed (err={}).", err);
+                break;
+            }
+        }
 
         if (h == INVALID_HANDLE_VALUE)
         {
+            if (retryCount > 0)
+            {
+                FIC2_LOG_WARN("[IPC] Client: server pipe not available after {}ms ({} retries).",
+                    kTotalBudgetMs, retryCount);
+            }
             return false;
         }
+
+        if (retryCount > 0)
+        {
+            FIC2_LOG_INFO("[IPC] Client: connected after {} retries (~{}ms wait).",
+                retryCount, retryCount * kPollIntervalMs);
+        }
+        FIC2_LOG_DEBUG("[IPC] Client: connected to server pipe. Sending path: {}",
+            std::filesystem::path(path).string());
+        FIC2_LOG_DEBUG("[IPC] Client: connected to server pipe. Sending path: {}",
+            std::filesystem::path(path).string());
 
         const std::wstring payload = path + L'\0';
         const uint32_t version = kProtocolVersion;
@@ -173,10 +246,12 @@ namespace AppIpc
 
         if (!ok)
         {
+            FIC2_LOG_ERROR("[IPC] Client: pipe I/O failed during send/recv.");
             return false;
         }
 
         outDecision = static_cast<Decision>(resp);
+        FIC2_LOG_INFO("[IPC] Client: server responded with decision={}.", static_cast<int>(outDecision));
         return true;
     }
 }

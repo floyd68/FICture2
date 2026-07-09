@@ -1,6 +1,8 @@
 #include "Ficture2Backplate.h"
 
+#include "AppLog.h"
 #include "CommonUtil.h"
+#include "SimpleIniFile.h"
 #include "FD2D/Core.h"
 #include "AppSetup.h"
 #include "Resource.h"
@@ -1027,43 +1029,43 @@ void Ficture2Backplate::EnsureImageBrowserIniInitialized()
         return;
     }
 
-    const int showNav = GetPrivateProfileIntW(L"Viewer", L"ShowNavItems", 1, iniFile.c_str());
-    m_showNavItems = (showNav != 0);
+    // Read the entire INI file once; avoid calling GetPrivateProfile* APIs
+    // which re-open and re-parse the file on every individual call.
+    FIC2_TIMER_START(t_ini);
+    const auto ini = SimpleIniFile::Load(iniFile);
+    FIC2_LOG_STEP(t_ini, "[IniInit] SimpleIniFile::Load");
+    if (!ini.IsLoaded())
+    {
+        return;
+    }
 
-    wchar_t buf[128] {};
-    if (GetPrivateProfileStringW(L"Window", L"BackgroundColor", L"", buf, static_cast<DWORD>(std::size(buf)), iniFile.c_str()) > 0)
+    m_showNavItems = (ini.GetInt(L"Viewer", L"ShowNavItems", 1) != 0);
+    FIC2_LOG_STEP(t_ini, "[IniInit] key reads + SetClearColor");
+
+    const std::wstring bgColor = ini.GetString(L"Window", L"BackgroundColor");
+    if (!bgColor.empty())
     {
         D2D1_COLOR_F color {};
-        if (TryParseRgb(buf, color))
+        if (TryParseRgb(bgColor.c_str(), color))
         {
             SetClearColor(color);
         }
     }
 
-    wchar_t focusedBuf[128] {};
-    if (GetPrivateProfileStringW(L"Window", L"FocusedBackgroundColor", L"", focusedBuf, static_cast<DWORD>(std::size(focusedBuf)), iniFile.c_str()) > 0)
+    const std::wstring focusedColor = ini.GetString(L"Window", L"FocusedBackgroundColor");
+    if (!focusedColor.empty())
     {
-        D2D1_COLOR_F focusedColor {};
-        if (TryParseRgb(focusedBuf, focusedColor))
+        D2D1_COLOR_F fc {};
+        if (TryParseRgb(focusedColor.c_str(), fc))
         {
-            m_focusedBackgroundColor = focusedColor;
+            m_focusedBackgroundColor = fc;
         }
     }
 
-    wchar_t zoomStiffnessStr[32] {};
-    if (GetPrivateProfileStringW(
-        L"Image",
-        L"ZoomStiffness",
-        L"80.0",
-        zoomStiffnessStr,
-        static_cast<DWORD>(std::size(zoomStiffnessStr)),
-        iniFile.c_str()) > 0)
+    const float zoomStiffness = ini.GetFloat(L"Image", L"ZoomStiffness", 80.0f);
+    if (zoomStiffness >= 10.0f && zoomStiffness <= 500.0f)
     {
-        const float zoomStiffness = static_cast<float>(_wtof(zoomStiffnessStr));
-        if (zoomStiffness >= 10.0f && zoomStiffness <= 500.0f)
-        {
-            m_imageZoomStiffness = zoomStiffness;
-        }
+        m_imageZoomStiffness = zoomStiffness;
     }
 }
 
