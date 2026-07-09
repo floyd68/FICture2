@@ -1,10 +1,15 @@
 #pragma once
 
-// AppLog: file logging via spdlog, active in both Debug and Release builds.
+// AppLog: optional file logging via spdlog.
+//
+// Logging is controlled by command-line switches:
+//   Debug   builds: ON  by default; pass -logoff to disable.
+//   Release builds: OFF by default; pass -logon  to enable.
 //
 // Usage:
-//   - Call AppLog::Init(executableDir) once at startup.
-//   - Call AppLog::Shutdown() before process exit.
+//   - Call AppLog::Init(executableDir) only when logging is requested.
+//     If Init is never called, every FIC2_LOG_* macro is a silent no-op.
+//   - Call AppLog::Shutdown() before process exit (safe even if Init was skipped).
 //   - Use the FIC2_LOG_* macros for structured logging.
 //   - Use FIC2_TIMER_START / FIC2_LOG_STEP for startup timing.
 //
