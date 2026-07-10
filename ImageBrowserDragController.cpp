@@ -1,21 +1,9 @@
-#include "ImageBrowserDragController.h"
+﻿#include "ImageBrowserDragController.h"
 #include "FD2D/Util.h"
 
 #include "VirtualFileSystem.h"
 #include <algorithm>
 
-namespace
-{
-    bool IsSupportedDropPath(const VirtualPath& path)
-    {
-        if (VirtualFileSystem::IsDirectory(path) || path.IsArchiveFile())
-        {
-            return true;
-        }
-
-        return VirtualFileSystem::IsImageFile(path);
-    }
-}
 
 bool ImageBrowserDragController::HandleFileDrop(
     const std::wstring& path,
@@ -39,7 +27,7 @@ bool ImageBrowserDragController::HandleFileDrop(
         return false;
     }
 
-    if (!IsSupportedDropPath(*vp))
+    if (!VirtualFileSystem::IsBrowsableDropTarget(*vp))
     {
         return false;
     }
@@ -88,7 +76,7 @@ bool ImageBrowserDragController::HandleFileDrag(
         return false;
     }
 
-    if (!IsSupportedDropPath(*vp))
+    if (!VirtualFileSystem::IsBrowsableDropTarget(*vp))
     {
         return false;
     }

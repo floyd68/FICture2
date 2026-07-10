@@ -20,6 +20,8 @@ namespace ImageBrowserInfoPresenter
         FD2D::Image::LoadedInfo loadedInfo {};
 
         int zoomPercent { 100 };
+        // 0 = 0°, 1 = 90°CW, 2 = 180°, 3 = 270°CW.
+        int rotationQuarters { 0 };
         bool hasSamplingState { false };
         bool highQualitySampling { true };
         bool useD3DRenderer { false };

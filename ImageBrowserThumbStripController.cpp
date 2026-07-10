@@ -1,6 +1,8 @@
-#include "ImageBrowserThumbStripController.h"
+﻿#include "ImageBrowserThumbStripController.h"
 
+#include "ArchiveTypes.h"
 #include "CommonUtil.h"
+#include "AppLog.h"
 #include "FD2D/FD2D.h"
 #include "ThumbImageTile.h"
 #include "ThumbNavTile.h"
@@ -8,6 +10,7 @@
 #include "ArchiveReader.h"
 
 #include <algorithm>
+#include <chrono>
 #include <cwctype>
 #include <unordered_set>
 
@@ -19,39 +22,21 @@ namespace
         bool isArchive { false };
     };
 
-    std::wstring ToUpper(std::wstring s)
-    {
-        for (auto& c : s)
-        {
-            c = static_cast<wchar_t>(towupper(c));
-        }
-        return s;
-    }
-
     std::wstring GetArchiveBadgeText(const VirtualPath& path)
     {
-        std::wstring ext = CommonUtil::ToLower(path.hostPath.extension().wstring());
-        if (ext == L".zip" || ext == L".7z" || ext == L".rar" || ext == L".bsa" || ext == L".ba2")
-        {
-            if (!ext.empty() && ext.front() == L'.')
-            {
-                ext.erase(ext.begin());
-            }
-            return ToUpper(ext);
-        }
-
-        return L"";
+        const std::wstring ext = CommonUtil::ToLower(path.hostPath.extension().wstring());
+        return ArchiveTypes::BadgeLabelForExt(ext);
     }
 
     ThumbNavTile::IconTint GetArchiveIconTint(const VirtualPath& path)
     {
         const std::wstring ext = CommonUtil::ToLower(path.hostPath.extension().wstring());
-        if (ext == L".bsa" || ext == L".ba2")
+        if (ArchiveTypes::IsBethesdaArchiveExt(ext))
         {
             return ThumbNavTile::IconTint::ArchiveBlue;
         }
 
-        if (ext == L".zip" || ext == L".7z" || ext == L".rar")
+        if (ArchiveTypes::IsCommonArchiveExt(ext))
         {
             return ThumbNavTile::IconTint::ArchiveRed;
         }
@@ -68,6 +53,8 @@ ImageBrowserThumbStripController::RebuildResult ImageBrowserThumbStripController
     {
         return result;
     }
+
+    const auto t_rebuild = std::chrono::steady_clock::now();
 
     const auto& panel = context.panel;
     auto& items = *context.items;
@@ -317,6 +304,16 @@ ImageBrowserThumbStripController::RebuildResult ImageBrowserThumbStripController
     }
 
     result.selectIndex = selectIndex;
+
+    {
+        const auto rebuildMs = FIC2_ELAPSED_MS(t_rebuild);
+        if (rebuildMs > 50)
+        {
+            FIC2_LOG_INFO("[UI stall] ThumbStrip::RebuildList took {}ms ({} items)",
+                rebuildMs, items.size());
+        }
+    }
+
     return result;
 }
 

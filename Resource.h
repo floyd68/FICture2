@@ -23,6 +23,10 @@
 #define IDM_CTX_ABOUT                   32783
 #define IDM_CTX_SHOW_IN_EXPLORER        32784
 #define IDM_CTX_OPEN_FOLDER             32785
+#define IDM_CTX_ROTATE_LEFT             32786
+#define IDM_CTX_ROTATE_RIGHT            32787
+#define IDM_CTX_ROTATE_180              32788
+#define IDM_CTX_ROTATE_RESET            32789
 #define IDC_STATIC                      -1
 
 // Next default values for new objects

@@ -1,4 +1,5 @@
 #include "ThumbImageTile.h"
+#include "ThumbTileStyle.h"
 #include "FD2D/Backplate.h"
 
 #include "framework.h"
@@ -157,14 +158,6 @@ void ThumbImageTile::Arrange(FD2D::Rect finalRect)
             const FD2D::Rect imageRect { r.left, r.top, w, h };
             m_image->Arrange(imageRect);
         }
-
-        const float labelH = (std::max)(18.0f, h * 0.28f);
-        m_labelRect = D2D1::RectF(r.left, r.bottom - labelH, r.right, r.bottom);
-
-        const float font = (std::max)(10.0f, (std::min)(14.0f, h * 0.11f));
-        m_label.SetFont(L"Segoe UI", font);
-        m_label.SetRect(m_labelRect);
-        m_label.SetFixedWidth(w);
     }
     else
     {
@@ -187,15 +180,15 @@ void ThumbImageTile::Arrange(FD2D::Rect finalRect)
         {
             m_image->Arrange(imageRect);
         }
-
-        const float labelH = (std::max)(18.0f, h * 0.28f);
-        m_labelRect = D2D1::RectF(r.left, r.bottom - labelH, r.right, r.bottom);
-
-        const float font = (std::max)(10.0f, (std::min)(14.0f, h * 0.11f));
-        m_label.SetFont(L"Segoe UI", font);
-        m_label.SetRect(m_labelRect);
-        m_label.SetFixedWidth(w);
     }
+
+    // Caption band along the bottom edge (same in both width modes).
+    const float labelH = (std::max)(18.0f, h * 0.28f);
+    m_labelRect = D2D1::RectF(r.left, r.bottom - labelH, r.right, r.bottom);
+
+    m_label.SetFont(ThumbTileStyle::kCaptionFontFamily, ThumbTileStyle::CaptionFontSize(h));
+    m_label.SetRect(m_labelRect);
+    m_label.SetFixedWidth(w);
 }
 
 void ThumbImageTile::EnsureResources(ID2D1RenderTarget* target)

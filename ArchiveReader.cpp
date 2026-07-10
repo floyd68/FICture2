@@ -1,4 +1,5 @@
 #include "ArchiveReader.h"
+#include "ArchiveTypes.h"
 #include "CommonUtil.h"
 
 #include <algorithm>
@@ -1146,23 +1147,11 @@ bool ArchiveReaderFactory::HasArchiveExtension(const std::wstring& filename)
 
     ext = CommonUtil::ToLower(ext);
 
-    static const std::vector<std::wstring> supportedExts = {
-#if FICTURE2_ENABLE_LIBARCHIVE_COMMON_ARCHIVES
-        L".zip", L".7z", L".rar",
-#endif
-        L".ba2"
-    };
-
+    const auto& supportedExts = ArchiveTypes::SupportedReadExtensions();
     return std::find(supportedExts.begin(), supportedExts.end(), ext) != supportedExts.end();
 }
 
 std::vector<std::wstring> ArchiveReaderFactory::GetSupportedExtensions()
 {
-    std::vector<std::wstring> exts = {
-#if FICTURE2_ENABLE_LIBARCHIVE_COMMON_ARCHIVES
-        L".zip", L".7z", L".rar",
-#endif
-        L".ba2"
-    };
-    return exts;
+    return ArchiveTypes::SupportedReadExtensions();
 }

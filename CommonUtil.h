@@ -43,6 +43,15 @@ namespace CommonUtil
         return value;
     }
 
+    inline std::wstring ToUpper(std::wstring value)
+    {
+        for (auto& ch : value)
+        {
+            ch = static_cast<wchar_t>(towupper(ch));
+        }
+        return value;
+    }
+
     inline std::wstring NormalizePath(const std::wstring& path)
     {
         if (path.empty())

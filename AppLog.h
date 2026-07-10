@@ -69,3 +69,12 @@ namespace AppLog
         FIC2_LOG_INFO("[STARTUP] {:>6}ms  {}", _ms, label); \
         (var) = _now; \
     } while (0)
+
+// Milliseconds elapsed since a FIC2_TIMER_START baseline (does not reset it).
+// Useful for threshold-based stall logging:
+//   FIC2_TIMER_START(t0);
+//   ... do work ...
+//   if (FIC2_ELAPSED_MS(t0) > 50) { FIC2_LOG_INFO(...); }
+#define FIC2_ELAPSED_MS(var) \
+    (std::chrono::duration_cast<std::chrono::milliseconds>( \
+        std::chrono::steady_clock::now() - (var)).count())
