@@ -2,7 +2,10 @@
 
 #include "framework.h"
 #include "Resource.h"
+#include "ImageBrowserAssets.h"
+#include "ThumbTileStyle.h"
 #include "FD2D/Backplate.h"
+#include "FD2D/Util.h"
 
 #include <wincodec.h>
 #include <vector>
@@ -119,7 +122,7 @@ void ThumbNavTile::Arrange(FD2D::Rect finalRect)
     // Keep name layout behavior consistent with image thumbnail captions:
     // - scale font with tile height
     // - apply ellipsis within the tile width
-    const float font = (std::max)(10.0f, (std::min)(14.0f, h * 0.11f));
+    const float font = ThumbTileStyle::CaptionFontSize(h);
     m_label.SetFixedWidth((std::max)(0.0f, w));
 
     if (m_icon != IconKind::None && m_textPlacement == TextPlacement::Bottom)
@@ -128,7 +131,7 @@ void ThumbNavTile::Arrange(FD2D::Rect finalRect)
         const float labelH = (std::max)(28.0f, h * 0.34f);
         m_labelRect = D2D1::RectF(r.left, r.bottom - labelH, r.right, r.bottom);
         m_label.SetRect(m_labelRect);
-        m_label.SetFont(L"Segoe UI", font);
+        m_label.SetFont(ThumbTileStyle::kCaptionFontFamily, font);
         m_label.SetColor(D2D1::ColorF(D2D1::ColorF::White, 0.90f));
     }
     else
@@ -136,7 +139,7 @@ void ThumbNavTile::Arrange(FD2D::Rect finalRect)
         m_labelRect = r;
         m_label.SetRect(m_labelRect);
         // Centered text (folder/up): match image caption sizing and use black for readability on the icon.
-        m_label.SetFont(L"Segoe UI", font);
+        m_label.SetFont(ThumbTileStyle::kCaptionFontFamily, font);
         m_label.SetColor(D2D1::ColorF(D2D1::ColorF::Black, 0.90f));
     }
 
@@ -405,154 +408,22 @@ bool ThumbNavTile::EnsureFolderBitmap(ID2D1RenderTarget* target)
     m_folderBitmap.Reset();
     m_folderBitmapTarget = nullptr;
 
-    // Load PNG bytes from RCDATA resource.
-    HMODULE module = GetModuleHandleW(nullptr);
-    HRSRC hrsrc = FindResourceW(module, MAKEINTRESOURCEW(IDR_PNG_FOLDER), RT_RCDATA);
-    if (!hrsrc)
+    D2D1_COLOR_F tintColor {};
+    const D2D1_COLOR_F* tint = nullptr;
+    if (m_iconTint == IconTint::ArchiveRed)
+    {
+        tintColor = D2D1::ColorF(1.0f, 0.26f, 0.26f, 1.0f);
+        tint = &tintColor;
+    }
+    else if (m_iconTint == IconTint::ArchiveBlue)
+    {
+        tintColor = D2D1::ColorF(0.26f, 0.55f, 1.0f, 1.0f);
+        tint = &tintColor;
+    }
+
+    if (!ImageBrowserAssets::CreateFolderIconBitmap(target, tint, m_folderBitmap))
     {
         return false;
-    }
-
-    HGLOBAL hglob = LoadResource(module, hrsrc);
-    if (!hglob)
-    {
-        return false;
-    }
-
-    void* data = LockResource(hglob);
-    DWORD size = SizeofResource(module, hrsrc);
-    if (!data || size == 0)
-    {
-        return false;
-    }
-
-    // Decode via WIC from memory.
-    Microsoft::WRL::ComPtr<IWICImagingFactory> wic;
-    HRESULT hr = CoCreateInstance(
-        CLSID_WICImagingFactory,
-        nullptr,
-        CLSCTX_INPROC_SERVER,
-        IID_PPV_ARGS(&wic));
-    if (FAILED(hr) || !wic)
-    {
-        return false;
-    }
-
-    Microsoft::WRL::ComPtr<IWICStream> stream;
-    hr = wic->CreateStream(&stream);
-    if (FAILED(hr) || !stream)
-    {
-        return false;
-    }
-
-    hr = stream->InitializeFromMemory(reinterpret_cast<BYTE*>(data), size);
-    if (FAILED(hr))
-    {
-        return false;
-    }
-
-    Microsoft::WRL::ComPtr<IWICBitmapDecoder> decoder;
-    hr = wic->CreateDecoderFromStream(stream.Get(), nullptr, WICDecodeMetadataCacheOnLoad, &decoder);
-    if (FAILED(hr) || !decoder)
-    {
-        return false;
-    }
-
-    Microsoft::WRL::ComPtr<IWICBitmapFrameDecode> frame;
-    hr = decoder->GetFrame(0, &frame);
-    if (FAILED(hr) || !frame)
-    {
-        return false;
-    }
-
-    Microsoft::WRL::ComPtr<IWICFormatConverter> converter;
-    hr = wic->CreateFormatConverter(&converter);
-    if (FAILED(hr) || !converter)
-    {
-        return false;
-    }
-
-    hr = converter->Initialize(
-        frame.Get(),
-        GUID_WICPixelFormat32bppPBGRA,
-        WICBitmapDitherTypeNone,
-        nullptr,
-        0.0,
-        WICBitmapPaletteTypeCustom);
-    if (FAILED(hr))
-    {
-        return false;
-    }
-
-    if (m_iconTint == IconTint::None)
-    {
-        hr = target->CreateBitmapFromWicBitmap(converter.Get(), nullptr, &m_folderBitmap);
-        if (FAILED(hr) || !m_folderBitmap)
-        {
-            return false;
-        }
-    }
-    else
-    {
-        UINT width = 0;
-        UINT height = 0;
-        hr = converter->GetSize(&width, &height);
-        if (FAILED(hr) || width == 0 || height == 0)
-        {
-            return false;
-        }
-
-        const UINT stride = width * 4;
-        std::vector<BYTE> pixels(static_cast<size_t>(stride) * static_cast<size_t>(height));
-        hr = converter->CopyPixels(nullptr, stride, static_cast<UINT>(pixels.size()), pixels.data());
-        if (FAILED(hr))
-        {
-            return false;
-        }
-
-        D2D1_COLOR_F tintColor = D2D1::ColorF(1.0f, 0.26f, 0.26f, 1.0f);
-        if (m_iconTint == IconTint::ArchiveBlue)
-        {
-            tintColor = D2D1::ColorF(0.26f, 0.55f, 1.0f, 1.0f);
-        }
-
-        const float mixFactor = 0.50f;
-        for (size_t i = 0; i + 3 < pixels.size(); i += 4)
-        {
-            const float alpha = static_cast<float>(pixels[i + 3]) / 255.0f;
-            if (alpha <= 0.0f)
-            {
-                continue;
-            }
-
-            const float targetB = tintColor.b * alpha * 255.0f;
-            const float targetG = tintColor.g * alpha * 255.0f;
-            const float targetR = tintColor.r * alpha * 255.0f;
-
-            pixels[i + 0] = static_cast<BYTE>((1.0f - mixFactor) * pixels[i + 0] + mixFactor * targetB);
-            pixels[i + 1] = static_cast<BYTE>((1.0f - mixFactor) * pixels[i + 1] + mixFactor * targetG);
-            pixels[i + 2] = static_cast<BYTE>((1.0f - mixFactor) * pixels[i + 2] + mixFactor * targetR);
-        }
-
-        Microsoft::WRL::ComPtr<IWICBitmap> tintedBitmap;
-        hr = wic->CreateBitmapFromMemory(
-            width,
-            height,
-            GUID_WICPixelFormat32bppPBGRA,
-            stride,
-            static_cast<UINT>(pixels.size()),
-            pixels.data(),
-            &tintedBitmap);
-        if (FAILED(hr) || !tintedBitmap)
-        {
-            return false;
-        }
-
-        hr = target->CreateBitmapFromWicBitmap(tintedBitmap.Get(), nullptr, &m_folderBitmap);
-        if (FAILED(hr) || !m_folderBitmap)
-        {
-            return false;
-        }
     }
 
     m_folderBitmapTarget = target;
@@ -561,10 +432,6 @@ bool ThumbNavTile::EnsureFolderBitmap(ID2D1RenderTarget* target)
 
 bool ThumbNavTile::HitTest(const POINT& pt) const
 {
-    const auto& rect = LayoutRect();
-    return pt.x >= rect.left &&
-        pt.x <= rect.right &&
-        pt.y >= rect.top &&
-        pt.y <= rect.bottom;
+    return FD2D::Util::RectContainsPoint(LayoutRect(), pt);
 }
 

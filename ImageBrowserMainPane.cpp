@@ -27,7 +27,8 @@ public:
         m_rightText->SetColor(D2D1::ColorF(0.85f, 0.85f, 0.85f, 1.0f));
         m_rightText->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
         m_rightText->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_TRAILING);
-        m_rightText->SetFixedWidth(64.0f);
+        // Wide enough for "100% 270°" (zoom% plus an optional rotation angle).
+        m_rightText->SetFixedWidth(96.0f);
 
         // DockPanel: Fill stops subsequent docking, so add Right first, then Fill.
         m_host->AddChild(m_rightText);

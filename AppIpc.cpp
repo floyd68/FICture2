@@ -227,8 +227,6 @@ namespace AppIpc
         }
         FIC2_LOG_DEBUG("[IPC] Client: connected to server pipe. Sending path: {}",
             std::filesystem::path(path).string());
-        FIC2_LOG_DEBUG("[IPC] Client: connected to server pipe. Sending path: {}",
-            std::filesystem::path(path).string());
 
         const std::wstring payload = path + L'\0';
         const uint32_t version = kProtocolVersion;

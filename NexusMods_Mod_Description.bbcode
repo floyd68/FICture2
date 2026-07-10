@@ -1,6 +1,6 @@
 [center][size=5][b]FICture2 – Ultra-Fast Image Compare & DDS Texture Viewer for Modders[/b][/size][/center]
 
-[center][size=6][url=https://github.com/floyd68/FICture2/releases/tag/1.4]v1.41 Release[/url][/size][/center]
+[center][size=6][url=https://github.com/floyd68/FICture2/releases/tag/1.5]v1.5 Release[/url][/size][/center]
 
 [b]FICture2[/b] is an ultra-lightweight, high-performance image viewer and comparison tool built specifically for game modders and texture artists.
 
@@ -10,7 +10,16 @@ Double-click a texture and you're already comparing it.
 [center][size=4][b]📺 Demo Video[/b][/size]
 [youtube]2eowYOEa5dw[/youtube][/center]
 
-[size=4][b]🆕 What's New in v1.41[/b][/size]
+[size=4][b]🆕 What's New in v1.5[/b][/size]
+[list]
+[*][b]New:[/b] Image rotation — rotate the current image 90° with the [b]<[/b] / [b]>[/b] keys, or use the right-click menu for Rotate Left/Right, Rotate 180°, and Reset Rotation. The current angle is shown next to the zoom percentage[/*]
+[*][b]Fixed:[/b] Rotated images no longer lose their aspect ratio — they now stay correctly proportioned at any rotation[/*]
+[*][b]Fixed:[/b] Panning a rotated image now follows the mouse in the correct direction[/*]
+[*][b]Improved:[/b] Eliminated a brief freeze (roughly 1–5 seconds) that could occur shortly after opening a large folder, caused by many thumbnail loading spinners finishing at the same moment[/*]
+[*][b]Improved:[/b] Slightly smaller executable size from further internal cleanup[/*]
+[/list]
+
+[size=4][b]What's New in v1.41[/b][/size]
 [list]
 [*][b]Fixed:[/b] When opening two files with the same filename from different folders in quick succession, both could open as separate windows instead of a side-by-side comparison — now reliably opens as a split pane[/*]
 [*][b]Improved:[/b] Startup is noticeably faster — the window now restores its last position instantly, without an extra OS round-trip that previously added ~50 ms[/*]
@@ -161,6 +170,7 @@ FICture2 is a natural companion tool for Vortex.
 [*]Backspace / Alt + Up: go to parent folder[/*]
 [*]N: show/hide folders (including ..)[/*]
 [*]Q: toggle sampling quality (sharp pixels vs smooth)[/*]
+[*]< / >: rotate the current image 90° left / right[/*]
 [*]Ctrl + O: open and replace current view[/*]
 [*]Ctrl + Shift + O: open a new view (up to 4)[/*]
 [/list]

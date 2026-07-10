@@ -1,5 +1,6 @@
 #include "ImageBrowserInfoPresenter.h"
 
+#include "ArchiveTypes.h"
 #include "CommonUtil.h"
 #include "FD2D/Core.h"
 
@@ -76,19 +77,8 @@ namespace
             return L"";
         }
 
-        std::wstring hostExt = CommonUtil::ToLower(vpath->hostPath.extension().wstring());
-        if (!hostExt.empty() && hostExt.front() == L'.')
-        {
-            hostExt.erase(hostExt.begin());
-        }
-        if (!hostExt.empty())
-        {
-            for (auto& ch : hostExt)
-            {
-                ch = static_cast<wchar_t>(towupper(ch));
-            }
-        }
-        return hostExt;
+        const std::wstring hostExt = CommonUtil::ToLower(vpath->hostPath.extension().wstring());
+        return ArchiveTypes::BadgeLabelForExt(hostExt);
     }
 }
 
@@ -188,5 +178,12 @@ ImageBrowserInfoPresenter::Output ImageBrowserInfoPresenter::Build(const Input& 
     }
 
     output.zoomText = std::to_wstring(input.zoomPercent) + L"%";
+    const int quarters = ((input.rotationQuarters % 4) + 4) % 4;
+    if (quarters != 0)
+    {
+        output.zoomText += L" ";
+        output.zoomText += std::to_wstring(quarters * 90);
+        output.zoomText += L"\u00B0";
+    }
     return output;
 }

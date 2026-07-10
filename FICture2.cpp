@@ -1,4 +1,4 @@
-// FICture2.cpp : application entrypoint
+﻿// FICture2.cpp : application entrypoint
 
 #include "FICture2.h"
 
@@ -9,6 +9,7 @@
 #include "AppIpc.h"
 #include "AppLog.h"
 #include "AppSetup.h"
+#include "CommonUtil.h"
 #include "ImageBrowser.h"
 #include "IpcCompareRequest.h"
 
@@ -94,21 +95,12 @@ namespace
             picturesDir.pop_back();
         }
 
-        auto toLower = [](std::wstring s)
-        {
-            std::transform(s.begin(), s.end(), s.begin(), [](wchar_t c)
-            {
-                return static_cast<wchar_t>(towlower(c));
-            });
-            return s;
-        };
-
         std::unordered_set<std::wstring> supportedExts {};
         const std::vector<std::wstring> supportedExtList = ImageCore::ImageDecodeDispatcher::GetSupportedExtensions();
         supportedExts.reserve(supportedExtList.size());
         for (const auto& extRaw : supportedExtList)
         {
-            supportedExts.insert(toLower(extRaw));
+            supportedExts.insert(CommonUtil::ToLower(extRaw));
         }
 
         auto hasSupportedExt = [&](const std::wstring& fileName) -> bool
@@ -118,7 +110,7 @@ namespace
             {
                 return false;
             }
-            const std::wstring ext = toLower(fileName.substr(dot));
+            const std::wstring ext = CommonUtil::ToLower(fileName.substr(dot));
             return supportedExts.find(ext) != supportedExts.end();
         };
 
@@ -167,7 +159,7 @@ namespace
 
         std::sort(files.begin(), files.end(), [&](const std::wstring& a, const std::wstring& b)
         {
-            return toLower(fileNameOnly(a)) < toLower(fileNameOnly(b));
+            return CommonUtil::ToLower(fileNameOnly(a)) < CommonUtil::ToLower(fileNameOnly(b));
         });
 
         return files.front();

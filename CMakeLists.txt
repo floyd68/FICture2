@@ -57,7 +57,7 @@ if(MSVC)
 endif()
 
 set(FICTURE2_VERSION_MAJOR 1)
-set(FICTURE2_VERSION_MINOR 4)
+set(FICTURE2_VERSION_MINOR 5)
 set(FICTURE2_VERSION_COMMITCOUNT 0)
 set(FICTURE2_VERSION_BUILD 0)
 
@@ -220,6 +220,12 @@ endfunction()
 set_cache_bool(BUILD_TOOLS OFF "Disable DirectXTex tools")
 set_cache_bool(BUILD_SAMPLE OFF "Disable DirectXTex sample")
 set_cache_bool(BUILD_SHARED_LIBS OFF "Static DirectXTex")
+# FICture2 only decodes/displays images (LoadFrom*, Decompress, Convert, Resize) and
+# never calls Compress/CompressEx or DirectXTex's own D3D11/D3D12 texture helpers
+# (it uploads textures itself in FD2D/Image.cpp). Disabling these drops the embedded
+# BC6H/BC7 GPU-compression compute shaders and the unused D3D12 helper code/link.
+set_cache_bool(BUILD_DX11 OFF "Disable unused DirectXTex GPU compression / D3D11 helpers")
+set_cache_bool(BUILD_DX12 OFF "Disable unused DirectXTex D3D12 helpers")
 if(FICTURE2_USE_DIRECTXTEX_OPENMP)
     set_cache_bool(BC_USE_OPENMP ON "DirectXTex OpenMP support")
 endif()
@@ -254,6 +260,11 @@ if(FICTURE2_ENABLE_LIBARCHIVE_COMMON_ARCHIVES)
     )
     set_cache_bools_off(_xz_bool_options "Disable xz")
     set_cache_bool(BUILD_SHARED_LIBS OFF "Static xz")
+    # FICture2 only reads archives (never encodes), so the size-optimized CRC32/CRC64
+    # (bit-by-bit, no lookup tables) and the single resumable LZMA decoder loop are a
+    # clear win: the fast-vs-small choice is a compile-time source swap, not something
+    # a linker could dead-strip either way.
+    set_cache_bool(XZ_SMALL ON "Reduce liblzma code/table size (decoder-only usage)")
     add_subdirectory(external/xz)
     set(_liblzma_config_dir "${CMAKE_BINARY_DIR}/_liblzma_config")
     file(MAKE_DIRECTORY "${_liblzma_config_dir}")

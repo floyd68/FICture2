@@ -202,6 +202,10 @@ namespace
         ToggleDirectories,
         ToggleAlpha,
         ToggleSampling,
+        RotateLeft,
+        RotateRight,
+        Rotate180,
+        RotateReset,
         ShowInExplorerAtPoint,
         ShowAbout,
         RegisterAssociations,
@@ -251,6 +255,10 @@ namespace
         { IDM_CTX_TOGGLE_DIRECTORIES, BrowserCommandAction::ToggleDirectories },
         { IDM_CTX_TOGGLE_ALPHA, BrowserCommandAction::ToggleAlpha },
         { IDM_CTX_TOGGLE_SAMPLING, BrowserCommandAction::ToggleSampling },
+        { IDM_CTX_ROTATE_LEFT,  BrowserCommandAction::RotateLeft  },
+        { IDM_CTX_ROTATE_RIGHT, BrowserCommandAction::RotateRight },
+        { IDM_CTX_ROTATE_180,   BrowserCommandAction::Rotate180   },
+        { IDM_CTX_ROTATE_RESET, BrowserCommandAction::RotateReset },
     };
 
     // Context menu: integration/system commands.
@@ -305,6 +313,9 @@ namespace
         { 'X', false, false, true, BrowserCommandAction::FitToScreen },
         { 'B', false, false, true, BrowserCommandAction::BackgroundColor },
         { 'Q', false, false, true, BrowserCommandAction::ToggleSampling },
+        // < / > : rotate left / right (Shift+comma / Shift+period)
+        { VK_OEM_COMMA,  false, true, false, BrowserCommandAction::RotateLeft  },
+        { VK_OEM_PERIOD, false, true, false, BrowserCommandAction::RotateRight },
     };
 
     // Keep in sync with ImageBrowserDragController's default insert threshold.
@@ -325,6 +336,10 @@ namespace
         { BrowserCommandAction::ToggleDirectories, &IImageBrowserOps::BrowserCmdToggleDirectories },
         { BrowserCommandAction::ToggleAlpha, &IImageBrowserOps::BrowserCmdToggleAlpha },
         { BrowserCommandAction::ToggleSampling, &IImageBrowserOps::BrowserCmdToggleSampling },
+        { BrowserCommandAction::RotateLeft,  &IImageBrowserOps::BrowserCmdRotateLeft  },
+        { BrowserCommandAction::RotateRight, &IImageBrowserOps::BrowserCmdRotateRight },
+        { BrowserCommandAction::Rotate180,   &IImageBrowserOps::BrowserCmdRotate180   },
+        { BrowserCommandAction::RotateReset, &IImageBrowserOps::BrowserCmdRotateReset },
     };
 
     std::wstring BuildSupportedImageDialogFilter()
@@ -873,7 +888,7 @@ bool Ficture2Backplate::HandleFileDropPaths(const std::vector<std::wstring>& pat
             continue;
         }
 
-        if (VirtualFileSystem::IsDirectory(*vp) || vp->IsArchiveFile() || VirtualFileSystem::IsImageFile(*vp))
+        if (VirtualFileSystem::IsBrowsableDropTarget(*vp))
         {
             supported.push_back(path);
         }
@@ -1580,7 +1595,7 @@ bool Ficture2Backplate::HandleImageBrowserKeyUpCommand(
         browserOps,
         normalizedKey,
         false,
-        false,
+        shift,  // pass actual shift so Shift+<key> bindings (e.g. < and >) can match
         alt,
         kKeyViewAppearanceChordMap,
         POINT {},

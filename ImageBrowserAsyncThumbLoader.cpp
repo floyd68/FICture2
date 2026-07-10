@@ -1,7 +1,6 @@
 #include "ImageBrowserAsyncThumbLoader.h"
 #include "CommonUtil.h"
 
-#include <filesystem>
 #include <deque>
 #include <mutex>
 #include <thread>
@@ -11,7 +10,9 @@ namespace
 {
     bool PathEqualsInsensitive(const VirtualPath& a, const VirtualPath& b)
     {
-        return CommonUtil::ToLower(a.GetDisplayPath()) == CommonUtil::ToLower(b.GetDisplayPath());
+        return CommonUtil::PathEqualsInsensitive(
+            a.hostPath, a.archiveInnerPath,
+            b.hostPath, b.archiveInnerPath);
     }
 
     std::mutex g_asyncThumbListMutex;
@@ -88,45 +89,23 @@ void ImageBrowserAsyncThumbLoader::StartEnumerate(
 
         if (!folder.IsInArchive() && !folder.IsArchiveFile())
         {
-            std::error_code ec;
-            const auto options = std::filesystem::directory_options::skip_permission_denied;
-            std::filesystem::directory_iterator it(folder.hostPath, options, ec);
-            if (ec)
-            {
-                onChunk({}, true);
-                return;
-            }
-
             // Fewer, larger chunks reduce progressive UI rebuild overhead on large folders.
             constexpr size_t kBatchSize = 256;
             std::vector<VirtualFileEntry> batch {};
             batch.reserve(kBatchSize);
-            const std::filesystem::directory_iterator end {};
-            for (; it != end; it.increment(ec))
+
+            VirtualFileSystem::EnumerateFilesystemDirectory(folder.hostPath, [&](VirtualFileEntry&& entry)
             {
-                if (ec)
-                {
-                    ec.clear();
-                    continue;
-                }
-
-                const std::filesystem::directory_entry& entry = *it;
-                std::error_code typeEc;
-                const bool isDir = entry.is_directory(typeEc);
-                if (typeEc)
-                {
-                    continue;
-                }
-
-                batch.emplace_back(VirtualPath(entry.path()), isDir, 0, 0);
+                batch.push_back(std::move(entry));
                 if (batch.size() >= kBatchSize)
                 {
                     onChunk(std::move(batch), false);
                     batch.clear();
                     batch.reserve(kBatchSize);
                 }
-            }
+            });
 
+            // Empty (enumeration failed/no entries) or the final partial batch either way.
             onChunk(std::move(batch), true);
             return;
         }

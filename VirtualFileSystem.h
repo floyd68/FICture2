@@ -1,6 +1,7 @@
 #pragma once
 
 #include "VirtualPath.h"
+#include <functional>
 #include <vector>
 #include <span>
 
@@ -51,8 +52,23 @@ public:
     // Check if path is a directory (or archive, which acts like a directory)
     static bool IsDirectory(const VirtualPath& path);
 
+    // True when the path can be opened by drag&drop / file open:
+    // a folder, an archive, or a supported image file.
+    static bool IsBrowsableDropTarget(const VirtualPath& path)
+    {
+        return IsDirectory(path) || path.IsArchiveFile() || IsImageFile(path);
+    }
+
     // Get all image files recursively from a directory or archive
     static std::vector<VirtualPath> GetAllImages(const VirtualPath& rootPath, bool recursive = false);
+
+    // Streams entries of a regular filesystem directory to onEntry as they are discovered
+    // (skips permission-denied entries; silently skips entries whose type can't be probed).
+    // Shared by ListFilesystemDirectory (collects into a vector) and
+    // ImageBrowserAsyncThumbLoader::StartEnumerate (streams in batches on a worker thread).
+    static void EnumerateFilesystemDirectory(
+        const std::filesystem::path& dirPath,
+        const std::function<void(VirtualFileEntry&&)>& onEntry);
 
 private:
     // Helper: List files in a regular filesystem directory

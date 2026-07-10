@@ -1,4 +1,4 @@
-#include "ImageBrowser.h"
+﻿#include "ImageBrowser.h"
 #include "Version.h"
 #include "CommonUtil.h"
 
@@ -805,13 +805,7 @@ namespace
 
             const auto NormalizeLowerName = [](const std::wstring& p) -> std::wstring
             {
-                std::filesystem::path fp(p);
-                std::wstring name = fp.filename().wstring();
-                for (auto& c : name)
-                {
-                    c = static_cast<wchar_t>(towlower(c));
-                }
-                return name;
+                return CommonUtil::ToLower(std::filesystem::path(p).filename().wstring());
             };
 
             const std::wstring incomingName = NormalizeLowerName(incomingFilePath);
@@ -1310,6 +1304,46 @@ namespace
             ToggleSamplingQualityFromContextMenu();
         }
 
+        void BrowserCmdRotateLeft() override
+        {
+            if (auto m = ActiveMainImage())
+            {
+                m->RotateCCW();
+            }
+        }
+
+        void BrowserCmdRotateRight() override
+        {
+            if (auto m = ActiveMainImage())
+            {
+                m->RotateCW();
+            }
+        }
+
+        void BrowserCmdRotate180() override
+        {
+            auto m = ActiveMainImage();
+            if (!m)
+            {
+                return;
+            }
+            auto vt = m->GetViewTransform();
+            vt.rotationQuarters = (vt.rotationQuarters + 2) % 4;
+            m->SetViewTransform(vt, true /*notify → sync*/);
+        }
+
+        void BrowserCmdRotateReset() override
+        {
+            auto m = ActiveMainImage();
+            if (!m)
+            {
+                return;
+            }
+            auto vt = m->GetViewTransform();
+            vt.rotationQuarters = 0;
+            m->SetViewTransform(vt, true /*notify → sync*/);
+        }
+
         bool BrowserContextMenuPrepareForDisplay(const POINT& ptClient) override
         {
             D2D1_RECT_F mainRect {};
@@ -1625,6 +1659,7 @@ namespace
                 input.loadedInfo = main->GetLoadedInfo();
             }
             input.zoomPercent = zoomPct;
+            input.rotationQuarters = main ? main->GetViewTransform().rotationQuarters : 0;
             input.hasSamplingState = (m_mainImage != nullptr);
             if (m_mainImage != nullptr)
             {
@@ -1971,6 +2006,7 @@ namespace
             const bool showNavItems = m_showNavItems;
 
             m_thumbListLoading = true;
+            m_progressiveStartMs = CommonUtil::NowMs();
             m_progressiveListedEntries.clear();
             m_progressivePreferSelectPath = preferSelectPath;
             m_progressiveUiDirty = false;
@@ -2055,7 +2091,14 @@ namespace
                 m_progressiveLastApplyMs);
             if (shouldApplyNow)
             {
+                FIC2_TIMER_START(t_drain);
                 ApplyProgressiveThumbUpdate(m_progressiveLoadCompleted);
+                const auto drainMs = FIC2_ELAPSED_MS(t_drain);
+                if (drainMs > 50)
+                {
+                    FIC2_LOG_INFO("[UI stall] DrainAsyncThumbChunks->ApplyProgressiveThumbUpdate took {}ms "
+                        "({} entries accumulated)", drainMs, m_progressiveListedEntries.size());
+                }
             }
         }
 
@@ -2077,6 +2120,9 @@ namespace
             if (m_progressiveLoadCompleted)
             {
                 m_thumbListLoading = false;
+                const unsigned long long totalMs = CommonUtil::NowMs() - m_progressiveStartMs;
+                FIC2_LOG_INFO("[ThumbLoad] Progressive load complete: {} items in {}ms total",
+                    m_items.size(), totalMs);
             }
         }
 
@@ -2651,6 +2697,7 @@ namespace
         bool m_progressiveUiDirty { false };
         bool m_progressiveLoadCompleted { false };
         unsigned long long m_progressiveLastApplyMs { 0 };
+        unsigned long long m_progressiveStartMs { 0 };
         HANDLE m_asyncThumbReadyEvent { nullptr };
         float m_thumbW { 128.0f };
         float m_thumbH { 128.0f };

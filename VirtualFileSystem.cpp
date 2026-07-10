@@ -208,13 +208,13 @@ std::vector<VirtualPath> VirtualFileSystem::GetAllImages(const VirtualPath& root
     return images;
 }
 
-std::vector<VirtualFileEntry> VirtualFileSystem::ListFilesystemDirectory(const std::filesystem::path& dirPath)
+void VirtualFileSystem::EnumerateFilesystemDirectory(
+    const std::filesystem::path& dirPath,
+    const std::function<void(VirtualFileEntry&&)>& onEntry)
 {
-    std::vector<VirtualFileEntry> entries;
-
-    if (!std::filesystem::exists(dirPath) || !std::filesystem::is_directory(dirPath))
+    if (!onEntry || !std::filesystem::exists(dirPath) || !std::filesystem::is_directory(dirPath))
     {
-        return entries;
+        return;
     }
 
     std::error_code iterEc;
@@ -222,7 +222,7 @@ std::vector<VirtualFileEntry> VirtualFileSystem::ListFilesystemDirectory(const s
     std::filesystem::directory_iterator it(dirPath, options, iterEc);
     if (iterEc)
     {
-        return entries;
+        return;
     }
 
     const std::filesystem::directory_iterator end {};
@@ -235,7 +235,6 @@ std::vector<VirtualFileEntry> VirtualFileSystem::ListFilesystemDirectory(const s
         }
 
         const std::filesystem::directory_entry& entry = *it;
-        VirtualPath vpath(entry.path());
 
         std::error_code typeEc;
         const bool isDir = entry.is_directory(typeEc);
@@ -246,9 +245,17 @@ std::vector<VirtualFileEntry> VirtualFileSystem::ListFilesystemDirectory(const s
 
         // Folder browsing only needs name/type immediately.
         // Skip per-entry metadata probes here to reduce stalls in large folders.
-        entries.emplace_back(vpath, isDir, 0, 0);
+        onEntry(VirtualFileEntry(VirtualPath(entry.path()), isDir, 0, 0));
     }
+}
 
+std::vector<VirtualFileEntry> VirtualFileSystem::ListFilesystemDirectory(const std::filesystem::path& dirPath)
+{
+    std::vector<VirtualFileEntry> entries;
+    EnumerateFilesystemDirectory(dirPath, [&entries](VirtualFileEntry&& entry)
+    {
+        entries.push_back(std::move(entry));
+    });
     return entries;
 }
 

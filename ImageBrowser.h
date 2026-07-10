@@ -49,6 +49,10 @@ public:
     virtual void BrowserCmdToggleDirectories() = 0;
     virtual void BrowserCmdToggleAlpha() = 0;
     virtual void BrowserCmdToggleSampling() = 0;
+    virtual void BrowserCmdRotateLeft()  = 0;
+    virtual void BrowserCmdRotateRight() = 0;
+    virtual void BrowserCmdRotate180()   = 0;
+    virtual void BrowserCmdRotateReset() = 0;
 };
 
 class IImageBrowserQuery

@@ -1,6 +1,8 @@
-#pragma once
+﻿#pragma once
 
 #include <windows.h>
+
+#include "CommonUtil.h"
 
 #include <string>
 #include <string_view>
@@ -102,12 +104,12 @@ public:
         const std::wstring& key,
         const std::wstring& defaultVal = L"") const
     {
-        const auto sIt = m_sections.find(Lower(section));
+        const auto sIt = m_sections.find(CommonUtil::ToLower(section));
         if (sIt == m_sections.end())
         {
             return defaultVal;
         }
-        const auto kIt = sIt->second.find(Lower(key));
+        const auto kIt = sIt->second.find(CommonUtil::ToLower(key));
         if (kIt == sIt->second.end())
         {
             return defaultVal;
@@ -197,7 +199,7 @@ private:
                 const size_t close = line.find(L']', start + 1);
                 if (close != std::wstring_view::npos)
                 {
-                    currentSection = Lower(Trim(std::wstring(line.substr(start + 1, close - start - 1))));
+                    currentSection = CommonUtil::ToLower(Trim(std::wstring(line.substr(start + 1, close - start - 1))));
                 }
                 continue;
             }
@@ -206,7 +208,7 @@ private:
             const size_t eq = line.find(L'=', start);
             if (eq != std::wstring_view::npos)
             {
-                std::wstring key = Lower(Trim(std::wstring(line.substr(start, eq - start))));
+                std::wstring key = CommonUtil::ToLower(Trim(std::wstring(line.substr(start, eq - start))));
                 std::wstring val = Trim(std::wstring(line.substr(eq + 1)));
 
                 // Strip inline comment.
@@ -233,9 +235,4 @@ private:
         return s.substr(start, end - start);
     }
 
-    static std::wstring Lower(std::wstring s)
-    {
-        for (auto& c : s) { c = static_cast<wchar_t>(towlower(c)); }
-        return s;
-    }
 };

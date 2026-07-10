@@ -227,6 +227,10 @@ For details and the exact CMake flags used, see `docs/libarchive_integration.md`
   - zoom is critically-damped spring animated
   - pointer-based zoom (the point under the mouse stays fixed)
 - **Sampling quality toggle** for scaled image display (D2D + D3D11 paths)
+- **Image rotation**: rotate the current image 90° at a time
+  - `<` / `>` keys rotate left / right; right-click menu adds **Rotate 180°** and **Reset Rotation**
+  - Resets automatically when a different image is selected
+  - Current angle is shown next to the zoom percentage in the info bar
 - **Session persistence** (per-user INI):
   - window placement (auto-saved during move/resize)
   - open viewers + folders + selected image
@@ -265,6 +269,11 @@ For details and the exact CMake flags used, see `docs/libarchive_integration.md`
 - **Q**: toggle sampling quality (low/high)
 - **Ctrl + O**: open file dialog, replace current viewer image/folder context
 - **Ctrl + Shift + O**: open file dialog, create a new viewer on the right (up to 4 total), equal widths
+
+### Main image view (focused `ImageBrowser`)
+
+- **<**: rotate the current image 90° left
+- **>**: rotate the current image 90° right
 
 ## Mouse controls (main image)
 
