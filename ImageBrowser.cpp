@@ -2007,6 +2007,9 @@ namespace
 
             m_thumbListLoading = true;
             m_progressiveStartMs = CommonUtil::NowMs();
+            FIC2_LOG_INFO("[ThumbLoad] Started loading folder '{}' (browser={})",
+                std::filesystem::path(folder.wstring()).string(),
+                std::filesystem::path(browserName).string());
             m_progressiveListedEntries.clear();
             m_progressivePreferSelectPath = preferSelectPath;
             m_progressiveUiDirty = false;
@@ -2091,14 +2094,7 @@ namespace
                 m_progressiveLastApplyMs);
             if (shouldApplyNow)
             {
-                FIC2_TIMER_START(t_drain);
                 ApplyProgressiveThumbUpdate(m_progressiveLoadCompleted);
-                const auto drainMs = FIC2_ELAPSED_MS(t_drain);
-                if (drainMs > 50)
-                {
-                    FIC2_LOG_INFO("[UI stall] DrainAsyncThumbChunks->ApplyProgressiveThumbUpdate took {}ms "
-                        "({} entries accumulated)", drainMs, m_progressiveListedEntries.size());
-                }
             }
         }
 
@@ -2110,10 +2106,20 @@ namespace
             }
 
             const bool applySelection = finalizeSelection && m_progressiveLoadCompleted;
+            // Unconditional (not threshold-gated): this runs both from DrainAsyncThumbChunks
+            // (folder enumeration chunks arriving) and from OnRender's ~50ms poll while a
+            // list is still loading — the latter has no other timing coverage, and it runs
+            // on the UI thread inside every affected Render() call, which is a prime suspect
+            // for "sluggish panning/low FPS for a few seconds after opening a large folder".
+            FIC2_TIMER_START(t_apply);
             RebuildThumbListImmediate(
                 m_progressivePreferSelectPath,
                 &m_progressiveListedEntries,
                 applySelection);
+            const auto applyMs = FIC2_ELAPSED_MS(t_apply);
+            FIC2_LOG_INFO(
+                "[ThumbLoad] ApplyProgressiveThumbUpdate: {} items in {}ms (finalize={}, entriesAccumulated={})",
+                m_items.size(), applyMs, m_progressiveLoadCompleted, m_progressiveListedEntries.size());
 
             m_progressiveUiDirty = false;
             m_progressiveLastApplyMs = CommonUtil::NowMs();
