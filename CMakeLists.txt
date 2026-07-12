@@ -254,6 +254,7 @@ target_sources(FICture2 PRIVATE
     FICture2.cpp
     Ficture2Backplate.cpp
     FloarPathByteSource.cpp
+    ImageAsyncBinding.cpp
     ImageBrowser.cpp
     ImageBrowserAsyncThumbLoader.cpp
     ImageBrowserContextMenu.cpp
@@ -262,12 +263,16 @@ target_sources(FICture2 PRIVATE
     ImageBrowserAssets.cpp
     ImageBrowserInfoPresenter.cpp
     ImageBrowserKeyboardController.cpp
+    ImageBrowserMainImage.cpp
     ImageBrowserMainPane.cpp
     ImageBrowserSessionPersistence.cpp
     ImageBrowserSplitCoordinator.cpp
+    ImageBrowserThumbImage.cpp
     ImageBrowserThumbnailPane.cpp
     ImageBrowserThumbLayoutCoordinator.cpp
     ImageBrowserThumbStripController.cpp
+    ImageGpuResourceCache.cpp
+    ImageViewUtil.cpp
     ThumbImageTile.cpp
     ThumbNavTile.cpp
     app.manifest

@@ -10,7 +10,7 @@ ThumbImageTile::ThumbImageTile(const std::wstring& name)
     : Wnd(name)
     , m_label(name + L"_label")
 {
-    m_image = std::make_shared<FD2D::ThumbImage>(name + L"_img");
+    m_image = std::make_shared<ImageBrowserThumbImage>(name + L"_img");
     m_image->SetThumbnailSize({ m_fixedSize.w, m_fixedSize.h });
     AddChild(m_image);
 

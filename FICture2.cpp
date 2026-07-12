@@ -16,9 +16,11 @@
 #include "IpcCompareRequest.h"
 
 #include "FloarLog.h"
+#include "ImageAsyncBinding.h"
 #include "ImageCore/ImageCore.h"
 #include "ImageCore/ImageCoreLog.h"
 #include "ImageCore/ImageDecodeDispatcher.h"
+#include "ImageCore/ImageLoader.h"
 #include "ImageCore/IPathByteSource.h"
 
 #include <algorithm>
@@ -386,6 +388,8 @@ int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
         auto backplate = std::make_shared<Ficture2Backplate>(L"main");
         if (!backplate || FAILED(backplate->CreateWindowed(opts)) || !app.RegisterBackplate(backplate))
         {
+            ImageAsyncBindingRegistry::Instance().ShutdownPrepare();
+            ImageCore::ImageLoader::Instance().Shutdown();
             app.Shutdown();
             return FALSE;
         }
@@ -549,6 +553,11 @@ int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
         CloseHandle(instanceMutex);
         instanceMutex = nullptr;
     }
+
+    // Tear down async image bindings and ImageCore before FD2D::Application::Shutdown
+    // (which clears backplates and shuts down Core).
+    ImageAsyncBindingRegistry::Instance().ShutdownPrepare();
+    ImageCore::ImageLoader::Instance().Shutdown();
 
     app.Shutdown();
 

@@ -1,7 +1,7 @@
 #pragma once
 
-#include "FD2D/Image.h"
 #include "ImageBrowserThumbTypes.h"
+#include "ImageViewTypes.h"
 #include "VirtualPath.h"
 
 #include <string>
@@ -17,7 +17,7 @@ namespace ImageBrowserInfoPresenter
         Floar::VirtualPath currentFolder {};
 
         bool hasLoadedInfo { false };
-        FD2D::Image::LoadedInfo loadedInfo {};
+        ImageLoadedInfo loadedInfo {};
 
         int zoomPercent { 100 };
         // 0 = 0°, 1 = 90°CW, 2 = 180°, 3 = 270°CW.

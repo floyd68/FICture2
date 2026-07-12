@@ -2,7 +2,7 @@
 
 #include "FD2D/Wnd.h"
 #include "FD2D/Text.h"
-#include "FD2D/ThumbImage.h"
+#include "ImageBrowserThumbImage.h"
 
 #include <d2d1.h>
 #include <wrl/client.h>
@@ -12,7 +12,7 @@
 #include <string>
 
 // Thumbnail tile for images:
-// - Renders an FD2D::Image thumbnail
+// - Renders an ImageBrowserThumbImage thumbnail
 // - Draws the filename inside the thumbnail at the bottom
 class ThumbImageTile : public FD2D::Wnd
 {
@@ -29,7 +29,7 @@ public:
     void SetSelected(bool selected);
     void SetOnClick(ClickHandler handler);
 
-    std::shared_ptr<FD2D::ThumbImage> ImageWnd() const { return m_image; }
+    std::shared_ptr<ImageBrowserThumbImage> ImageWnd() const { return m_image; }
 
     FD2D::Size Measure(FD2D::Size available) override;
     void Arrange(FD2D::Rect finalRect) override;
@@ -44,11 +44,10 @@ private:
     bool m_useVariableWidth { false };
     D2D1_SIZE_F m_lastBitmapSize {};
     std::wstring m_caption {};
-    std::shared_ptr<FD2D::ThumbImage> m_image {};
+    std::shared_ptr<ImageBrowserThumbImage> m_image {};
     FD2D::Text m_label;
     ClickHandler m_onClick {};
 
     D2D1_RECT_F m_labelRect {};
     Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> m_labelBackdropBrush {};
 };
-

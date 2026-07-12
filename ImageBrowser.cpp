@@ -24,7 +24,8 @@
 
 #include "FD2D/FD2D.h"
 #include "FD2D/Util.h"
-#include "FD2D/MainImage.h"
+#include "ImageBrowserMainImage.h"
+#include "ImageViewTypes.h"
 #include "ImageCore/DecoderRegistry.h"
 #include "ImageCore/ImageCore.h"
 #include "VirtualPath.h"
@@ -1198,7 +1199,7 @@ namespace
             return ActiveMainFileNameLower();
         }
 
-        void BrowserApplyViewTransformForSync(const FD2D::Image::ViewTransform& vt) override
+        void BrowserApplyViewTransformForSync(const ImageViewTransform& vt) override
         {
             ApplySyncedViewTransform(vt);
         }
@@ -1405,7 +1406,7 @@ namespace
             FIC2_LOG_STEP(t_build, "[BuildUi] rootSplit created");
 
             BuildMainPanes();
-            FIC2_LOG_STEP(t_build, "[BuildUi] BuildMainPanes (ImageBrowserMainPane + FD2D::MainImage)");
+            FIC2_LOG_STEP(t_build, "[BuildUi] BuildMainPanes (ImageBrowserMainPane + ImageBrowserMainImage)");
 
             if (!m_thumbPane)
             {
@@ -1570,7 +1571,7 @@ namespace
             m_mainPane->Build(
                 m_rootSplit,
                 m_initialFile,
-                [this](const FD2D::Image::ViewTransform& vt)
+                [this](const ImageViewTransform& vt)
                 {
                     OnActiveMainViewChanged(vt);
                 },
@@ -1578,7 +1579,7 @@ namespace
                 {
                     RequestFocus();
                 },
-                [this](FD2D::MainImage& mainImage)
+                [this](ImageBrowserMainImage& mainImage)
                 {
                     ApplyIniToMainImage(mainImage);
                 },
@@ -1673,7 +1674,7 @@ namespace
             m_mainPane->UpdateInfo(output.pathText, output.infoText, output.zoomText);
         }
 
-        void ApplyIniToMainImage(FD2D::MainImage& mainImage)
+        void ApplyIniToMainImage(ImageBrowserMainImage& mainImage)
         {
             auto* ficBp = FictureBackplateRef();
             if (ficBp != nullptr)
@@ -1682,7 +1683,7 @@ namespace
             }
         }
 
-        std::shared_ptr<FD2D::MainImage> ActiveMainImage() const
+        std::shared_ptr<ImageBrowserMainImage> ActiveMainImage() const
         {
             return m_mainImage;
         }
@@ -1840,7 +1841,7 @@ namespace
             m_syncSuppressBroadcast = false;
         }
 
-        void OnActiveMainViewChanged(const FD2D::Image::ViewTransform& vt)
+        void OnActiveMainViewChanged(const ImageViewTransform& vt)
         {
             RefreshInfoPanel();
 
@@ -1857,7 +1858,7 @@ namespace
             }
         }
 
-        void ApplySyncedViewTransform(const FD2D::Image::ViewTransform& vt)
+        void ApplySyncedViewTransform(const ImageViewTransform& vt)
         {
             auto main = ActiveMainImage();
             if (!main)
@@ -1868,7 +1869,7 @@ namespace
             // Sync should mirror the *currently displayed* view state from the focused source.
             // Do NOT re-run per-pane spring animation on receivers (it can cause subtle jitter
             // due to different frame timing/layout across panes).
-            FD2D::Image::ViewTransform applied = vt;
+            ImageViewTransform applied = vt;
             applied.targetZoomScale = applied.zoomScale;
             applied.zoomVelocity = 0.0f;
 
@@ -2683,7 +2684,7 @@ namespace
 
         std::shared_ptr<FD2D::SplitPanel> m_rootSplit {};
         std::shared_ptr<ImageBrowserMainPane> m_mainPane {};
-        std::shared_ptr<FD2D::MainImage> m_mainImage {};
+        std::shared_ptr<ImageBrowserMainImage> m_mainImage {};
         std::wstring m_mainPath {};
 
         std::shared_ptr<FD2D::Wnd> m_selectedFocus {};

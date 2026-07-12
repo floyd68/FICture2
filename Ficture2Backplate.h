@@ -1,7 +1,7 @@
 #pragma once
 
 #include "FD2D/Backplate.h"
-#include "FD2D/Image.h"
+#include "ImageViewTypes.h"
 
 #include <cstdint>
 #include <functional>
@@ -32,7 +32,7 @@ public:
         FD2D::Wnd* source { nullptr };
         float thumbStripHeight { 0.0f };
         std::wstring fileNameLower {};
-        FD2D::Image::ViewTransform viewTransform {};
+        ImageViewTransform viewTransform {};
         bool boolValue { false };
         D2D1_COLOR_F color { 0.0f, 0.0f, 0.0f, 0.0f };
     };
@@ -81,7 +81,7 @@ public:
     void SynchronizeViewTransform(
         FD2D::Wnd* source,
         const std::wstring& fileNameLower,
-        const FD2D::Image::ViewTransform& viewTransform);
+        const ImageViewTransform& viewTransform);
     void SynchronizeShowNavItems(FD2D::Wnd* source, bool showNavItems);
     void SynchronizeBackgroundColor(FD2D::Wnd* source, const D2D1_COLOR_F& color);
     void SynchronizeFocusedBackgroundColor(FD2D::Wnd* source, const D2D1_COLOR_F& color);

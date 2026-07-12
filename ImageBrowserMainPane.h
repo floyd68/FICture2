@@ -1,7 +1,8 @@
 #pragma once
 
 #include "FD2D/FD2D.h"
-#include "FD2D/MainImage.h"
+#include "ImageBrowserMainImage.h"
+#include "ImageViewTypes.h"
 
 #include <functional>
 #include <memory>
@@ -18,13 +19,13 @@ public:
     void Build(
         const std::shared_ptr<FD2D::SplitPanel>& rootSplit,
         const std::wstring& initialFile,
-        const std::function<void(const FD2D::Image::ViewTransform&)>& onViewChanged,
+        const std::function<void(const ImageViewTransform&)>& onViewChanged,
         const std::function<void()>& onClick,
-        const std::function<void(FD2D::MainImage&)>& applyIni,
+        const std::function<void(ImageBrowserMainImage&)>& applyIni,
         const std::function<bool(const POINT&)>& onContextMenuRequest,
         const std::function<void()>& onMainImageWheelFocus);
 
-    std::shared_ptr<FD2D::MainImage> MainImage() const { return m_mainImage; }
+    std::shared_ptr<ImageBrowserMainImage> MainImage() const { return m_mainImage; }
     bool TryGetMainImageRect(D2D1_RECT_F& outRect) const;
     void PauseMainImageViewAnimation();
     void RenderCenteredMainOverlayBitmap(
@@ -45,7 +46,7 @@ private:
     std::shared_ptr<FD2D::DockPanel> m_mainDock {};
     std::shared_ptr<PathBar> m_pathBar {};
     std::shared_ptr<InfoBar> m_infoBar {};
-    std::shared_ptr<FD2D::MainImage> m_mainImage {};
+    std::shared_ptr<ImageBrowserMainImage> m_mainImage {};
     std::function<bool(const POINT&)> m_onContextMenuRequest {};
     std::function<void()> m_onMainImageWheelFocus {};
 

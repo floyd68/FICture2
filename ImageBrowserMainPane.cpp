@@ -399,9 +399,9 @@ ImageBrowserMainPane::ImageBrowserMainPane()
 void ImageBrowserMainPane::Build(
     const std::shared_ptr<FD2D::SplitPanel>& rootSplit,
     const std::wstring& initialFile,
-    const std::function<void(const FD2D::Image::ViewTransform&)>& onViewChanged,
+    const std::function<void(const ImageViewTransform&)>& onViewChanged,
     const std::function<void()>& onClick,
-    const std::function<void(FD2D::MainImage&)>& applyIni,
+    const std::function<void(ImageBrowserMainImage&)>& applyIni,
     const std::function<bool(const POINT&)>& onContextMenuRequest,
     const std::function<void()>& onMainImageWheelFocus)
 {
@@ -415,7 +415,7 @@ void ImageBrowserMainPane::Build(
     m_mainDock.reset();
     m_mainImage.reset();
 
-    auto mainImage = std::make_shared<FD2D::MainImage>(L"mainImage0");
+    auto mainImage = std::make_shared<ImageBrowserMainImage>(L"mainImage0");
     if (!initialFile.empty())
     {
         mainImage->SetSourceFile(initialFile);

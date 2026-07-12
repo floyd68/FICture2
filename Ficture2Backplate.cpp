@@ -1164,7 +1164,7 @@ void Ficture2Backplate::SynchronizeFileSelection(FD2D::Wnd* source, const std::w
 void Ficture2Backplate::SynchronizeViewTransform(
     FD2D::Wnd* source,
     const std::wstring& fileNameLower,
-    const FD2D::Image::ViewTransform& viewTransform)
+    const ImageViewTransform& viewTransform)
 {
     if (!m_eventBus || source == nullptr || fileNameLower.empty())
     {

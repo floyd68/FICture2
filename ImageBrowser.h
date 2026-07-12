@@ -1,6 +1,9 @@
 #pragma once
 
-#include "FD2D/Image.h"
+#include "ImageViewTypes.h"
+
+#include <d2d1.h>
+#include <windows.h>
 
 #include <memory>
 #include <string>
@@ -19,7 +22,7 @@ public:
     virtual void BrowserForceApplySyncedThumbStripHeight() = 0;
     virtual void BrowserSelectFileNameForSync(const std::wstring& fileNameLower) = 0;
     virtual std::wstring BrowserGetActiveFileNameLower() const = 0;
-    virtual void BrowserApplyViewTransformForSync(const FD2D::Image::ViewTransform& vt) = 0;
+    virtual void BrowserApplyViewTransformForSync(const ImageViewTransform& vt) = 0;
     virtual void BrowserApplyShowNavItemsForSync(bool showNavItems) = 0;
     virtual void BrowserApplyBackgroundColorForSync(const D2D1_COLOR_F& color) = 0;
     virtual void BrowserApplyFocusedBackgroundColorForSync(const D2D1_COLOR_F& color) = 0;

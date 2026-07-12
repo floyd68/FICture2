@@ -12,7 +12,6 @@
 namespace FD2D
 {
     class StackPanel;
-    class MainImage;
     class Wnd;
 }
 
