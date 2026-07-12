@@ -12,7 +12,7 @@
 #include <memory>
 #include <string>
 
-// FICture2 main-image control: owns TextureImage + Spinner + ImageAsyncBinding.
+// FICture2 main-image control: owns FD2D::Image + Spinner + ImageAsyncBinding.
 // Ports FullResolution behavior from FD2D::Image (zoom/pan/rotation/GPU BCn).
 class ImageBrowserMainImage : public FD2D::Wnd
 {

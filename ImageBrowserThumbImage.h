@@ -12,7 +12,7 @@
 #include <string>
 #include <wrl/client.h>
 
-// FICture2 thumbnail image control: owns TextureImage + Spinner + ImageAsyncBinding.
+// FICture2 thumbnail image control: owns FD2D::Image + Spinner + ImageAsyncBinding.
 // Ports FD2D::ThumbImage behavior with path-gated pending apply.
 class ImageBrowserThumbImage : public FD2D::Wnd
 {

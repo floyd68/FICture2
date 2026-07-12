@@ -401,7 +401,7 @@ HRESULT ImageBrowserMainImage::SetSourceFile(const std::wstring& filePath)
     m_binding.SetLoading(false);
     m_request.source = normalized;
 
-    // Keep previous TextureImage content while the next image loads (no Clear).
+    // Keep previous image content while the next image loads (no Clear).
     SyncTextureDrawState();
     return S_OK;
 }
@@ -703,7 +703,7 @@ void ImageBrowserMainImage::OnGraphicsInvalidated(
     switch (reason)
     {
     case FD2D::GraphicsInvalidationReason::TargetRecreated:
-        // TextureImage clears its D2D bitmap; keep CPU payload for re-upload. View transform kept.
+        // Image clears its D2D bitmap; keep CPU payload for re-upload. View transform kept.
         if (m_cpuPayload.blocks && !m_cpuPayload.sourcePath.empty())
         {
             m_needsCpuReupload = true;
