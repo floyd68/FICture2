@@ -23,7 +23,7 @@ enum class ThumbItemKind
 struct ThumbItem
 {
     ThumbItemKind kind { ThumbItemKind::Image };
-    VirtualPath path {};
+    Floar::VirtualPath path {};
     std::shared_ptr<FD2D::Wnd> focus {};
     std::shared_ptr<FD2D::ThumbImage> image {};
     std::shared_ptr<ThumbNavTile> navTile {};

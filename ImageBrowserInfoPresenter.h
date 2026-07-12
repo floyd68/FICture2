@@ -13,8 +13,8 @@ namespace ImageBrowserInfoPresenter
         std::wstring activePath {};
         bool hasSelection { false };
         ThumbItemKind selectedKind { ThumbItemKind::Image };
-        VirtualPath selectedPath {};
-        VirtualPath currentFolder {};
+        Floar::VirtualPath selectedPath {};
+        Floar::VirtualPath currentFolder {};
 
         bool hasLoadedInfo { false };
         FD2D::Image::LoadedInfo loadedInfo {};

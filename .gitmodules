@@ -12,15 +12,10 @@
 [submodule "ThumbnailProvider"]
 	path = ThumbnailProvider
 	url = https://github.com/floyd68/FICture2-ThumbnailProvider.git
-[submodule "external/libarchive"]
-	path = external/libarchive
-	url = https://github.com/floyd68/libarchive.git
-[submodule "external/zlib"]
-	path = external/zlib
-	url = https://github.com/madler/zlib.git
-[submodule "external/xz"]
-	path = external/xz
-	url = https://github.com/tukaani-project/xz.git
 [submodule "external/spdlog"]
 	path = external/spdlog
 	url = https://github.com/gabime/spdlog.git
+[submodule "Floar"]
+	path = Floar
+	url = https://github.com/floyd68/Floar.git
+	branch = master

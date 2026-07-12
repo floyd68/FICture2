@@ -29,6 +29,7 @@
 #include "ImageCore/ImageCore.h"
 #include "VirtualPath.h"
 #include "VirtualFileSystem.h"
+#include "ImageAwareVfs.h"
 
 #include <algorithm>
 #include <atomic>
@@ -69,7 +70,7 @@ namespace
 		return MakeStableThumbName(prefix, p.wstring());
     }
 
-    static std::wstring MakeStableThumbName(const wchar_t* prefix, const VirtualPath& vp)
+    static std::wstring MakeStableThumbName(const wchar_t* prefix, const Floar::VirtualPath& vp)
     {
 		return MakeStableThumbName(prefix, vp.GetDisplayPath());
     }
@@ -256,7 +257,7 @@ namespace
         {
             m_showNavItems = showNavItems;
 
-            VirtualPath prefer {};
+            Floar::VirtualPath prefer {};
             if (m_selectedIndex < m_items.size())
             {
                 prefer = m_items[m_selectedIndex].path;
@@ -539,7 +540,7 @@ namespace
             return ficBp->ShowImageBrowserContextMenu(this, pt);
         }
 
-        VirtualPath GetContextMenuTargetImagePathAtPoint(const POINT& pt) const
+        Floar::VirtualPath GetContextMenuTargetImagePathAtPoint(const POINT& pt) const
         {
             for (const auto& item : m_items)
             {
@@ -557,7 +558,7 @@ namespace
             {
                 return m_items[m_selectedIndex].path;
             }
-            return VirtualPath();
+            return Floar::VirtualPath();
         }
 
         bool HandleDeferredActionMessage()
@@ -830,7 +831,7 @@ namespace
 
             FIC2_LOG_INFO("[IPC] UI: filename match! Opening incoming path in split pane: {}",
                 std::filesystem::path(incomingFilePath).string());
-            auto vp = VirtualPath::Parse(incomingFilePath);
+            auto vp = Floar::VirtualPath::Parse(incomingFilePath);
             if (vp)
             {
                 SplitHorizontalWithFile(*vp);
@@ -874,7 +875,7 @@ namespace
                 return;
             }
 
-            auto vp = VirtualPath::Parse(filePath);
+            auto vp = Floar::VirtualPath::Parse(filePath);
             if (!vp || !vp->Exists())
             {
                 return;
@@ -912,7 +913,7 @@ namespace
             {
                 return;
             }
-            auto vp = VirtualPath::Parse(folderPath);
+            auto vp = Floar::VirtualPath::Parse(folderPath);
             if (vp)
             {
                 NavigateToFolder(*vp);
@@ -925,7 +926,7 @@ namespace
             {
                 return;
             }
-            auto vp = VirtualPath::Parse(filePath);
+            auto vp = Floar::VirtualPath::Parse(filePath);
             if (vp)
             {
                 SplitHorizontalWithFile(*vp);
@@ -968,9 +969,9 @@ namespace
             (void)ApplySyncedThumbStripHeightIfNeeded(true);
         }
 
-        void OpenAdditionalFileInHorizontalSplit(const VirtualPath& filePath)
+        void OpenAdditionalFileInHorizontalSplit(const Floar::VirtualPath& filePath)
         {
-            if (VirtualFileSystem::IsDirectory(filePath) || filePath.IsArchiveFile())
+            if (Floar::VirtualFileSystem::IsDirectory(filePath) || filePath.IsArchiveFile())
             {
                 InsertHorizontalWithPathAfterName(L"", filePath);
             }
@@ -1137,7 +1138,7 @@ namespace
 
         void BrowserOpenAdditionalFileInHorizontalSplit(const std::wstring& filePath) override
         {
-            OpenAdditionalFileInHorizontalSplit(VirtualPath::FromFilesystem(filePath));
+            OpenAdditionalFileInHorizontalSplit(Floar::VirtualPath::FromFilesystem(filePath));
         }
 
         void BrowserOpenAdditionalFilesSideBySideAfterName(
@@ -1464,13 +1465,13 @@ namespace
             {
                 FIC2_LOG_DEBUG("[BuildUi] initial file: '{}'",
                     std::filesystem::path(m_initialFile).string());
-                auto parsed = VirtualPath::Parse(m_initialFile);
+                auto parsed = Floar::VirtualPath::Parse(m_initialFile);
                 if (parsed)
                 {
                     if (parsed->IsArchiveFile() && !parsed->IsInArchive())
                     {
                         m_currentFolder = *parsed;
-                        RebuildThumbList(VirtualPath());
+                        RebuildThumbList(Floar::VirtualPath());
                     }
                     else
                     {
@@ -1484,8 +1485,8 @@ namespace
             {
                 FIC2_LOG_DEBUG("[BuildUi] no initial file — starting empty");
                 // Start empty; a session restore or user navigation will populate.
-                m_currentFolder = VirtualPath();
-                RebuildThumbList(VirtualPath());
+                m_currentFolder = Floar::VirtualPath();
+                RebuildThumbList(Floar::VirtualPath());
                 FIC2_LOG_STEP(t_build, "[BuildUi] RebuildThumbList (empty)");
             }
 
@@ -1910,7 +1911,7 @@ namespace
                 return;
             }
 
-            const VirtualPath parent = m_currentFolder.GetParent();
+            const Floar::VirtualPath parent = m_currentFolder.GetParent();
             if (parent == m_currentFolder)
             {
                 return;
@@ -1939,14 +1940,14 @@ namespace
             }
         }
 
-        void NavigateToFolder(const VirtualPath& folder)
+        void NavigateToFolder(const Floar::VirtualPath& folder)
         {
-            if (!VirtualFileSystem::IsDirectory(folder))
+            if (!Floar::VirtualFileSystem::IsDirectory(folder))
             {
                 return;
             }
 
-            const VirtualPath previousFolder = m_currentFolder;
+            const Floar::VirtualPath previousFolder = m_currentFolder;
             m_currentFolder = folder;
             RebuildThumbList(previousFolder);
             if (m_thumbPane)
@@ -1959,7 +1960,7 @@ namespace
             }
         }
 
-        void NavigateToFile(const VirtualPath& filePath)
+        void NavigateToFile(const Floar::VirtualPath& filePath)
         {
             if (!filePath.Exists())
             {
@@ -1971,8 +1972,8 @@ namespace
                 return;
             }
 
-            const VirtualPath folder = filePath.GetParent();
-            if (!VirtualFileSystem::IsDirectory(folder))
+            const Floar::VirtualPath folder = filePath.GetParent();
+            if (!Floar::VirtualFileSystem::IsDirectory(folder))
             {
                 return;
             }
@@ -1981,7 +1982,7 @@ namespace
             RebuildThumbList(filePath);
         }
 
-        void RebuildThumbList(const VirtualPath& preferSelectPath)
+        void RebuildThumbList(const Floar::VirtualPath& preferSelectPath)
         {
             FD2D::Backplate* bp = BackplateRef();
             if (bp == nullptr)
@@ -1993,7 +1994,7 @@ namespace
             StartThumbListLoadAsync(preferSelectPath);
         }
 
-        void StartThumbListLoadAsync(const VirtualPath& preferSelectPath)
+        void StartThumbListLoadAsync(const Floar::VirtualPath& preferSelectPath)
         {
             if (!m_thumbPane || !m_thumbPane->Panel())
             {
@@ -2002,7 +2003,7 @@ namespace
 
             const unsigned long long requestId = ++m_thumbListRequestId;
             const std::wstring browserName = Name();
-            const VirtualPath folder = m_currentFolder;
+            const Floar::VirtualPath folder = m_currentFolder;
             const bool showNavItems = m_showNavItems;
 
             m_thumbListLoading = true;
@@ -2026,7 +2027,7 @@ namespace
 
             ImageBrowserAsyncThumbLoader::StartEnumerate(
                 folder,
-                [requestId, browserName, folder, preferSelectPath, showNavItems](std::vector<VirtualFileEntry>&& batch, bool completed)
+                [requestId, browserName, folder, preferSelectPath, showNavItems](std::vector<Floar::VirtualFileEntry>&& batch, bool completed)
             {
                 AsyncThumbListChunkPayload payload {};
                 payload.requestId = requestId;
@@ -2133,8 +2134,8 @@ namespace
         }
 
         void RebuildThumbListImmediate(
-            const VirtualPath& preferSelectPath,
-            const std::vector<VirtualFileEntry>* preloadedEntries,
+            const Floar::VirtualPath& preferSelectPath,
+            const std::vector<Floar::VirtualFileEntry>* preloadedEntries,
             bool applySelection = true)
         {
             if (!m_thumbPane || !m_thumbPane->Panel())
@@ -2205,8 +2206,8 @@ namespace
         }
 
         ImageBrowserThumbStripController::RebuildListContext MakeThumbRebuildContext(
-            const VirtualPath& preferSelectPath,
-            const std::vector<VirtualFileEntry>* preloadedEntries)
+            const Floar::VirtualPath& preferSelectPath,
+            const std::vector<Floar::VirtualFileEntry>* preloadedEntries)
         {
             ImageBrowserThumbStripController::RebuildListContext context {};
             context.panel = (m_thumbPane != nullptr) ? m_thumbPane->Panel() : nullptr;
@@ -2227,7 +2228,7 @@ namespace
                 SelectItemByIndex(index);
                 QueueDeferredAction(DeferredActionKind::ActivateSelected);
             };
-            context.pathEquals = [](const VirtualPath& a, const VirtualPath& b)
+            context.pathEquals = [](const Floar::VirtualPath& a, const Floar::VirtualPath& b)
             {
                 return CommonUtil::PathEqualsInsensitive(
                     a.hostPath,
@@ -2235,13 +2236,13 @@ namespace
                     b.hostPath,
                     b.archiveInnerPath);
             };
-            context.makeStableName = [this](const wchar_t* prefix, const VirtualPath& p)
+            context.makeStableName = [this](const wchar_t* prefix, const Floar::VirtualPath& p)
             {
                 return MakeStableThumbName(prefix, p);
             };
-            context.isSupportedImage = [](const VirtualPath& p)
+            context.isSupportedImage = [](const Floar::VirtualPath& p)
             {
-                return VirtualFileSystem::IsImageFile(p);
+                return ImageAwareVfs::IsImageFile(p);
             };
             context.preloadedEntries = preloadedEntries;
             return context;
@@ -2332,7 +2333,7 @@ namespace
             QueueDeferredActionCore(DeferredActionKind::CloseHorizontalByName, {}, Name());
         }
 
-        void QueueDeferredAction(DeferredActionKind kind, const VirtualPath& path = {})
+        void QueueDeferredAction(DeferredActionKind kind, const Floar::VirtualPath& path = {})
         {
             // Ensure any deferred action runs on the ImageBrowser that originated it.
             // (Pointer input is often handled by child tiles, so the parent ImageBrowser may not receive it directly.)
@@ -2341,7 +2342,7 @@ namespace
 
         void QueueDeferredActionCore(
             DeferredActionKind kind,
-            const VirtualPath& path = {},
+            const Floar::VirtualPath& path = {},
             const std::wstring& text = L"")
         {
             RequestFocus();
@@ -2393,11 +2394,11 @@ namespace
                 {
                     return DispatchDeferredNoPayload(static_cast<DeferredActionKind>(rawKind));
                 },
-                [this](int rawKind, const VirtualPath& path)
+                [this](int rawKind, const Floar::VirtualPath& path)
                 {
                     return DispatchDeferredPathOnly(static_cast<DeferredActionKind>(rawKind), path);
                 },
-                [this](int rawKind, const VirtualPath& path, const std::wstring& text)
+                [this](int rawKind, const Floar::VirtualPath& path, const std::wstring& text)
                 {
                     return DispatchDeferredPathAndText(static_cast<DeferredActionKind>(rawKind), path, text);
                 });
@@ -2423,7 +2424,7 @@ namespace
         }
 
         // Deferred actions that consume only path payload.
-        bool DispatchDeferredPathOnly(DeferredActionKind kind, const VirtualPath& path)
+        bool DispatchDeferredPathOnly(DeferredActionKind kind, const Floar::VirtualPath& path)
         {
             switch (kind)
             {
@@ -2442,7 +2443,7 @@ namespace
         }
 
         // Deferred actions that consume both text and path payload.
-        bool DispatchDeferredPathAndText(DeferredActionKind kind, const VirtualPath& path, const std::wstring& text)
+        bool DispatchDeferredPathAndText(DeferredActionKind kind, const Floar::VirtualPath& path, const std::wstring& text)
         {
             switch (kind)
             {
@@ -2538,7 +2539,7 @@ namespace
                 return false;
             }
 
-            InsertHorizontalWithPathAfterName(afterName, VirtualPath::FromFilesystem(path));
+            InsertHorizontalWithPathAfterName(afterName, Floar::VirtualPath::FromFilesystem(path));
             return true;
         }
 
@@ -2584,7 +2585,7 @@ namespace
             }
         }
 
-        void InsertHorizontalWithPathAfterName(const std::wstring& afterName, const VirtualPath& path)
+        void InsertHorizontalWithPathAfterName(const std::wstring& afterName, const Floar::VirtualPath& path)
         {
             if (auto* rootHost = DelegatedRootHostBrowser())
             {
@@ -2608,7 +2609,7 @@ namespace
             auto newBrowser = std::dynamic_pointer_cast<ImageBrowserImpl>(newWnd);
             if (newBrowser)
             {
-                if (VirtualFileSystem::IsDirectory(path))
+                if (Floar::VirtualFileSystem::IsDirectory(path))
                 {
                     newBrowser->RestoreOpenFolder(path.GetDisplayPath());
                 }
@@ -2636,7 +2637,7 @@ namespace
             }
         }
 
-        void SplitHorizontalWithFile(const VirtualPath& filePath)
+        void SplitHorizontalWithFile(const Floar::VirtualPath& filePath)
         {
             if (filePath.hostPath.empty())
             {
@@ -2694,12 +2695,12 @@ namespace
         unsigned long long m_typeSelectLastInputMs { 0 };
         ULONGLONG m_lastKeyNavMs { 0 };
 
-        VirtualPath m_currentFolder {};
+        Floar::VirtualPath m_currentFolder {};
         bool m_showNavItems { true };
         std::atomic<unsigned long long> m_thumbListRequestId { 0 };
         bool m_thumbListLoading { false };
-        VirtualPath m_progressivePreferSelectPath {};
-        std::vector<VirtualFileEntry> m_progressiveListedEntries {};
+        Floar::VirtualPath m_progressivePreferSelectPath {};
+        std::vector<Floar::VirtualFileEntry> m_progressiveListedEntries {};
         bool m_progressiveUiDirty { false };
         bool m_progressiveLoadCompleted { false };
         unsigned long long m_progressiveLastApplyMs { 0 };
@@ -2715,7 +2716,7 @@ namespace
         float m_thumbOuterSpacing { 8.0f }; // spacing between thumbnail "items" in the horizontal strip
 
         DeferredActionKind m_deferredKind { DeferredActionKind::None };
-        VirtualPath m_deferredPath {};
+        Floar::VirtualPath m_deferredPath {};
         std::wstring m_deferredText {};
 
         std::wstring m_initialFile {};

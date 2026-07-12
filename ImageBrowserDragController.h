@@ -27,7 +27,7 @@ public:
     struct Action
     {
         ActionKind kind { ActionKind::None };
-        VirtualPath path {};
+        Floar::VirtualPath path {};
     };
 
     bool HandleFileDrop(

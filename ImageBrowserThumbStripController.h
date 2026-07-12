@@ -32,14 +32,14 @@ public:
         float thumbW { 0.0f };
         float thumbH { 0.0f };
         bool showNavItems { false };
-        VirtualPath currentFolder {};
-        VirtualPath preferSelectPath {};
+        Floar::VirtualPath currentFolder {};
+        Floar::VirtualPath preferSelectPath {};
         std::function<void(size_t)> onSelectIndex {};
         std::function<void(size_t)> onActivateIndex {};
-        std::function<bool(const VirtualPath&, const VirtualPath&)> pathEquals {};
-        std::function<std::wstring(const wchar_t*, const VirtualPath&)> makeStableName {};
-        std::function<bool(const VirtualPath&)> isSupportedImage {};
-        const std::vector<VirtualFileEntry>* preloadedEntries { nullptr };
+        std::function<bool(const Floar::VirtualPath&, const Floar::VirtualPath&)> pathEquals {};
+        std::function<std::wstring(const wchar_t*, const Floar::VirtualPath&)> makeStableName {};
+        std::function<bool(const Floar::VirtualPath&)> isSupportedImage {};
+        const std::vector<Floar::VirtualFileEntry>* preloadedEntries { nullptr };
     };
 
     struct SelectItemContext

@@ -6,15 +6,20 @@
 #include "FD2D/Application.h"
 #include "FD2D/Backplate.h"
 #include "FD2D/Core.h"
+#include "FD2D/FD2DLog.h"
 #include "AppIpc.h"
 #include "AppLog.h"
 #include "AppSetup.h"
 #include "CommonUtil.h"
+#include "FloarPathByteSource.h"
 #include "ImageBrowser.h"
 #include "IpcCompareRequest.h"
 
+#include "FloarLog.h"
 #include "ImageCore/ImageCore.h"
+#include "ImageCore/ImageCoreLog.h"
 #include "ImageCore/ImageDecodeDispatcher.h"
+#include "ImageCore/IPathByteSource.h"
 
 #include <algorithm>
 #include <cwctype>
@@ -33,6 +38,48 @@ WCHAR g_title[MAX_LOADSTRING];
 
 namespace
 {
+    // Standalone library/submodules no longer depend on AppLog.h directly;
+    // forward their sink-based logs into the same "fic2" spdlog logger.
+    template <typename LevelT>
+    static void ForwardLibraryLogToAppLog(LevelT level, const std::string& message)
+    {
+        auto logger = spdlog::get("fic2");
+        if (!logger)
+        {
+            return;
+        }
+        using L = LevelT;
+        switch (level)
+        {
+        case L::Trace: logger->trace(message); break;
+        case L::Debug: logger->debug(message); break;
+        case L::Info:  logger->info(message);  break;
+        case L::Warn:  logger->warn(message);  break;
+        case L::Error: logger->error(message); break;
+        }
+    }
+
+    static void ForwardFD2DLogToAppLog(FD2D::Log::Level level, const std::string& message)
+    {
+        ForwardLibraryLogToAppLog(level, message);
+    }
+
+    static void ForwardFloarLogToAppLog(Floar::Log::Level level, const std::string& message)
+    {
+        ForwardLibraryLogToAppLog(level, message);
+    }
+
+    static void ForwardImageCoreLogToAppLog(ImageCore::Log::Level level, const std::string& message)
+    {
+        ForwardLibraryLogToAppLog(level, message);
+    }
+
+    static FloarPathByteSource& GetFloarPathByteSource()
+    {
+        static FloarPathByteSource s_source {};
+        return s_source;
+    }
+
     static std::wstring GetInitialFileFromCommandLine()
     {
         int argc = 0;
@@ -186,6 +233,9 @@ int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
     // Extract initial file path (if any).
     const std::wstring initialFile = GetInitialFileFromCommandLine();
 
+    // Install Floar-backed byte source for ImageCore decode/prefetch (archives + disk).
+    ImageCore::SetPathByteSource(&GetFloarPathByteSource());
+
     {
         // Logging is opt-in for Release (-logon) and opt-out for Debug (-logoff).
         // If Init is never called, spdlog::get("fic2") returns null and every
@@ -202,6 +252,9 @@ int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
             GetModuleFileNameW(nullptr, exePath, static_cast<DWORD>(std::size(exePath)));
             std::filesystem::path exeDir = std::filesystem::path(exePath).parent_path();
             AppLog::Init(exeDir.wstring());
+            FD2D::Log::SetSink(&ForwardFD2DLogToAppLog);
+            Floar::Log::SetSink(&ForwardFloarLogToAppLog);
+            ImageCore::Log::SetSink(&ForwardImageCoreLogToAppLog);
 
             FIC2_LOG_INFO("=== FICture2 startup ===");
             FIC2_LOG_INFO("Executable : {}", std::filesystem::path(exePath).string());

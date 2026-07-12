@@ -1,7 +1,9 @@
 ﻿#include "ImageBrowserDragController.h"
 #include "FD2D/Util.h"
 
+#include "ImageAwareVfs.h"
 #include "VirtualFileSystem.h"
+#include "VirtualPath.h"
 #include <algorithm>
 
 
@@ -21,13 +23,13 @@ bool ImageBrowserDragController::HandleFileDrop(
         return false;
     }
 
-    auto vp = VirtualPath::Parse(path);
+    auto vp = Floar::VirtualPath::Parse(path);
     if (!vp)
     {
         return false;
     }
 
-    if (!VirtualFileSystem::IsBrowsableDropTarget(*vp))
+    if (!ImageAwareVfs::IsBrowsableDropTarget(*vp))
     {
         return false;
     }
@@ -41,7 +43,7 @@ bool ImageBrowserDragController::HandleFileDrop(
         return true;
     }
 
-    if (VirtualFileSystem::IsDirectory(*vp) || vp->IsArchiveFile())
+    if (Floar::VirtualFileSystem::IsDirectory(*vp) || vp->IsArchiveFile())
     {
         outAction.kind = ActionKind::NavigateToFolder;
         outAction.path = *vp;
@@ -70,13 +72,13 @@ bool ImageBrowserDragController::HandleFileDrag(
         return false;
     }
 
-    auto vp = VirtualPath::Parse(path);
+    auto vp = Floar::VirtualPath::Parse(path);
     if (!vp)
     {
         return false;
     }
 
-    if (!VirtualFileSystem::IsBrowsableDropTarget(*vp))
+    if (!ImageAwareVfs::IsBrowsableDropTarget(*vp))
     {
         return false;
     }

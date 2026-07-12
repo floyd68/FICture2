@@ -12,11 +12,11 @@
 struct AsyncThumbListChunkPayload
 {
     unsigned long long requestId { 0 };
-    VirtualPath folder {};
-    VirtualPath preferSelectPath {};
+    Floar::VirtualPath folder {};
+    Floar::VirtualPath preferSelectPath {};
     bool showNavItems { true };
     bool completed { false };
-    std::vector<VirtualFileEntry> batch {};
+    std::vector<Floar::VirtualFileEntry> batch {};
 };
 
 class ImageBrowserAsyncThumbLoader
@@ -29,18 +29,18 @@ public:
 
     // Starts detached background enumeration and reports chunks via callback.
     static void StartEnumerate(
-        const VirtualPath& folder,
-        const std::function<void(std::vector<VirtualFileEntry>&&, bool completed)>& onChunk);
+        const Floar::VirtualPath& folder,
+        const std::function<void(std::vector<Floar::VirtualFileEntry>&&, bool completed)>& onChunk);
 
     static bool AcceptChunk(
         const AsyncThumbListChunkPayload& chunk,
         unsigned long long currentRequestId,
-        const VirtualPath& currentFolder,
+        const Floar::VirtualPath& currentFolder,
         bool currentShowNavItems);
 
     static bool ApplyChunkToProgressive(
         const AsyncThumbListChunkPayload& chunk,
-        std::vector<VirtualFileEntry>& progressiveListedEntries,
+        std::vector<Floar::VirtualFileEntry>& progressiveListedEntries,
         bool& progressiveUiDirty,
         bool& progressiveLoadCompleted);
 

@@ -1,5 +1,6 @@
 ﻿#include "ImageBrowserThumbStripController.h"
 
+#include "ArchiveBadge.h"
 #include "ArchiveTypes.h"
 #include "CommonUtil.h"
 #include "AppLog.h"
@@ -18,25 +19,25 @@ namespace
 {
     struct FolderEntryData
     {
-        VirtualPath path {};
+        Floar::VirtualPath path {};
         bool isArchive { false };
     };
 
-    std::wstring GetArchiveBadgeText(const VirtualPath& path)
+    std::wstring GetArchiveBadgeText(const Floar::VirtualPath& path)
     {
         const std::wstring ext = CommonUtil::ToLower(path.hostPath.extension().wstring());
-        return ArchiveTypes::BadgeLabelForExt(ext);
+        return ArchiveBadge::BadgeLabelForExt(ext);
     }
 
-    ThumbNavTile::IconTint GetArchiveIconTint(const VirtualPath& path)
+    ThumbNavTile::IconTint GetArchiveIconTint(const Floar::VirtualPath& path)
     {
         const std::wstring ext = CommonUtil::ToLower(path.hostPath.extension().wstring());
-        if (ArchiveTypes::IsBethesdaArchiveExt(ext))
+        if (Floar::ArchiveTypes::IsBethesdaArchiveExt(ext))
         {
             return ThumbNavTile::IconTint::ArchiveBlue;
         }
 
-        if (ArchiveTypes::IsCommonArchiveExt(ext))
+        if (Floar::ArchiveTypes::IsCommonArchiveExt(ext))
         {
             return ThumbNavTile::IconTint::ArchiveRed;
         }
@@ -61,29 +62,29 @@ ImageBrowserThumbStripController::RebuildResult ImageBrowserThumbStripController
     const float thumbW = context.thumbW;
     const float thumbH = context.thumbH;
     const bool showNavItems = context.showNavItems;
-    const VirtualPath& currentFolder = context.currentFolder;
-    const VirtualPath& preferSelectPath = context.preferSelectPath;
+    const Floar::VirtualPath& currentFolder = context.currentFolder;
+    const Floar::VirtualPath& preferSelectPath = context.preferSelectPath;
     const auto& onSelectIndex = context.onSelectIndex;
     const auto& onActivateIndex = context.onActivateIndex;
     const auto& pathEquals = context.pathEquals;
     const auto& makeStableName = context.makeStableName;
     const auto& isSupportedImage = context.isSupportedImage;
-    const std::vector<VirtualFileEntry>* preloadedEntries = context.preloadedEntries;
+    const std::vector<Floar::VirtualFileEntry>* preloadedEntries = context.preloadedEntries;
 
     items.clear();
 
     std::vector<FolderEntryData> folders;
-    std::vector<VirtualPath> files;
+    std::vector<Floar::VirtualPath> files;
     std::unordered_set<std::wstring> seenFolderKeys;
     std::unordered_set<std::wstring> seenFileKeys;
 
     if (!currentFolder.hostPath.empty())
     {
-        std::vector<VirtualFileEntry> listedEntriesOwned {};
-        const std::vector<VirtualFileEntry>* listedEntries = preloadedEntries;
+        std::vector<Floar::VirtualFileEntry> listedEntriesOwned {};
+        const std::vector<Floar::VirtualFileEntry>* listedEntries = preloadedEntries;
         if (listedEntries == nullptr)
         {
-            listedEntriesOwned = VirtualFileSystem::ListDirectory(currentFolder);
+            listedEntriesOwned = Floar::VirtualFileSystem::ListDirectory(currentFolder);
             listedEntries = &listedEntriesOwned;
         }
 
@@ -102,7 +103,7 @@ ImageBrowserThumbStripController::RebuildResult ImageBrowserThumbStripController
                 }
             }
             else if (entry.path.IsFilesystemPath() &&
-                ArchiveReaderFactory::HasArchiveExtension(entry.path.hostPath.filename().wstring()))
+                Floar::ArchiveReaderFactory::HasArchiveExtension(entry.path.hostPath.filename().wstring()))
             {
                 if (seenFolderKeys.insert(entryKey).second)
                 {
@@ -124,7 +125,7 @@ ImageBrowserThumbStripController::RebuildResult ImageBrowserThumbStripController
         return CommonUtil::ToLower(a.path.GetFilename()) < CommonUtil::ToLower(b.path.GetFilename());
     });
 
-    std::sort(files.begin(), files.end(), [](const VirtualPath& a, const VirtualPath& b)
+    std::sort(files.begin(), files.end(), [](const Floar::VirtualPath& a, const Floar::VirtualPath& b)
     {
         return CommonUtil::ToLower(a.GetFilename()) < CommonUtil::ToLower(b.GetFilename());
     });
@@ -147,7 +148,7 @@ ImageBrowserThumbStripController::RebuildResult ImageBrowserThumbStripController
 
     if (showNavItems)
     {
-        VirtualPath parent = currentFolder.GetParent();
+        Floar::VirtualPath parent = currentFolder.GetParent();
         if (parent != currentFolder)
         {
             std::wstring name = makeStableName ? makeStableName(L"nav_up", parent) : L"nav_up";
@@ -190,7 +191,7 @@ ImageBrowserThumbStripController::RebuildResult ImageBrowserThumbStripController
 
         for (const auto& folder : folders)
         {
-            const VirtualPath& dir = folder.path;
+            const Floar::VirtualPath& dir = folder.path;
             std::wstring name = makeStableName ? makeStableName(L"nav_folder", dir) : L"nav_folder";
             auto tile = std::dynamic_pointer_cast<ThumbNavTile>(getExistingChild(name));
             if (!tile)

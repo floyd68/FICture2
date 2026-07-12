@@ -1,6 +1,7 @@
 #include "ImageBrowserInfoPresenter.h"
 
-#include "ArchiveTypes.h"
+#include "ArchiveBadge.h"
+#include "VirtualPath.h"
 #include "CommonUtil.h"
 #include "FD2D/Core.h"
 
@@ -66,7 +67,7 @@ namespace
 
     std::wstring ArchiveFormatLabelForPath(const std::wstring& path)
     {
-        auto vpath = VirtualPath::Parse(path);
+        auto vpath = Floar::VirtualPath::Parse(path);
         if (!vpath)
         {
             return L"";
@@ -78,7 +79,7 @@ namespace
         }
 
         const std::wstring hostExt = CommonUtil::ToLower(vpath->hostPath.extension().wstring());
-        return ArchiveTypes::BadgeLabelForExt(hostExt);
+        return ArchiveBadge::BadgeLabelForExt(hostExt);
     }
 }
 

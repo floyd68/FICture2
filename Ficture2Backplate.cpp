@@ -12,7 +12,7 @@
 #include "ImageBrowserSessionPersistence.h"
 #include "ImageCore/DecoderRegistry.h"
 #include "ImageCore/ImageDecodeDispatcher.h"
-#include "VirtualFileSystem.h"
+#include "ImageAwareVfs.h"
 #include "VirtualPath.h"
 
 #include <algorithm>
@@ -882,13 +882,13 @@ bool Ficture2Backplate::HandleFileDropPaths(const std::vector<std::wstring>& pat
     supported.reserve(paths.size());
     for (const auto& path : paths)
     {
-        auto vp = VirtualPath::Parse(path);
+        auto vp = Floar::VirtualPath::Parse(path);
         if (!vp)
         {
             continue;
         }
 
-        if (VirtualFileSystem::IsBrowsableDropTarget(*vp))
+        if (ImageAwareVfs::IsBrowsableDropTarget(*vp))
         {
             supported.push_back(path);
         }

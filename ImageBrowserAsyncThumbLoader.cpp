@@ -8,7 +8,7 @@
 
 namespace
 {
-    bool PathEqualsInsensitive(const VirtualPath& a, const VirtualPath& b)
+    bool PathEqualsInsensitive(const Floar::VirtualPath& a, const Floar::VirtualPath& b)
     {
         return CommonUtil::PathEqualsInsensitive(
             a.hostPath, a.archiveInnerPath,
@@ -77,8 +77,8 @@ std::deque<AsyncThumbListChunkPayload> ImageBrowserAsyncThumbLoader::DequeueChun
 }
 
 void ImageBrowserAsyncThumbLoader::StartEnumerate(
-    const VirtualPath& folder,
-    const std::function<void(std::vector<VirtualFileEntry>&&, bool completed)>& onChunk)
+    const Floar::VirtualPath& folder,
+    const std::function<void(std::vector<Floar::VirtualFileEntry>&&, bool completed)>& onChunk)
 {
     std::thread([folder, onChunk]()
     {
@@ -91,10 +91,10 @@ void ImageBrowserAsyncThumbLoader::StartEnumerate(
         {
             // Fewer, larger chunks reduce progressive UI rebuild overhead on large folders.
             constexpr size_t kBatchSize = 256;
-            std::vector<VirtualFileEntry> batch {};
+            std::vector<Floar::VirtualFileEntry> batch {};
             batch.reserve(kBatchSize);
 
-            VirtualFileSystem::EnumerateFilesystemDirectory(folder.hostPath, [&](VirtualFileEntry&& entry)
+            Floar::VirtualFileSystem::EnumerateFilesystemDirectory(folder.hostPath, [&](Floar::VirtualFileEntry&& entry)
             {
                 batch.push_back(std::move(entry));
                 if (batch.size() >= kBatchSize)
@@ -111,14 +111,14 @@ void ImageBrowserAsyncThumbLoader::StartEnumerate(
         }
 
         // Archive listing is currently produced as a single snapshot.
-        onChunk(VirtualFileSystem::ListDirectory(folder), true);
+        onChunk(Floar::VirtualFileSystem::ListDirectory(folder), true);
     }).detach();
 }
 
 bool ImageBrowserAsyncThumbLoader::AcceptChunk(
     const AsyncThumbListChunkPayload& chunk,
     unsigned long long currentRequestId,
-    const VirtualPath& currentFolder,
+    const Floar::VirtualPath& currentFolder,
     bool currentShowNavItems)
 {
     return chunk.requestId == currentRequestId &&
@@ -128,7 +128,7 @@ bool ImageBrowserAsyncThumbLoader::AcceptChunk(
 
 bool ImageBrowserAsyncThumbLoader::ApplyChunkToProgressive(
     const AsyncThumbListChunkPayload& chunk,
-    std::vector<VirtualFileEntry>& progressiveListedEntries,
+    std::vector<Floar::VirtualFileEntry>& progressiveListedEntries,
     bool& progressiveUiDirty,
     bool& progressiveLoadCompleted)
 {
