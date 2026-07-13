@@ -1,22 +1,34 @@
 #include "AppIpc.h"
 #include "AppLog.h"
 
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
 #include <windows.h>
 
 #include <chrono>
 #include <cstdint>
-#include <filesystem>
+#include <future>
 #include <thread>
 #include <vector>
 
 namespace
 {
     constexpr wchar_t kPipeName[] = L"\\\\.\\pipe\\FICture2_IPC";
-    constexpr uint32_t kProtocolVersion = 1;
+    constexpr std::uint32_t kProtocolVersion = 2; // v2: Waiting ack precedes the final Decision
+    // Distinct from every Decision value; tells the client "request accepted,
+    // final decision follows - keep waiting".
+    constexpr std::uint32_t kWaitingAck = 0xFFFFFFFFu;
+
+    // Staged client hard timeouts + the server keep-alive cadence that feeds
+    // stage 3 (see AppIpc.h's protocol comment for the full ladder).
+    constexpr DWORD kRequestResponseTimeoutMs = 500; // request sent -> first server message
+    constexpr DWORD kPostAckTimeoutMs = 2000;        // silence allowed after each Waiting ack
+    constexpr DWORD kKeepAliveIntervalMs = 500;      // server refreshes the ack this often
 
     bool WriteAll(HANDLE h, const void* data, DWORD bytes)
     {
-        const uint8_t* p = static_cast<const uint8_t*>(data);
+        const std::uint8_t* p = static_cast<const std::uint8_t*>(data);
         DWORD remaining = bytes;
         while (remaining > 0)
         {
@@ -33,7 +45,7 @@ namespace
 
     bool ReadAll(HANDLE h, void* data, DWORD bytes)
     {
-        uint8_t* p = static_cast<uint8_t*>(data);
+        std::uint8_t* p = static_cast<std::uint8_t*>(data);
         DWORD remaining = bytes;
         while (remaining > 0)
         {
@@ -52,16 +64,66 @@ namespace
         return true;
     }
 
+    // Client-side deadline-bounded I/O: the client opens its pipe handle
+    // FILE_FLAG_OVERLAPPED so every read/write carries a hard timeout - a
+    // plain blocking ReadFile could hang forever on a frozen server, which
+    // is exactly what the staged client timeouts exist to prevent. Handles
+    // partial transfers (byte-mode pipe) by looping under one deadline.
+    bool OverlappedIo(HANDLE h, HANDLE event, bool isWrite, void* data, DWORD bytes, DWORD timeoutMs)
+    {
+        std::uint8_t* p = static_cast<std::uint8_t*>(data);
+        DWORD remaining = bytes;
+        const ULONGLONG deadline = GetTickCount64() + timeoutMs;
+        while (remaining > 0)
+        {
+            OVERLAPPED ov {};
+            ov.hEvent = event;
+            ResetEvent(event);
+            const BOOL started = isWrite
+                ? WriteFile(h, p, remaining, nullptr, &ov)
+                : ReadFile(h, p, remaining, nullptr, &ov);
+            if (!started && GetLastError() != ERROR_IO_PENDING)
+            {
+                return false;
+            }
+
+            const ULONGLONG now = GetTickCount64();
+            const DWORD waitMs = now < deadline ? static_cast<DWORD>(deadline - now) : 0;
+            if (WaitForSingleObject(event, waitMs) != WAIT_OBJECT_0)
+            {
+                // Hard timeout. Cancel and wait for the cancellation to
+                // complete so `ov` may safely leave scope.
+                CancelIoEx(h, &ov);
+                DWORD ignored = 0;
+                GetOverlappedResult(h, &ov, &ignored, TRUE);
+                return false;
+            }
+
+            DWORD transferred = 0;
+            if (!GetOverlappedResult(h, &ov, &transferred, FALSE) || transferred == 0)
+            {
+                return false;
+            }
+            p += transferred;
+            remaining -= transferred;
+        }
+        return true;
+    }
+
     bool HandleOneClient(HANDLE pipe, const std::function<AppIpc::Decision(const std::wstring&)>& onRequest)
     {
-        uint32_t version = 0;
-        uint32_t payloadBytes = 0;
+        std::uint32_t version = 0;
+        std::uint32_t payloadBytes = 0;
         if (!ReadAll(pipe, &version, sizeof(version)) || !ReadAll(pipe, &payloadBytes, sizeof(payloadBytes)))
         {
             return false;
         }
 
-        if (version != kProtocolVersion || payloadBytes == 0 || (payloadBytes % sizeof(wchar_t)) != 0)
+        // Cap the payload to something sane for "one file path" so a
+        // malformed/hostile client cannot make the server allocate wildly.
+        constexpr std::uint32_t kMaxPayloadBytes = 64 * 1024;
+        if (version != kProtocolVersion || payloadBytes == 0 || payloadBytes > kMaxPayloadBytes ||
+            (payloadBytes % sizeof(wchar_t)) != 0)
         {
             return false;
         }
@@ -79,13 +141,39 @@ namespace
         }
 
         const std::wstring path(buf.data());
+
+        // Park the client before consulting the app: onRequest may block for
+        // its whole response budget (waiting for the UI window to exist and
+        // then for the UI thread to process the compare). The client allows
+        // kPostAckTimeoutMs of silence after each ack, so refresh the ack
+        // every kKeepAliveIntervalMs while the decision is pending.
+        const std::uint32_t ack = kWaitingAck;
+        if (!WriteAll(pipe, &ack, sizeof(ack)))
+        {
+            return false;
+        }
+
         AppIpc::Decision decision = AppIpc::Decision::Ignore;
         if (onRequest)
         {
-            decision = onRequest(path);
+            std::future<AppIpc::Decision> pending = std::async(std::launch::async,
+                [&onRequest, &path] { return onRequest(path); });
+            while (pending.wait_for(std::chrono::milliseconds(kKeepAliveIntervalMs)) !=
+                   std::future_status::ready)
+            {
+                if (!WriteAll(pipe, &ack, sizeof(ack)))
+                {
+                    // Client gave up or died. Let the app callback finish
+                    // (bounded by its own response budget) and drop the
+                    // result - there is nobody left to answer.
+                    pending.wait();
+                    return false;
+                }
+            }
+            decision = pending.get();
         }
 
-        const uint32_t resp = static_cast<uint32_t>(decision);
+        const std::uint32_t resp = static_cast<std::uint32_t>(decision);
         return WriteAll(pipe, &resp, sizeof(resp));
     }
 }
@@ -97,7 +185,6 @@ namespace AppIpc
         FIC2_LOG_INFO("[IPC] StartServer: launching named-pipe server thread.");
         std::thread([onRequest]()
         {
-            FIC2_LOG_DEBUG("[IPC] Server thread started. Pipe: {}", std::filesystem::path(kPipeName).string());
             for (;;)
             {
                 HANDLE pipe = CreateNamedPipeW(
@@ -113,12 +200,10 @@ namespace AppIpc
                 if (pipe == INVALID_HANDLE_VALUE)
                 {
                     FIC2_LOG_ERROR("[IPC] Server: CreateNamedPipeW failed (err={}), retrying in 250ms.", GetLastError());
-                    // Nothing we can do; retry after a short delay.
                     Sleep(250);
                     continue;
                 }
 
-                FIC2_LOG_DEBUG("[IPC] Server: pipe created, waiting for client connection...");
                 const BOOL ok = ConnectNamedPipe(pipe, nullptr) ? TRUE : (GetLastError() == ERROR_PIPE_CONNECTED);
                 if (!ok)
                 {
@@ -127,13 +212,19 @@ namespace AppIpc
                     continue;
                 }
 
-                FIC2_LOG_DEBUG("[IPC] Server: client connected, handling request.");
-                (void)HandleOneClient(pipe, onRequest);
+                // Per-client worker: HandleOneClient can block for the app
+                // callback's whole response budget, and consecutive Explorer
+                // opens connect faster than that - serving them serially
+                // would let a later client's 500ms connect budget expire
+                // while an earlier request is still waiting on the UI.
+                std::thread([pipe, onRequest]()
+                {
+                    (void)HandleOneClient(pipe, onRequest);
 
-                FlushFileBuffers(pipe);
-                DisconnectNamedPipe(pipe);
-                CloseHandle(pipe);
-                FIC2_LOG_DEBUG("[IPC] Server: client disconnected, looping for next connection.");
+                    FlushFileBuffers(pipe);
+                    DisconnectNamedPipe(pipe);
+                    CloseHandle(pipe);
+                }).detach();
             }
         }).detach();
     }
@@ -149,16 +240,13 @@ namespace AppIpc
 
         // Connect to the server pipe with retry logic.
         //
-        // There are two distinct failure modes:
-        //   ERROR_FILE_NOT_FOUND (2)  — pipe not yet created; server thread hasn't started.
-        //                               WaitNamedPipeW returns immediately for this case,
-        //                               so we must poll until the pipe appears.
-        //   ERROR_PIPE_BUSY           — pipe exists but all server instances are occupied;
-        //                               WaitNamedPipeW will block until one is free.
-        //
-        // Overall budget: 500 ms. The server typically creates the pipe within ~15 ms of
-        // the mutex being visible, so polling at 5 ms intervals is more than sufficient.
-        constexpr DWORD kTotalBudgetMs  = 500;
+        // Two distinct failure modes:
+        //   ERROR_FILE_NOT_FOUND - pipe not yet created (server thread still
+        //                          starting); WaitNamedPipeW returns
+        //                          immediately for this, so poll instead.
+        //   ERROR_PIPE_BUSY      - pipe exists but occupied; WaitNamedPipeW
+        //                          blocks until an instance frees up.
+        constexpr DWORD kTotalBudgetMs = 500;
         constexpr DWORD kPollIntervalMs = 5;
 
         const auto deadline = std::chrono::steady_clock::now()
@@ -168,32 +256,24 @@ namespace AppIpc
         HANDLE h = INVALID_HANDLE_VALUE;
         while (std::chrono::steady_clock::now() < deadline)
         {
+            // FILE_FLAG_OVERLAPPED: all pipe I/O below runs through
+            // OverlappedIo so each stage carries its own hard timeout.
             h = CreateFileW(kPipeName, GENERIC_READ | GENERIC_WRITE, 0, nullptr,
-                            OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
-
+                            OPEN_EXISTING, FILE_FLAG_OVERLAPPED, nullptr);
             if (h != INVALID_HANDLE_VALUE)
             {
-                break;  // connected
+                break;
             }
 
             const DWORD err = GetLastError();
             if (err == ERROR_FILE_NOT_FOUND)
             {
-                // Pipe not yet created — server thread is still starting up.
-                // Sleep briefly and retry.
-                if (retryCount == 0)
-                {
-                    FIC2_LOG_INFO("[IPC] Client: pipe not yet created (server starting), polling every {}ms...",
-                        kPollIntervalMs);
-                }
                 ++retryCount;
                 Sleep(kPollIntervalMs);
                 continue;
             }
-            else if (err == ERROR_PIPE_BUSY)
+            if (err == ERROR_PIPE_BUSY)
             {
-                // Pipe exists but busy — wait for a free slot then retry.
-                FIC2_LOG_DEBUG("[IPC] Client: pipe busy, calling WaitNamedPipeW...");
                 const auto remaining = std::chrono::duration_cast<std::chrono::milliseconds>(
                     deadline - std::chrono::steady_clock::now()).count();
                 if (remaining <= 0 || !WaitNamedPipeW(kPipeName, static_cast<DWORD>(remaining)))
@@ -203,11 +283,8 @@ namespace AppIpc
                 }
                 continue;
             }
-            else
-            {
-                FIC2_LOG_ERROR("[IPC] Client: CreateFileW (pipe connect) failed (err={}).", err);
-                break;
-            }
+            FIC2_LOG_ERROR("[IPC] Client: pipe connect failed (err={}).", err);
+            break;
         }
 
         if (h == INVALID_HANDLE_VALUE)
@@ -220,31 +297,43 @@ namespace AppIpc
             return false;
         }
 
-        if (retryCount > 0)
+        HANDLE ioEvent = CreateEventW(nullptr, TRUE, FALSE, nullptr);
+        if (ioEvent == nullptr)
         {
-            FIC2_LOG_INFO("[IPC] Client: connected after {} retries (~{}ms wait).",
-                retryCount, retryCount * kPollIntervalMs);
+            CloseHandle(h);
+            return false;
         }
-        FIC2_LOG_DEBUG("[IPC] Client: connected to server pipe. Sending path: {}",
-            std::filesystem::path(path).string());
 
-        const std::wstring payload = path + L'\0';
-        const uint32_t version = kProtocolVersion;
-        const uint32_t payloadBytes = static_cast<uint32_t>(payload.size() * sizeof(wchar_t));
+        std::wstring payload = path + L'\0';
+        std::uint32_t version = kProtocolVersion;
+        std::uint32_t payloadBytes = static_cast<std::uint32_t>(payload.size() * sizeof(wchar_t));
 
+        // Stage 2: the whole request plus the first server message must fit
+        // in kRequestResponseTimeoutMs each - a server that accepted the
+        // connection but never acks is not actually serving.
         bool ok = true;
-        ok = ok && WriteAll(h, &version, sizeof(version));
-        ok = ok && WriteAll(h, &payloadBytes, sizeof(payloadBytes));
-        ok = ok && WriteAll(h, payload.data(), payloadBytes);
+        ok = ok && OverlappedIo(h, ioEvent, true, &version, sizeof(version), kRequestResponseTimeoutMs);
+        ok = ok && OverlappedIo(h, ioEvent, true, &payloadBytes, sizeof(payloadBytes), kRequestResponseTimeoutMs);
+        ok = ok && OverlappedIo(h, ioEvent, true, payload.data(), payloadBytes, kRequestResponseTimeoutMs);
 
-        uint32_t resp = 0;
-        ok = ok && ReadAll(h, &resp, sizeof(resp));
+        std::uint32_t resp = 0;
+        ok = ok && OverlappedIo(h, ioEvent, false, &resp, sizeof(resp), kRequestResponseTimeoutMs);
 
+        // Stage 3: parked on Waiting acks. The server refreshes the ack
+        // every kKeepAliveIntervalMs while the request is pending, so more
+        // than kPostAckTimeoutMs of silence means it froze or died - stop
+        // waiting and run standalone.
+        while (ok && resp == kWaitingAck)
+        {
+            ok = OverlappedIo(h, ioEvent, false, &resp, sizeof(resp), kPostAckTimeoutMs);
+        }
+
+        CloseHandle(ioEvent);
         CloseHandle(h);
 
         if (!ok)
         {
-            FIC2_LOG_ERROR("[IPC] Client: pipe I/O failed during send/recv.");
+            FIC2_LOG_ERROR("[IPC] Client: pipe I/O failed or timed out during send/recv.");
             return false;
         }
 
@@ -253,4 +342,3 @@ namespace AppIpc
         return true;
     }
 }
-
