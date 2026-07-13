@@ -1,12 +1,13 @@
 #include "AppSetup.h"
 #include "AppLog.h"
+#include "CommonUtil.h"
 #include "ImageCore/ImageDecodeDispatcher.h"
 #include "SimpleIniFile.h"
 
 #include "framework.h"
 
 #include <filesystem>
-#include <sstream>
+#include <format>
 #include <vector>
 
 #include <shlobj.h>
@@ -17,16 +18,16 @@ namespace
 {
     std::wstring BuildExtensionPromptLine(const std::vector<std::wstring>& exts)
     {
-        std::wostringstream oss {};
+        std::wstring line {};
         for (size_t i = 0; i < exts.size(); ++i)
         {
             if (i != 0)
             {
-                oss << L' ';
+                line += L' ';
             }
-            oss << exts[i];
+            line += exts[i];
         }
-        return oss.str();
+        return line;
     }
 
     void WriteIniDefaults(const std::wstring& iniFile)
@@ -262,9 +263,8 @@ namespace
             return;
         }
 
-        wchar_t buf[64] {};
-        _itow_s(value, buf, 10);
-        (void)WritePrivateProfileStringW(section, key, buf, iniFile.c_str());
+        const std::wstring buf = std::format(L"{}", value);
+        (void)WritePrivateProfileStringW(section, key, buf.c_str(), iniFile.c_str());
     }
 
     void ClampRectToMonitorWorkArea(RECT& rc, bool enableLog = false)
@@ -611,12 +611,17 @@ namespace FICture2App
             return false;
         }
 
-        RECT rc {
-            _wtoi(leftStr.c_str()),
-            _wtoi(topStr.c_str()),
-            _wtoi(rightStr.c_str()),
-            _wtoi(bottomStr.c_str())
-        };
+        const auto left = CommonUtil::TryParseInt(leftStr);
+        const auto top = CommonUtil::TryParseInt(topStr);
+        const auto right = CommonUtil::TryParseInt(rightStr);
+        const auto bottom = CommonUtil::TryParseInt(bottomStr);
+        const auto show = CommonUtil::TryParseInt(showStr);
+        if (!left || !top || !right || !bottom || !show)
+        {
+            return false;
+        }
+
+        RECT rc { *left, *top, *right, *bottom };
 
         if (rc.right <= rc.left || rc.bottom <= rc.top)
         {
@@ -626,7 +631,7 @@ namespace FICture2App
         ClampRectToMonitorWorkArea(rc);
 
         outRect    = rc;
-        outShowCmd = _wtoi(showStr.c_str());
+        outShowCmd = *show;
         return true;
     }
 

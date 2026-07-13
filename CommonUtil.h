@@ -2,12 +2,16 @@
 
 #include <windows.h>
 
+#include <charconv>
 #include <cstdint>
 #include <cmath>
 #include <cwctype>
-#include <cwchar>
 #include <filesystem>
+#include <format>
+#include <optional>
 #include <string>
+#include <string_view>
+#include <system_error>
 
 namespace CommonUtil
 {
@@ -48,6 +52,79 @@ namespace CommonUtil
         for (auto& ch : value)
         {
             ch = static_cast<wchar_t>(towupper(ch));
+        }
+        return value;
+    }
+
+    inline std::wstring_view TrimAscii(std::wstring_view s)
+    {
+        while (!s.empty() && iswspace(s.front()))
+        {
+            s.remove_prefix(1);
+        }
+        while (!s.empty() && iswspace(s.back()))
+        {
+            s.remove_suffix(1);
+        }
+        return s;
+    }
+
+    // Parses an ASCII decimal integer from a wide string (INI / config values).
+    inline std::optional<int> TryParseInt(std::wstring_view s)
+    {
+        s = TrimAscii(s);
+        if (s.empty() || s.size() >= 64)
+        {
+            return std::nullopt;
+        }
+
+        char buf[64] {};
+        for (size_t i = 0; i < s.size(); ++i)
+        {
+            if (s[i] > 127)
+            {
+                return std::nullopt;
+            }
+            buf[i] = static_cast<char>(s[i]);
+        }
+
+        int value = 0;
+        const char* begin = buf;
+        const char* end = buf + s.size();
+        const auto [ptr, ec] = std::from_chars(begin, end, value);
+        if (ec != std::errc{} || ptr != end)
+        {
+            return std::nullopt;
+        }
+        return value;
+    }
+
+    // Parses an ASCII floating-point value from a wide string (INI / config values).
+    inline std::optional<float> TryParseFloat(std::wstring_view s)
+    {
+        s = TrimAscii(s);
+        if (s.empty() || s.size() >= 64)
+        {
+            return std::nullopt;
+        }
+
+        char buf[64] {};
+        for (size_t i = 0; i < s.size(); ++i)
+        {
+            if (s[i] > 127)
+            {
+                return std::nullopt;
+            }
+            buf[i] = static_cast<char>(s[i]);
+        }
+
+        float value = 0.0f;
+        const char* begin = buf;
+        const char* end = buf + s.size();
+        const auto [ptr, ec] = std::from_chars(begin, end, value);
+        if (ec != std::errc{} || ptr != end)
+        {
+            return std::nullopt;
         }
         return value;
     }
@@ -117,9 +194,7 @@ namespace CommonUtil
 
     inline std::wstring Hex64(uint64_t v)
     {
-        wchar_t buf[32] {};
-        (void)swprintf_s(buf, L"%016llX", static_cast<unsigned long long>(v));
-        return buf;
+        return std::format(L"{:016X}", v);
     }
 
     inline std::wstring NormalizePathLowerForCompare(const std::wstring& path)

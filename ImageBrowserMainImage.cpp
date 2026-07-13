@@ -9,6 +9,7 @@
 #include <algorithm>
 #include <cmath>
 #include <chrono>
+#include <format>
 
 namespace
 {
@@ -19,18 +20,12 @@ namespace
             return;
         }
 
-        wchar_t buf[512] {};
-        if (!path.empty())
-        {
-            swprintf_s(buf, L"[ImageBrowserMainImage] %s failed (%s): 0x%08X\n",
-                stage, path.c_str(), static_cast<unsigned>(hr));
-        }
-        else
-        {
-            swprintf_s(buf, L"[ImageBrowserMainImage] %s failed: 0x%08X\n",
-                stage, static_cast<unsigned>(hr));
-        }
-        OutputDebugStringW(buf);
+        const std::wstring msg = path.empty()
+            ? std::format(L"[ImageBrowserMainImage] {} failed: 0x{:08X}\n",
+                stage, static_cast<unsigned>(hr))
+            : std::format(L"[ImageBrowserMainImage] {} failed ({}): 0x{:08X}\n",
+                stage, path, static_cast<unsigned>(hr));
+        OutputDebugStringW(msg.c_str());
     }
 
     void RotateVectorByQuarters(float dx, float dy, int quarters, float& outX, float& outY)

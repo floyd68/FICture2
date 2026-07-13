@@ -129,14 +129,7 @@ public:
         {
             return defaultVal;
         }
-        try
-        {
-            return std::stoi(s);
-        }
-        catch (...)
-        {
-            return defaultVal;
-        }
+        return CommonUtil::TryParseInt(s).value_or(defaultVal);
     }
 
     // Returns the value as float, or defaultVal if not found.
@@ -150,7 +143,7 @@ public:
         {
             return defaultVal;
         }
-        return static_cast<float>(_wtof(s.c_str()));
+        return CommonUtil::TryParseFloat(s).value_or(defaultVal);
     }
 
     bool IsLoaded() const { return m_loaded; }

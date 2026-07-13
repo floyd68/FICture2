@@ -66,14 +66,12 @@ namespace
             return;
         }
 
-        wchar_t rgb[64] {};
-        swprintf_s(
-            rgb,
-            L"%u,%u,%u",
+        const std::wstring rgb = std::format(
+            L"{},{},{}",
             CommonUtil::ToByte255(color.r),
             CommonUtil::ToByte255(color.g),
             CommonUtil::ToByte255(color.b));
-        (void)WritePrivateProfileStringW(section, key, rgb, iniFile.c_str());
+        (void)WritePrivateProfileStringW(section, key, rgb.c_str(), iniFile.c_str());
     }
 
     template <typename T>

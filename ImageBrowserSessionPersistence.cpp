@@ -1,10 +1,13 @@
 #include "ImageBrowserSessionPersistence.h"
 #include "SimpleIniFile.h"
+#include "CommonUtil.h"
 
 #include <Windows.h>
 
 #include <algorithm>
+#include <format>
 #include <iterator>
+#include <string_view>
 
 namespace ImageBrowserSessionPersistence
 {
@@ -15,13 +18,11 @@ namespace ImageBrowserSessionPersistence
             std::wstring s;
             for (size_t i = 0; i < values.size(); ++i)
             {
-                wchar_t buf[64] {};
-                swprintf_s(buf, L"%.6f", values[i]);
                 if (i != 0)
                 {
-                    s += L",";
+                    s += L',';
                 }
-                s += buf;
+                s += std::format(L"{:.6f}", values[i]);
             }
             return s;
         }
@@ -37,10 +38,10 @@ namespace ImageBrowserSessionPersistence
                 {
                     end = s.size();
                 }
-                const std::wstring token = s.substr(start, end - start);
-                if (!token.empty())
+                const std::wstring_view token(s.data() + start, end - start);
+                if (const auto value = CommonUtil::TryParseFloat(token))
                 {
-                    out.push_back(static_cast<float>(_wtof(token.c_str())));
+                    out.push_back(*value);
                 }
                 start = end + 1;
             }
@@ -57,15 +58,13 @@ namespace ImageBrowserSessionPersistence
 
         const int clampedCount = (std::max)(0, (std::min)(4, payload.viewerCount));
 
-        wchar_t countBuf[32] {};
-        _itow_s(clampedCount, countBuf, 10);
-        (void)WritePrivateProfileStringW(L"Session", L"ViewerCount", countBuf, iniFile.c_str());
+        const std::wstring countStr = std::format(L"{}", clampedCount);
+        (void)WritePrivateProfileStringW(L"Session", L"ViewerCount", countStr.c_str(), iniFile.c_str());
 
         if (payload.hasThumbStripHeight)
         {
-            wchar_t thumbBuf[64] {};
-            swprintf_s(thumbBuf, L"%.2f", payload.thumbStripHeight);
-            (void)WritePrivateProfileStringW(L"Session", L"ThumbStripHeight", thumbBuf, iniFile.c_str());
+            const std::wstring thumbStr = std::format(L"{:.2f}", payload.thumbStripHeight);
+            (void)WritePrivateProfileStringW(L"Session", L"ThumbStripHeight", thumbStr.c_str(), iniFile.c_str());
         }
 
         const std::wstring ratiosCsv = JoinFloatsCsv(payload.horizontalSplitRatios);
