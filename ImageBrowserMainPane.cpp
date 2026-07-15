@@ -21,6 +21,8 @@ public:
         m_leftText->SetColor(D2D1::ColorF(0.85f, 0.85f, 0.85f, 1.0f));
         m_leftText->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
         m_leftText->SetEllipsisTrimmingEnabled(true);
+        m_leftText->SetTooltipOnTruncation(true);
+        m_leftText->SetCopyTextOnRightClick(true);
 
         m_rightText = std::make_shared<FD2D::Text>(L"infoRight");
         m_rightText->SetFont(L"Segoe UI", 11.0f);
@@ -92,6 +94,7 @@ public:
         m_text->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
         m_text->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
         m_text->SetEllipsisTrimmingEnabled(true);
+        m_text->SetCopyTextOnRightClick(true);
         AddChild(m_text);
     }
 
@@ -383,6 +386,10 @@ private:
             m_lastFittedValue = fitted;
             m_text->SetText(fitted);
         }
+        // Full path for hover tooltip + clipboard, even when the displayed
+        // label is middle-ellipsized by FolderEllipsize (not DWrite trimming).
+        m_text->SetTooltipText(m_rawValue);
+        m_text->SetCopyText(m_rawValue);
     }
 
     std::shared_ptr<FD2D::Text> m_text {};
