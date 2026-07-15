@@ -6,6 +6,7 @@
 #define IDD_FICTURE2_DIALOG             102
 #define IDS_APP_TITLE                   103
 #define IDR_PNG_FOLDER                  129
+#define IDR_PNG_FOLDER_UP               131
 #define IDR_MENU_IMAGEBROWSER_CONTEXT   130
 #define IDI_FICTURE2                    32512
 #define IDM_CTX_OPEN_IMAGE              32771

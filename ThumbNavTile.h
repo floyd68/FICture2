@@ -66,13 +66,11 @@ private:
     DoubleClickHandler m_onDoubleClick {};
     Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> m_labelBackdropBrush {};
     Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> m_badgeBackdropBrush {};
-    Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> m_fillBrush {};
     Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> m_strokeBrush {};
-    Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> m_iconStrokeBrush {};
-    Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> m_iconAccentBrush {};
     Microsoft::WRL::ComPtr<ID2D1Bitmap> m_folderBitmap {};
     ID2D1RenderTarget* m_folderBitmapTarget { nullptr };
     IconKind m_icon { IconKind::None };
+    IconKind m_folderBitmapKind { IconKind::None };
     IconTint m_iconTint { IconTint::None };
     TextPlacement m_textPlacement { TextPlacement::Bottom };
     bool m_hovered { false };

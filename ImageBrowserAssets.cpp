@@ -6,8 +6,24 @@
 #include <wincodec.h>
 #include <vector>
 
+namespace
+{
+WORD FolderIconResourceId(ImageBrowserAssets::FolderIconKind kind)
+{
+    switch (kind)
+    {
+    case ImageBrowserAssets::FolderIconKind::FolderUp:
+        return IDR_PNG_FOLDER_UP;
+    case ImageBrowserAssets::FolderIconKind::Folder:
+    default:
+        return IDR_PNG_FOLDER;
+    }
+}
+} // namespace
+
 bool ImageBrowserAssets::CreateFolderIconBitmap(
     ID2D1RenderTarget* target,
+    FolderIconKind kind,
     const D2D1_COLOR_F* tintColor,
     Microsoft::WRL::ComPtr<ID2D1Bitmap>& outBitmap)
 {
@@ -18,7 +34,7 @@ bool ImageBrowserAssets::CreateFolderIconBitmap(
 
     // Load PNG bytes from RCDATA resource.
     HMODULE module = GetModuleHandleW(nullptr);
-    HRSRC hrsrc = FindResourceW(module, MAKEINTRESOURCEW(IDR_PNG_FOLDER), RT_RCDATA);
+    HRSRC hrsrc = FindResourceW(module, MAKEINTRESOURCEW(FolderIconResourceId(kind)), RT_RCDATA);
     if (!hrsrc)
     {
         return false;
@@ -166,26 +182,31 @@ bool ImageBrowserAssets::CreateFolderIconBitmap(
     return true;
 }
 
-bool ImageBrowserAssets::EnsureFolderBitmap(ID2D1RenderTarget* target)
+bool ImageBrowserAssets::EnsureFolderBitmap(ID2D1RenderTarget* target, FolderIconKind kind)
 {
     if (target == nullptr)
     {
         return false;
     }
 
-    if (m_folderBitmap && m_folderBitmapTarget == target)
+    Microsoft::WRL::ComPtr<ID2D1Bitmap>& bitmap =
+        (kind == FolderIconKind::FolderUp) ? m_folderUpBitmap : m_folderBitmap;
+    ID2D1RenderTarget*& cachedTarget =
+        (kind == FolderIconKind::FolderUp) ? m_folderUpBitmapTarget : m_folderBitmapTarget;
+
+    if (bitmap && cachedTarget == target)
     {
         return true;
     }
 
-    m_folderBitmap.Reset();
-    m_folderBitmapTarget = nullptr;
+    bitmap.Reset();
+    cachedTarget = nullptr;
 
-    if (!CreateFolderIconBitmap(target, nullptr, m_folderBitmap))
+    if (!CreateFolderIconBitmap(target, kind, nullptr, bitmap))
     {
         return false;
     }
 
-    m_folderBitmapTarget = target;
+    cachedTarget = target;
     return true;
 }

@@ -35,6 +35,9 @@ void ThumbNavTile::SetIcon(IconKind kind)
     }
 
     m_icon = kind;
+    m_folderBitmap.Reset();
+    m_folderBitmapTarget = nullptr;
+    m_folderBitmapKind = IconKind::None;
     Invalidate();
 }
 
@@ -60,6 +63,7 @@ void ThumbNavTile::SetIconTint(IconTint tint)
     m_iconTint = tint;
     m_folderBitmap.Reset();
     m_folderBitmapTarget = nullptr;
+    m_folderBitmapKind = IconKind::None;
     Invalidate();
 }
 
@@ -245,23 +249,10 @@ void ThumbNavTile::OnRender(ID2D1RenderTarget* target)
         return;
     }
 
-    if (!m_fillBrush)
-    {
-        target->CreateSolidColorBrush(D2D1::ColorF(D2D1::ColorF::White), &m_fillBrush);
-    }
     if (!m_strokeBrush)
     {
         target->CreateSolidColorBrush(D2D1::ColorF(D2D1::ColorF::White), &m_strokeBrush);
     }
-
-    D2D1_COLOR_F fill = D2D1::ColorF(0.18f, 0.18f, 0.18f, m_hovered ? 0.95f : 0.85f);
-    if (m_pressed)
-    {
-        fill = D2D1::ColorF(0.12f, 0.12f, 0.12f, 0.95f);
-    }
-
-    m_fillBrush->SetColor(fill);
-    target->FillRectangle(LayoutRect(), m_fillBrush.Get());
 
     float strokeAlpha = 0.25f;
     float strokeThickness = 1.5f;
@@ -328,15 +319,6 @@ void ThumbNavTile::OnRender(ID2D1RenderTarget* target)
     // Draw icon (folder / up) if requested.
     if (m_icon != IconKind::None)
     {
-        if (!m_iconStrokeBrush)
-        {
-            target->CreateSolidColorBrush(D2D1::ColorF(0.10f, 0.10f, 0.10f, 0.65f), &m_iconStrokeBrush);
-        }
-        if (!m_iconAccentBrush)
-        {
-            target->CreateSolidColorBrush(D2D1::ColorF(1.00f, 1.00f, 1.00f, 0.95f), &m_iconAccentBrush);
-        }
-
         const auto r = LayoutRect();
         const float w = r.right - r.left;
         const float h = r.bottom - r.top;
@@ -359,33 +341,6 @@ void ThumbNavTile::OnRender(ID2D1RenderTarget* target)
                 D2D1_BITMAP_INTERPOLATION_MODE_LINEAR,
                 D2D1::RectF(0.0f, 0.0f, m_folderBitmap->GetSize().width, m_folderBitmap->GetSize().height));
         }
-
-        if (m_icon == IconKind::Up)
-        {
-            // Simple "up" arrow over the folder.
-            // Center the arrow in the folder body (folder icon visually sits a bit low due to its tab).
-            const float cx = iconX + (iconW * 0.5f);
-            const float cy = iconY + (iconH * 0.60f);
-
-            // Scale thickness with icon size so it remains readable at small thumbnail sizes.
-            const float thickness = (std::max)(3.5f, iconW * 0.065f);
-
-            const float shaftUp = iconH * 0.20f;
-            const float shaftDown = iconH * 0.08f;
-            const float headW = iconH * 0.16f;
-            const float headH = iconH * 0.14f;
-
-            const D2D1_POINT_2F shaftBottom = D2D1::Point2F(cx, cy + shaftDown);
-            const D2D1_POINT_2F shaftTop = D2D1::Point2F(cx, cy - shaftUp);
-            target->DrawLine(shaftBottom, shaftTop, m_iconAccentBrush.Get(), thickness);
-
-            // Arrow head (chevron/triangle-ish)
-            const D2D1_POINT_2F headTip = shaftTop;
-            const D2D1_POINT_2F headLeft = D2D1::Point2F(cx - headW, shaftTop.y + headH);
-            const D2D1_POINT_2F headRight = D2D1::Point2F(cx + headW, shaftTop.y + headH);
-            target->DrawLine(headTip, headLeft, m_iconAccentBrush.Get(), thickness);
-            target->DrawLine(headTip, headRight, m_iconAccentBrush.Get(), thickness);
-        }
     }
 
     m_label.OnRender(target);
@@ -400,13 +355,14 @@ bool ThumbNavTile::EnsureFolderBitmap(ID2D1RenderTarget* target)
         return false;
     }
 
-    if (m_folderBitmap && m_folderBitmapTarget == target)
+    if (m_folderBitmap && m_folderBitmapTarget == target && m_folderBitmapKind == m_icon)
     {
         return true;
     }
 
     m_folderBitmap.Reset();
     m_folderBitmapTarget = nullptr;
+    m_folderBitmapKind = IconKind::None;
 
     D2D1_COLOR_F tintColor {};
     const D2D1_COLOR_F* tint = nullptr;
@@ -421,12 +377,17 @@ bool ThumbNavTile::EnsureFolderBitmap(ID2D1RenderTarget* target)
         tint = &tintColor;
     }
 
-    if (!ImageBrowserAssets::CreateFolderIconBitmap(target, tint, m_folderBitmap))
+    const auto kind = (m_icon == IconKind::Up)
+        ? ImageBrowserAssets::FolderIconKind::FolderUp
+        : ImageBrowserAssets::FolderIconKind::Folder;
+
+    if (!ImageBrowserAssets::CreateFolderIconBitmap(target, kind, tint, m_folderBitmap))
     {
         return false;
     }
 
     m_folderBitmapTarget = target;
+    m_folderBitmapKind = m_icon;
     return true;
 }
 

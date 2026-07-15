@@ -1,0 +1,14 @@
+Lucide Icons (folder, folder-up)
+https://lucide.dev/
+https://github.com/lucide-icons/lucide
+
+License: ISC
+Copyright (c) Lucide Icons and Contributors
+
+Permission to use, copy, modify, and/or distribute this software for any
+purpose with or without fee is hereby granted, provided that the above
+copyright notice and this permission notice appear in all copies.
+
+Rasterized for FICture2 as:
+  assets/lucide-folder-256.png
+  assets/lucide-folder-up-256.png

@@ -442,14 +442,22 @@ namespace
                 });
             }
 
-            // Draw folder icon in main image area if a folder is selected
+            // Draw folder / parent-folder icon in main image area if a folder is selected
             if (m_selectedIndex < m_items.size() &&
                 (m_items[m_selectedIndex].kind == ThumbItemKind::Folder || m_items[m_selectedIndex].kind == ThumbItemKind::Up) &&
                 m_mainPane != nullptr)
             {
-                if (m_assets.EnsureFolderBitmap(target))
+                const bool isUp = (m_items[m_selectedIndex].kind == ThumbItemKind::Up);
+                const auto iconKind = isUp
+                    ? ImageBrowserAssets::FolderIconKind::FolderUp
+                    : ImageBrowserAssets::FolderIconKind::Folder;
+                if (m_assets.EnsureFolderBitmap(target, iconKind))
                 {
-                    m_mainPane->RenderCenteredMainOverlayBitmap(target, m_assets.FolderBitmap(), 0.30f);
+                    ID2D1Bitmap* bitmap = isUp ? m_assets.FolderUpBitmap() : m_assets.FolderBitmap();
+                    if (bitmap != nullptr)
+                    {
+                        m_mainPane->RenderCenteredMainOverlayBitmap(target, bitmap, 0.30f);
+                    }
                 }
             }
         }
