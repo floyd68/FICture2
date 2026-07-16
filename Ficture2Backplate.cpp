@@ -2,7 +2,7 @@
 
 #include "AppLog.h"
 #include "CommonUtil.h"
-#include "SimpleIniFile.h"
+#include "IniStore.h"
 #include "FD2D/Core.h"
 #include "AppSetup.h"
 #include "Resource.h"
@@ -73,7 +73,7 @@ namespace
             CommonUtil::ToByte255(color.r),
             CommonUtil::ToByte255(color.g),
             CommonUtil::ToByte255(color.b));
-        (void)WritePrivateProfileStringW(section, key, rgb.c_str(), iniFile.c_str());
+        IniStore::SetString(iniFile, section, key, rgb);
     }
 
     template <typename T>
@@ -1137,8 +1137,8 @@ void Ficture2Backplate::EnsureImageBrowserIniInitialized()
     // Read the entire INI file once; avoid calling GetPrivateProfile* APIs
     // which re-open and re-parse the file on every individual call.
     FIC2_TIMER_START(t_ini);
-    const auto ini = SimpleIniFile::Load(iniFile);
-    FIC2_LOG_STEP(t_ini, "[IniInit] SimpleIniFile::Load");
+    const auto ini = IniStore::Load(iniFile);
+    FIC2_LOG_STEP(t_ini, "[IniInit] IniStore::Load");
     if (!ini.IsLoaded())
     {
         return;
@@ -1310,7 +1310,7 @@ void Ficture2Backplate::SynchronizeShowNavItems(FD2D::Wnd* source, bool showNavI
     std::wstring iniFile {};
     if (TryGetIniFilePath(iniFile))
     {
-        (void)WritePrivateProfileStringW(L"Viewer", L"ShowNavItems", m_showNavItems ? L"1" : L"0", iniFile.c_str());
+        IniStore::SetString(iniFile, L"Viewer", L"ShowNavItems", m_showNavItems ? L"1" : L"0");
     }
 
     const auto targets = SnapshotOtherBrowserSync(m_eventBus, source);

@@ -2,7 +2,7 @@
 #include "AppLog.h"
 #include "CommonUtil.h"
 #include "ImageCore/ImageDecodeDispatcher.h"
-#include "SimpleIniFile.h"
+#include "IniStore.h"
 
 #include "framework.h"
 
@@ -38,34 +38,34 @@ namespace
         }
 
         // General
-        (void)WritePrivateProfileStringW(L"General", L"IniVersion", L"1", iniFile.c_str());
-        (void)WritePrivateProfileStringW(L"General", L"Initialized", L"1", iniFile.c_str());
-        (void)WritePrivateProfileStringW(L"General", L"AskedAssociations", L"0", iniFile.c_str());
-        (void)WritePrivateProfileStringW(L"General", L"AssociationsEnabled", L"0", iniFile.c_str());
+        IniStore::SetString(iniFile, L"General", L"IniVersion", L"1");
+        IniStore::SetString(iniFile, L"General", L"Initialized", L"1");
+        IniStore::SetString(iniFile, L"General", L"AskedAssociations", L"0");
+        IniStore::SetString(iniFile, L"General", L"AssociationsEnabled", L"0");
 
         // Image / viewer behavior
-        (void)WritePrivateProfileStringW(L"Image", L"ZoomStiffness", L"80.0", iniFile.c_str());
+        IniStore::SetString(iniFile, L"Image", L"ZoomStiffness", L"80.0");
 
         // Viewer defaults (reserved for future expansion)
-        (void)WritePrivateProfileStringW(L"Viewer", L"PaneCount", L"1", iniFile.c_str());
-        (void)WritePrivateProfileStringW(L"Viewer", L"ShowNavItems", L"1", iniFile.c_str());
+        IniStore::SetString(iniFile, L"Viewer", L"PaneCount", L"1");
+        IniStore::SetString(iniFile, L"Viewer", L"ShowNavItems", L"1");
 
         // Thumbnail strip defaults (reserved for future expansion)
-        (void)WritePrivateProfileStringW(L"Thumbnails", L"MinSize", L"32", iniFile.c_str());
-        (void)WritePrivateProfileStringW(L"Thumbnails", L"MaxSize", L"256", iniFile.c_str());
-        (void)WritePrivateProfileStringW(L"Thumbnails", L"ItemSpacing", L"8", iniFile.c_str());
-        (void)WritePrivateProfileStringW(L"Thumbnails", L"Padding", L"8", iniFile.c_str());
-        (void)WritePrivateProfileStringW(L"Thumbnails", L"TileLabelSpacing", L"2", iniFile.c_str());
+        IniStore::SetString(iniFile, L"Thumbnails", L"MinSize", L"32");
+        IniStore::SetString(iniFile, L"Thumbnails", L"MaxSize", L"256");
+        IniStore::SetString(iniFile, L"Thumbnails", L"ItemSpacing", L"8");
+        IniStore::SetString(iniFile, L"Thumbnails", L"Padding", L"8");
+        IniStore::SetString(iniFile, L"Thumbnails", L"TileLabelSpacing", L"2");
 
         // Window placement (will be populated on first exit).
-        (void)WritePrivateProfileStringW(L"Window", L"ShowCmd", L"1", iniFile.c_str()); // SW_SHOWNORMAL
+        IniStore::SetString(iniFile, L"Window", L"ShowCmd", L"1"); // SW_SHOWNORMAL
 
         // Background color (R,G,B 0-255). Default matches previous clear: (0.09,0.09,0.10) ~ (23,23,26)
-        (void)WritePrivateProfileStringW(L"Window", L"BackgroundColor", L"20,23,23", iniFile.c_str());
+        IniStore::SetString(iniFile, L"Window", L"BackgroundColor", L"20,23,23");
 
         // Focused ImageBrowser background color (R,G,B 0-255). Default: dark yellow accent.
         // (0.18,0.16,0.03) ~ (46,41,8)
-        (void)WritePrivateProfileStringW(L"Window", L"FocusedBackgroundColor", L"35,43,43", iniFile.c_str());
+        IniStore::SetString(iniFile, L"Window", L"FocusedBackgroundColor", L"35,43,43");
     }
 
     void EnsureIniFileExists(const std::wstring& iniFile, bool associationsEnabled)
@@ -94,8 +94,12 @@ namespace
         WriteIniDefaults(iniFile);
 
         // First-run prompt result.
-        (void)WritePrivateProfileStringW(L"General", L"AskedAssociations", L"1", iniFile.c_str());
-        (void)WritePrivateProfileStringW(L"General", L"AssociationsEnabled", associationsEnabled ? L"1" : L"0", iniFile.c_str());
+        IniStore::SetString(iniFile, L"General", L"AskedAssociations", L"1");
+        IniStore::SetString(
+            iniFile,
+            L"General",
+            L"AssociationsEnabled",
+            associationsEnabled ? L"1" : L"0");
     }
 
     bool SetRegSzValue(HKEY root, const std::wstring& subKey, const wchar_t* valueNameOrNull, const std::wstring& value)
@@ -336,8 +340,7 @@ namespace
             return;
         }
 
-        const std::wstring buf = std::format(L"{}", value);
-        (void)WritePrivateProfileStringW(section, key, buf.c_str(), iniFile.c_str());
+        IniStore::SetInt(iniFile, section, key, value);
     }
 
     void ClampRectToMonitorWorkArea(RECT& rc, bool enableLog = false)
@@ -723,7 +726,7 @@ namespace FICture2App
             return false;
         }
 
-        const auto ini = SimpleIniFile::Load(iniFile);
+        const auto ini = IniStore::Load(iniFile);
         if (!ini.IsLoaded())
         {
             return false;

@@ -1,5 +1,5 @@
 #include "ImageBrowserSessionPersistence.h"
-#include "SimpleIniFile.h"
+#include "IniStore.h"
 #include "CommonUtil.h"
 
 #include <Windows.h>
@@ -58,17 +58,22 @@ namespace ImageBrowserSessionPersistence
 
         const int clampedCount = (std::max)(0, (std::min)(4, payload.viewerCount));
 
-        const std::wstring countStr = std::format(L"{}", clampedCount);
-        (void)WritePrivateProfileStringW(L"Session", L"ViewerCount", countStr.c_str(), iniFile.c_str());
+        IniStore::SetInt(iniFile, L"Session", L"ViewerCount", clampedCount);
 
         if (payload.hasThumbStripHeight)
         {
-            const std::wstring thumbStr = std::format(L"{:.2f}", payload.thumbStripHeight);
-            (void)WritePrivateProfileStringW(L"Session", L"ThumbStripHeight", thumbStr.c_str(), iniFile.c_str());
+            IniStore::SetString(
+                iniFile,
+                L"Session",
+                L"ThumbStripHeight",
+                std::format(L"{:.2f}", payload.thumbStripHeight));
         }
 
-        const std::wstring ratiosCsv = JoinFloatsCsv(payload.horizontalSplitRatios);
-        (void)WritePrivateProfileStringW(L"Session", L"HorizontalSplitRatios", ratiosCsv.c_str(), iniFile.c_str());
+        IniStore::SetString(
+            iniFile,
+            L"Session",
+            L"HorizontalSplitRatios",
+            JoinFloatsCsv(payload.horizontalSplitRatios));
 
         for (int i = 0; i < clampedCount; ++i)
         {
@@ -79,8 +84,8 @@ namespace ImageBrowserSessionPersistence
 
             const auto& viewer = payload.viewers[static_cast<size_t>(i)];
             const std::wstring sec = L"Viewer" + std::to_wstring(i);
-            (void)WritePrivateProfileStringW(sec.c_str(), L"DisplayedFile", viewer.displayedFile.c_str(), iniFile.c_str());
-            (void)WritePrivateProfileStringW(sec.c_str(), L"CurrentFolder", viewer.currentFolder.c_str(), iniFile.c_str());
+            IniStore::SetString(iniFile, sec, L"DisplayedFile", viewer.displayedFile);
+            IniStore::SetString(iniFile, sec, L"CurrentFolder", viewer.currentFolder);
         }
     }
 
@@ -93,7 +98,7 @@ namespace ImageBrowserSessionPersistence
 
         // Read the file once; all individual GetPrivateProfile* calls
         // re-open the file on every call and cause significant startup latency.
-        const auto ini = SimpleIniFile::Load(iniFile);
+        const auto ini = IniStore::Load(iniFile);
         if (!ini.IsLoaded())
         {
             return false;

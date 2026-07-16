@@ -105,6 +105,7 @@ This repository is the “app shell” that wires the UI and decode pipeline tog
 
 - **`FD2D/` (submodule)**: lightweight Win32 UI framework using Direct2D/DirectWrite (and optional D3D11 swapchain renderer)
 - **`ImageCore/` (submodule)**: async image decode pipeline (WIC + DirectXTex)
+- **`IniStore.h`**: shared header-only INI reader/writer (mirrored to NIFDiff via `scripts/sync-ini-store.ps1`)
 - **`external/DirectXTex/` (submodule)**: DirectXTex library (external dependency)
 - **`external/libarchive/` (submodule)**: ZIP/7Z/RAR archive support (built as a minimal static library)
 

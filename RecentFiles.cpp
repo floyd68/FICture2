@@ -1,60 +1,12 @@
 #include "RecentFiles.h"
-#include "SimpleIniFile.h"
+#include "IniStore.h"
 
 #include <algorithm>
-#include <cwctype>
-#include <string_view>
 
 #ifndef NOMINMAX
 #define NOMINMAX
 #endif
 #include <windows.h>
-
-namespace
-{
-    std::vector<std::wstring> SplitPipeList(std::wstring_view s)
-    {
-        std::vector<std::wstring> out;
-        std::size_t start = 0;
-        while (start < s.size())
-        {
-            std::size_t bar = s.find(L'|', start);
-            if (bar == std::wstring_view::npos)
-            {
-                bar = s.size();
-            }
-            std::wstring_view part = s.substr(start, bar - start);
-            while (!part.empty() && iswspace(part.front()))
-            {
-                part.remove_prefix(1);
-            }
-            while (!part.empty() && iswspace(part.back()))
-            {
-                part.remove_suffix(1);
-            }
-            if (!part.empty())
-            {
-                out.emplace_back(part);
-            }
-            start = bar + 1;
-        }
-        return out;
-    }
-
-    std::wstring JoinPipeList(const std::vector<std::wstring>& parts)
-    {
-        std::wstring out;
-        for (std::size_t i = 0; i < parts.size(); ++i)
-        {
-            if (i > 0)
-            {
-                out += L'|';
-            }
-            out += parts[i];
-        }
-        return out;
-    }
-}
 
 namespace RecentFiles
 {
@@ -65,8 +17,8 @@ namespace RecentFiles
             return {};
         }
 
-        const SimpleIniFile ini = SimpleIniFile::Load(iniPath);
-        std::vector<std::wstring> out = SplitPipeList(ini.GetString(L"Session", L"RecentFiles"));
+        const IniStore ini = IniStore::Load(iniPath);
+        std::vector<std::wstring> out = IniStore::SplitPipeList(ini.GetString(L"Session", L"RecentFiles"));
         if (out.size() > kMaxEntries)
         {
             out.resize(kMaxEntries);
@@ -94,11 +46,7 @@ namespace RecentFiles
             files.resize(kMaxEntries);
         }
 
-        (void)WritePrivateProfileStringW(
-            L"Session",
-            L"RecentFiles",
-            JoinPipeList(files).c_str(),
-            iniPath.c_str());
+        IniStore::SetString(iniPath, L"Session", L"RecentFiles", IniStore::JoinPipeList(files));
     }
 
     void Clear(const std::wstring& iniPath)
@@ -107,7 +55,7 @@ namespace RecentFiles
         {
             return;
         }
-        (void)WritePrivateProfileStringW(L"Session", L"RecentFiles", L"", iniPath.c_str());
+        IniStore::SetString(iniPath, L"Session", L"RecentFiles", L"");
     }
 
     std::wstring MenuLabel(const std::wstring& path)
