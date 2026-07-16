@@ -10,6 +10,7 @@
 #include "ImageBrowser.h"
 #include "ImageBrowserContextMenu.h"
 #include "ImageBrowserSessionPersistence.h"
+#include "ImageBrowserSplitCoordinator.h"
 #include "ImageCore/DecoderRegistry.h"
 #include "ImageCore/ImageDecodeDispatcher.h"
 #include "ImageAwareVfs.h"
@@ -576,7 +577,7 @@ namespace
         }
 
         auto* bus = backplate->BusPtr().get();
-        if (bus == nullptr || bus->ImageBrowserCount() > 3)
+        if (bus == nullptr || bus->ImageBrowserCount() >= ImageBrowserSplitCoordinator::kMaxViewers)
         {
             return true;
         }
@@ -1597,7 +1598,7 @@ void Ficture2Backplate::OpenAdditionalFilesSideBySide(const std::vector<std::wst
             continue;
         }
 
-        if (existing >= 4)
+        if (existing >= ImageBrowserSplitCoordinator::kMaxViewers)
         {
             break;
         }
@@ -1897,7 +1898,9 @@ void Ficture2Backplate::SaveImageBrowserSession(const std::wstring& iniFile)
     }
 
     auto* rootOps = browserOps.front();
-    const int count = static_cast<int>((std::min)(static_cast<size_t>(4), browserOps.size()));
+    const int count = static_cast<int>((std::min)(
+        ImageBrowserSplitCoordinator::kMaxViewers,
+        browserOps.size()));
 
     ImageBrowserSessionPersistence::SavePayload payload {};
     payload.viewerCount = count;
@@ -1996,7 +1999,7 @@ bool Ficture2Backplate::TryRestoreImageBrowserSession(const std::wstring& iniFil
 
     payload.viewers = std::move(valid);
     payload.clampedViewerCount = static_cast<int>(
-        (std::min)(static_cast<size_t>(4), payload.viewers.size()));
+        (std::min)(ImageBrowserSplitCoordinator::kMaxViewers, payload.viewers.size()));
     payload.viewers.resize(static_cast<size_t>(payload.clampedViewerCount));
 
     if (payload.hasThumbStripHeight)

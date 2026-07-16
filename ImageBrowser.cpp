@@ -863,18 +863,20 @@ namespace
             return m_currentFolder.wstring();
         }
 
-        // Captures split ratios of the horizontal host tree (preorder), excluding per-browser root splits.
+        // Captures host-tree split ratios (preorder), including the two-row
+        // vertical split when present. Stops at compare pane roots so per-browser
+        // main/thumb vertical splits are not persisted.
         std::vector<float> CaptureHorizontalSplitRatios() const
         {
             std::vector<float> out;
-            CaptureSplitRatiosRecursive(m_hHost, out);
+            CaptureSplitRatiosRecursive(m_hHost, m_hPanes, out);
             return out;
         }
 
         void ApplyHorizontalSplitRatios(const std::vector<float>& ratios)
         {
             size_t idx = 0;
-            ApplySplitRatiosRecursive(m_hHost, ratios, idx);
+            ApplySplitRatiosRecursive(m_hHost, m_hPanes, ratios, idx);
             if (BackplateRef() != nullptr)
             {
                 BackplateRef()->RequestLayout();
@@ -2545,7 +2547,7 @@ namespace
                 {
                     MessageBoxW(
                         BackplateRef()->Window(),
-                        L"Maximum 4 viewers are supported.",
+                        L"Maximum 8 viewers are supported.",
                         L"FICture2",
                         MB_OK | MB_ICONINFORMATION);
                 }
@@ -2775,34 +2777,57 @@ namespace
         D2D1_COLOR_F m_browserFocusedBackgroundColor { 0.18f, 0.16f, 0.03f, 1.0f };
         Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> m_browserBackgroundBrush {};
 
-        static void CaptureSplitRatiosRecursive(const std::shared_ptr<FD2D::Wnd>& node, std::vector<float>& out)
+        static void CaptureSplitRatiosRecursive(
+            const std::shared_ptr<FD2D::Wnd>& node,
+            const std::vector<std::shared_ptr<FD2D::Wnd>>& paneLeaves,
+            std::vector<float>& out)
         {
             if (!node)
             {
                 return;
             }
 
-            auto sp = std::dynamic_pointer_cast<FD2D::SplitPanel>(node);
-            if (sp && sp->Orientation() == FD2D::SplitterOrientation::Horizontal)
+            // Stop at each compare pane root so we do not persist the vertical
+            // main/thumb SplitPanel inside an ImageBrowser.
+            for (const auto& leaf : paneLeaves)
+            {
+                if (node == leaf)
+                {
+                    return;
+                }
+            }
+
+            if (auto sp = std::dynamic_pointer_cast<FD2D::SplitPanel>(node))
             {
                 out.push_back(sp->SplitRatio());
             }
 
             for (const auto& ch : node->ChildrenInOrder())
             {
-                CaptureSplitRatiosRecursive(ch, out);
+                CaptureSplitRatiosRecursive(ch, paneLeaves, out);
             }
         }
 
-        static void ApplySplitRatiosRecursive(const std::shared_ptr<FD2D::Wnd>& node, const std::vector<float>& ratios, size_t& idx)
+        static void ApplySplitRatiosRecursive(
+            const std::shared_ptr<FD2D::Wnd>& node,
+            const std::vector<std::shared_ptr<FD2D::Wnd>>& paneLeaves,
+            const std::vector<float>& ratios,
+            size_t& idx)
         {
             if (!node)
             {
                 return;
             }
 
-            auto sp = std::dynamic_pointer_cast<FD2D::SplitPanel>(node);
-            if (sp && sp->Orientation() == FD2D::SplitterOrientation::Horizontal)
+            for (const auto& leaf : paneLeaves)
+            {
+                if (node == leaf)
+                {
+                    return;
+                }
+            }
+
+            if (auto sp = std::dynamic_pointer_cast<FD2D::SplitPanel>(node))
             {
                 if (idx < ratios.size())
                 {
@@ -2813,7 +2838,7 @@ namespace
 
             for (const auto& ch : node->ChildrenInOrder())
             {
-                ApplySplitRatiosRecursive(ch, ratios, idx);
+                ApplySplitRatiosRecursive(ch, paneLeaves, ratios, idx);
             }
         }
     };

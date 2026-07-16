@@ -3,6 +3,7 @@
 #include "Resource.h"
 #include "AppSetup.h"
 #include "RecentFiles.h"
+#include "ImageBrowserSplitCoordinator.h"
 
 #include <algorithm>
 
@@ -13,7 +14,9 @@ namespace ImageBrowserContextMenu
         EnableMenuItem(
             hPopup,
             IDM_CTX_OPEN_NEW_IMAGE,
-            MF_BYCOMMAND | ((payload.viewerCount <= 3) ? MF_ENABLED : MF_GRAYED));
+            MF_BYCOMMAND | ((payload.viewerCount < static_cast<int>(ImageBrowserSplitCoordinator::kMaxViewers))
+                ? MF_ENABLED
+                : MF_GRAYED));
 
         EnableMenuItem(
             hPopup,

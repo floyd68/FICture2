@@ -14,6 +14,7 @@
 #include "FloarPathByteSource.h"
 #include "ImageBrowser.h"
 #include "IpcOpenRequest.h"
+#include "ImageBrowserSplitCoordinator.h"
 
 #include "FloarLog.h"
 #include "ImageAsyncBinding.h"
@@ -221,7 +222,7 @@ namespace
     // Sentinel HWND published through ipcUiWindow once shutdown begins.
     const HWND kIpcUiWindowGone = reinterpret_cast<HWND>(static_cast<INT_PTR>(-1));
 
-    constexpr std::size_t kMaxIpcPanes = 4;
+    constexpr std::size_t kMaxIpcPanes = ImageBrowserSplitCoordinator::kMaxViewers;
 }
 
 int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
@@ -505,7 +506,7 @@ int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
         backplate->EnsureImageBrowserIniInitialized();
         FIC2_LOG_STEP(t_startup, "EnsureImageBrowserIniInitialized (pre-AddWnd)");
 
-        // Core viewer: supports 1..4 panes (we start with 1 by default).
+        // Core viewer: supports 1..8 panes (we start with 1 by default).
         auto firstBrowser = CreateImageBrowser(L"viewer", initialFile);
         FIC2_LOG_STEP(t_startup, "CreateImageBrowser (ctor + BuildUi)");
         backplate->AddWnd(firstBrowser);

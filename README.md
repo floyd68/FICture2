@@ -48,7 +48,7 @@ What you see in FICture2 is what the engine actually gets.
 
 ## Image compare mode (side-by-side)
 
-- Compare **2–4 images simultaneously**
+- Compare **2–8 images simultaneously**
 - Perfect for A/B testing multiple texture replacements
 - Split-view comparison with synchronized navigation
 
@@ -224,7 +224,11 @@ For details and the exact CMake flags used, see `docs/libarchive_integration.md`
 - **Folder navigation** inside the thumbnail strip (includes `..` “up” item)
 - **Archive browsing**: ZIP / 7Z / RAR / BA2 (images and folders)
 - **Supported image formats**: DDS, PNG, JPG/JPEG, BMP, GIF, TIF/TIFF, TGA
-- **Compare / multi-view**: open up to **4** viewers side-by-side (equal widths)
+- **Compare / multi-view**: open up to **8** viewers in an equal-width compare grid
+  - 1–4 panes: single row
+  - 5–6 panes: two rows × 3 columns
+  - 7–8 panes: two rows × 4 columns
+  - adding/removing a pane rebuilds equal widths; dragged splitter ratios are restored with the session
 - **Sync mode (when 2+ viewers exist)**:
   - selecting an image propagates to other viewers (by filename match within their current folder)
   - zoom/pan propagates to other viewers currently showing the same filename
@@ -256,7 +260,7 @@ For details and the exact CMake flags used, see `docs/libarchive_integration.md`
 - **Drag & drop** (main image region):
   - **Left 3/4** drop zone: replace the current `ImageBrowser` folder/image with the dropped path (**red overlay** while dragging)
   - **Right 1/4** drop zone: insert a new `ImageBrowser` to the right and open the dropped path there (**green overlay** while dragging)
-  - **Multi-select drag & drop**: drop multiple images/folders/archives to open up to 4 viewers side-by-side
+  - **Multi-select drag & drop**: drop multiple images/folders/archives to open up to 8 viewers
   - **Unsupported files** show an X cursor and cannot be dropped
 - **File associations**: register or unregister supported image types from the context menu (per-user / HKCU only; menu label toggles based on current state)
 - **Explorer DDS thumbnails**: register/unregister the thumbnail provider from the context menu (admin prompt)
@@ -282,7 +286,7 @@ For details and the exact CMake flags used, see `docs/libarchive_integration.md`
 - **N**: toggle navigation items visibility **globally** (folders + `..`) across all `ImageBrowser` instances
 - **Q**: toggle sampling quality (low/high)
 - **Ctrl + O**: open file dialog, replace current viewer image/folder context
-- **Ctrl + Shift + O**: open file dialog, create a new viewer on the right (up to 4 total), equal widths
+- **Ctrl + Shift + O**: open file dialog, create a new viewer (up to 8 total); layout rebuilds to equal widths
 
 ### Main image view (focused `ImageBrowser`)
 
@@ -303,7 +307,7 @@ For details and the exact CMake flags used, see `docs/libarchive_integration.md`
 - Drag an image file/folder onto a main image view:
   - **Left 3/4**: replace current view (folder/image) — red overlay while dragging
   - **Right 1/4**: insert a new `ImageBrowser` on the right and open there — green overlay while dragging
-- Multiple files/folders/archives can be dropped at once (up to 4 viewers total)
+- Multiple files/folders/archives can be dropped at once (up to 8 viewers total)
 - Unsupported files show an X cursor and are rejected
 
 ## Supported formats
@@ -342,11 +346,11 @@ All settings are stored per-user at:
   - `MaxSize` (default 256)
   - `ItemSpacing`, `Padding`, `TileLabelSpacing`
 - **`[Session]`** (auto-managed)
-  - `ViewerCount` (1..4)
+  - `ViewerCount` (1..8)
   - `ThumbStripHeight`
-  - `HorizontalSplitRatios`
+  - `HorizontalSplitRatios` (host-tree splitter ratios, including the two-row vertical split when present)
   - `RecentFiles`: pipe-separated MRU list (max 12) used by **Open Recent**
-- **`[Viewer0]..[Viewer3]`** (auto-managed)
+- **`[Viewer0]..[Viewer7]`** (auto-managed)
   - `CurrentFolder`
   - `DisplayedFile`
 

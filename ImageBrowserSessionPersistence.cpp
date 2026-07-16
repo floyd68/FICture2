@@ -1,6 +1,7 @@
 #include "ImageBrowserSessionPersistence.h"
 #include "IniStore.h"
 #include "CommonUtil.h"
+#include "ImageBrowserSplitCoordinator.h"
 
 #include <Windows.h>
 
@@ -56,7 +57,9 @@ namespace ImageBrowserSessionPersistence
             return;
         }
 
-        const int clampedCount = (std::max)(0, (std::min)(4, payload.viewerCount));
+        const int clampedCount = (std::max)(
+            0,
+            (std::min)(static_cast<int>(ImageBrowserSplitCoordinator::kMaxViewers), payload.viewerCount));
 
         IniStore::SetInt(iniFile, L"Session", L"ViewerCount", clampedCount);
 
@@ -110,7 +113,9 @@ namespace ImageBrowserSessionPersistence
         {
             return false;
         }
-        outPayload.clampedViewerCount = (std::max)(1, (std::min)(4, outPayload.viewerCount));
+        outPayload.clampedViewerCount = (std::max)(
+            1,
+            (std::min)(static_cast<int>(ImageBrowserSplitCoordinator::kMaxViewers), outPayload.viewerCount));
 
         const float thumbH = ini.GetFloat(L"Session", L"ThumbStripHeight", 0.0f);
         if (thumbH > 1.0f)
