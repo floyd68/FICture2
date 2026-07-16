@@ -14,6 +14,7 @@
 #include "ImageCore/ImageDecodeDispatcher.h"
 #include "ImageAwareVfs.h"
 #include "VirtualPath.h"
+#include "VirtualFileSystem.h"
 #include "RecentFiles.h"
 #include "ScreenshotUtil.h"
 
@@ -1947,21 +1948,69 @@ bool Ficture2Backplate::TryRestoreImageBrowserSession(const std::wstring& iniFil
         return false;
     }
 
+    // Keep only paths that still resolve (NIFDiff-style compact restore).
+    // ViewerCount alone must not count as success — otherwise dead slots block Pictures fallback.
+    std::vector<ImageBrowserSessionPersistence::RestoredViewerState> valid;
+    valid.reserve(payload.viewers.size());
+    for (const auto& viewer : payload.viewers)
+    {
+        if (!viewer.filePath.empty())
+        {
+            auto vp = Floar::VirtualPath::Parse(viewer.filePath);
+            if (vp && vp->Exists())
+            {
+                valid.push_back(viewer);
+                continue;
+            }
+            FIC2_LOG_INFO(
+                "[Session] Dropping missing file from restore: {}",
+                std::filesystem::path(viewer.filePath).string());
+        }
+        else if (!viewer.folderPath.empty())
+        {
+            auto vp = Floar::VirtualPath::Parse(viewer.folderPath);
+            if (vp && Floar::VirtualFileSystem::IsDirectory(*vp))
+            {
+                valid.push_back(viewer);
+                continue;
+            }
+            FIC2_LOG_INFO(
+                "[Session] Dropping missing folder from restore: {}",
+                std::filesystem::path(viewer.folderPath).string());
+        }
+    }
+
+    if (valid.empty())
+    {
+        FIC2_LOG_INFO("[Session] Restore found no surviving viewers — treating as not restored.");
+        return false;
+    }
+
+    if (valid.size() != payload.viewers.size())
+    {
+        FIC2_LOG_INFO(
+            "[Session] Compacted restore: {} of {} viewers survived",
+            valid.size(),
+            payload.viewers.size());
+    }
+
+    payload.viewers = std::move(valid);
+    payload.clampedViewerCount = static_cast<int>(
+        (std::min)(static_cast<size_t>(4), payload.viewers.size()));
+    payload.viewers.resize(static_cast<size_t>(payload.clampedViewerCount));
+
     if (payload.hasThumbStripHeight)
     {
         SetSyncedThumbStripHeight(payload.thumbStripHeight);
     }
 
-    if (!payload.viewers.empty())
+    if (!payload.viewers[0].filePath.empty())
     {
-        if (!payload.viewers[0].filePath.empty())
-        {
-            rootOps->BrowserRestoreOpenFile(payload.viewers[0].filePath);
-        }
-        else if (!payload.viewers[0].folderPath.empty())
-        {
-            rootOps->BrowserRestoreOpenFolder(payload.viewers[0].folderPath);
-        }
+        rootOps->BrowserRestoreOpenFile(payload.viewers[0].filePath);
+    }
+    else if (!payload.viewers[0].folderPath.empty())
+    {
+        rootOps->BrowserRestoreOpenFolder(payload.viewers[0].folderPath);
     }
 
     for (int i = 1; i < payload.clampedViewerCount; ++i)
@@ -1989,6 +2038,7 @@ bool Ficture2Backplate::TryRestoreImageBrowserSession(const std::wstring& iniFil
         }
     }
 
+    // Best-effort prefix when fewer panes survived than saved ratios.
     if (!payload.horizontalSplitRatios.empty())
     {
         rootOps->BrowserApplyHorizontalSplitRatios(payload.horizontalSplitRatios);

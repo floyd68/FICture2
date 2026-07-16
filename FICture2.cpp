@@ -471,17 +471,26 @@ int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
         backplate->SetIpcOpenQueue(ipcQueue);
 
         // Persist window placement while the HWND is still valid (before destruction).
-        backplate->SetOnBeforeDestroy([iniFile, weakBackplate = std::weak_ptr<Ficture2Backplate>(backplate), ipcUiWindow, ipcQueue](HWND hwnd)
-        {
-            ipcQueue->MarkShuttingDown();
-            // Stop routing IPC wakes at a window that is about to die.
-            ipcUiWindow->store(kIpcUiWindowGone);
-            FICture2App::SaveWindowPlacement(hwnd);
-            if (auto bp = weakBackplate.lock())
+        // Session files are only written after startup handoff (restore/CLI/Pictures +
+        // first IPC drain) so an early close cannot wipe a prior multi-pane session.
+        auto sessionPersistReady = std::make_shared<std::atomic<bool>>(false);
+        backplate->SetOnBeforeDestroy(
+            [iniFile, weakBackplate = std::weak_ptr<Ficture2Backplate>(backplate), ipcUiWindow, ipcQueue, sessionPersistReady](HWND hwnd)
             {
-                bp->SaveImageBrowserSession(iniFile);
-            }
-        });
+                ipcQueue->MarkShuttingDown();
+                // Stop routing IPC wakes at a window that is about to die.
+                ipcUiWindow->store(kIpcUiWindowGone);
+                FICture2App::SaveWindowPlacement(hwnd);
+                if (!sessionPersistReady->load())
+                {
+                    FIC2_LOG_INFO("[Session] Skip session save — startup handoff not finished.");
+                    return;
+                }
+                if (auto bp = weakBackplate.lock())
+                {
+                    bp->SaveImageBrowserSession(iniFile);
+                }
+            });
 
         // Autosave window placement when the user moves/resizes the window.
         // Debounced inside Backplate to avoid excessive INI writes.
@@ -533,11 +542,14 @@ int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
 
         // UI is fully wired (browser attached, session restored) - publish the
         // window so queued IPC opens can wake the UI thread, then drain anything
-        // accepted during boot.
+        // accepted during boot. Only after that first drain is the session safe
+        // to persist (covers rapid IPC opens queued while we were restoring).
         ipcQueue->MarkUiReady();
         backplate->RefreshIpcOpenSnapshot();
         ipcUiWindow->store(backplate->Window());
         backplate->DrainIpcOpenQueue();
+        sessionPersistReady->store(true);
+        FIC2_LOG_INFO("[Session] Startup handoff complete — session persist enabled.");
 
         // Use the show command saved in the INI if available; otherwise fall back
         // to the system nCmdShow (e.g. SW_SHOWNORMAL for a normal launch).

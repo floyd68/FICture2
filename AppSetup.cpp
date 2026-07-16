@@ -365,63 +365,19 @@ namespace
 
         const RECT wa = mi.rcWork;
 
-        const int w = rc.right - rc.left;
-        const int h = rc.bottom - rc.top;
+        // Keep the whole window inside the nearest monitor work area (NIFDiff-style).
+        // Older logic only guaranteed a 64px grab sliver, which could leave most of
+        // the window unreachable after a monitor/layout change.
+        const int w = (std::max)(200, (std::min)(static_cast<int>(rc.right - rc.left), static_cast<int>(wa.right - wa.left)));
+        const int h = (std::max)(200, (std::min)(static_cast<int>(rc.bottom - rc.top), static_cast<int>(wa.bottom - wa.top)));
+        const int x = (std::min)((std::max)(static_cast<int>(rc.left), static_cast<int>(wa.left)), static_cast<int>(wa.right) - w);
+        const int y = (std::min)((std::max)(static_cast<int>(rc.top), static_cast<int>(wa.top)), static_cast<int>(wa.bottom) - h);
+        rc.left = x;
+        rc.top = y;
+        rc.right = x + w;
+        rc.bottom = y + h;
 
-        // Ensure at least some portion is visible.
-        const int minVisible = 64;
-
-        // Clamp size (avoid absurd sizes if INI got corrupted).
-        const int maxW = (wa.right - wa.left);
-        const int maxH = (wa.bottom - wa.top);
-        const int clampedW = (std::max)(200, (std::min)(w, maxW));
-        const int clampedH = (std::max)(200, (std::min)(h, maxH));
-
-        rc.right = rc.left + clampedW;
-        rc.bottom = rc.top + clampedH;
-
-        if (rc.left > wa.right - minVisible)
-        {
-            rc.left = wa.right - minVisible;
-            rc.right = rc.left + clampedW;
-        }
-        if (rc.top > wa.bottom - minVisible)
-        {
-            rc.top = wa.bottom - minVisible;
-            rc.bottom = rc.top + clampedH;
-        }
-        if (rc.right < wa.left + minVisible)
-        {
-            rc.right = wa.left + minVisible;
-            rc.left = rc.right - clampedW;
-        }
-        if (rc.bottom < wa.top + minVisible)
-        {
-            rc.bottom = wa.top + minVisible;
-            rc.top = rc.bottom - clampedH;
-        }
-
-        // Final clamp to work area bounds (allow partially offscreen, but not fully).
-        if (rc.left < wa.left)
-        {
-            rc.left = wa.left;
-            rc.right = rc.left + clampedW;
-        }
-        if (rc.top < wa.top)
-        {
-            rc.top = wa.top;
-            rc.bottom = rc.top + clampedH;
-        }
-        if (rc.right > wa.right)
-        {
-            rc.right = wa.right;
-            rc.left = rc.right - clampedW;
-        }
-        if (rc.bottom > wa.bottom)
-        {
-            rc.bottom = wa.bottom;
-            rc.top = rc.bottom - clampedH;
-        }
+        if (enableLog) FIC2_LOG_STEP(t_clamp, "[LoadWP]   ClampRectToMonitorWorkArea (full window)");
     }
 }
 

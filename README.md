@@ -209,10 +209,14 @@ For details and the exact CMake flags used, see `docs/libarchive_integration.md`
 
 - **Run with a file parameter**:
   - `FICture2.exe "C:\path\to\image.dds"`
-  - Session restore is ignored; the given file is opened.
+  - Session restore is skipped; the given file is opened.
+  - On exit, the current viewer layout becomes the saved session (a prior multi-pane session is replaced).
 - **Run with no parameters**:
-  - If a previous session exists: restores the last session (window placement + viewers + folders/images + splitters).
-  - If no session exists: opens the first supported image found in the current user's **Pictures** folder.
+  - If a previous session exists with at least one path that still resolves: restores viewers + folders/images + splitters.
+  - Missing session paths are skipped and the surviving viewers are compacted left-to-right.
+  - If every remembered path is gone (or no session): opens the first supported image found in the current user's **Pictures** folder.
+  - Closing during the first moments of startup (before restore/IPC handoff finishes) saves window placement only — it does **not** overwrite the previous session with a blank layout.
+- **Window placement**: restored size/position is clamped so the **whole window** stays inside the nearest monitor work area.
 
 ## Features
 
@@ -233,14 +237,17 @@ For details and the exact CMake flags used, see `docs/libarchive_integration.md`
   - Resets automatically when a different image is selected
   - Current angle is shown next to the zoom percentage in the info bar
 - **Session persistence** (per-user INI):
-  - window placement (auto-saved during move/resize)
-  - open viewers + folders + selected image
+  - window placement (auto-saved during move/resize; clamped fully on-screen on restore)
+  - open viewers + folders + selected image (saved on exit **after** startup handoff)
   - splitter positions (horizontal compare splits + thumbnail strip height)
+  - missing paths are dropped on restore; an all-dead session falls through to Pictures
+  - early close before handoff preserves the previous session file list
 - **IPC compare strategy (single instance assist)**:
   - if another instance is already running and you launch a file:
     - if filenames match: first instance enters compare mode; second instance exits
     - if filenames differ: second instance runs independently
   - additional Explorer opens while a compare is already in progress are queued and applied as soon as capacity frees up (instead of getting stuck)
+  - boot-queued IPC opens are drained once before the session becomes eligible to save
 - **Open Recent**: right-click menu lists recently viewed images (persisted in the INI); includes **Clear Recent Files**
 - **Save Pane Screenshot**: right-click menu saves a PNG of the current main-image pane (suggested filename next to the open file)
 - **Path / info bar**:
