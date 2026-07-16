@@ -21,6 +21,8 @@
 #include "IpcOpenRequest.h"
 #include "Ficture2Backplate.h"
 #include "AppLog.h"
+#include "AppSetup.h"
+#include "RecentFiles.h"
 
 #include "FD2D/FD2D.h"
 #include "FD2D/Util.h"
@@ -1170,6 +1172,15 @@ namespace
             return GetCurrentFolderPath();
         }
 
+        bool BrowserTryGetMainImageClientRect(D2D1_RECT_F& outRect) const override
+        {
+            if (m_mainPane == nullptr)
+            {
+                return false;
+            }
+            return m_mainPane->TryGetMainImageRect(outRect);
+        }
+
         std::vector<float> BrowserCaptureHorizontalSplitRatios() const override
         {
             return CaptureHorizontalSplitRatios();
@@ -1718,6 +1729,7 @@ namespace
             const std::wstring p = m_items[index].path.wstring();
             mainImage->SetSourceFile(p);
             m_mainPath = p;
+            RecentFiles::Add(FICture2App::GetIniFilePath(), p);
             NotifyIpcOpenSnapshotChanged();
             mainImage->Invalidate();
             RefreshInfoPanel();

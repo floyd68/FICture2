@@ -72,6 +72,7 @@ public:
 
     virtual std::wstring BrowserGetDisplayedFilePath() const = 0;
     virtual std::wstring BrowserGetCurrentFolderPath() const = 0;
+    virtual bool BrowserTryGetMainImageClientRect(D2D1_RECT_F& outRect) const = 0;
     virtual std::vector<float> BrowserCaptureHorizontalSplitRatios() const = 0;
     virtual bool BrowserContextMenuPrepareForDisplay(const POINT& ptClient) = 0;
     virtual ContextMenuSnapshot BrowserContextMenuSnapshotAtPoint(const POINT& ptClient) const = 0;

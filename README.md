@@ -239,12 +239,18 @@ For details and the exact CMake flags used, see `docs/libarchive_integration.md`
   - if another instance is already running and you launch a file:
     - if filenames match: first instance enters compare mode; second instance exits
     - if filenames differ: second instance runs independently
+  - additional Explorer opens while a compare is already in progress are queued and applied as soon as capacity frees up (instead of getting stuck)
+- **Open Recent**: right-click menu lists recently viewed images (persisted in the INI); includes **Clear Recent Files**
+- **Save Pane Screenshot**: right-click menu saves a PNG of the current main-image pane (suggested filename next to the open file)
+- **Path / info bar**:
+  - hover the path for the full path tooltip; right-click the path to copy it
+  - truncated info text shows a tooltip on hover
 - **Drag & drop** (main image region):
   - **Left 3/4** drop zone: replace the current `ImageBrowser` folder/image with the dropped path (**red overlay** while dragging)
   - **Right 1/4** drop zone: insert a new `ImageBrowser` to the right and open the dropped path there (**green overlay** while dragging)
   - **Multi-select drag & drop**: drop multiple images/folders/archives to open up to 4 viewers side-by-side
   - **Unsupported files** show an X cursor and cannot be dropped
-- **File associations**: register supported image types from the context menu (per-user / HKCU only)
+- **File associations**: register or unregister supported image types from the context menu (per-user / HKCU only; menu label toggles based on current state)
 - **Explorer DDS thumbnails**: register/unregister the thumbnail provider from the context menu (admin prompt)
 - **First-run file association prompt** (per-user / HKCU only)
 
@@ -299,9 +305,9 @@ For details and the exact CMake flags used, see `docs/libarchive_integration.md`
 
 ## File associations & thumbnails
 
-- **Register file associations**: right-click the main image area and choose **Register File Associations** (per-user / HKCU)
+- **Register / unregister file associations**: right-click the main image area and choose **Register File Associations** or **Unregister File Associations...** (per-user / HKCU; label follows current state)
 - **Register DDS thumbnails**: choose **Register Thumbnail Provider (Admin)** (prompts for elevation)
-- If already registered, the menu shows **Unregister Thumbnail Provider (Admin)**
+- If the thumbnail provider is already registered, the menu shows **Unregister Thumbnail Provider (Admin)**
 
 ## Command line
 
@@ -331,6 +337,7 @@ All settings are stored per-user at:
   - `ViewerCount` (1..4)
   - `ThumbStripHeight`
   - `HorizontalSplitRatios`
+  - `RecentFiles`: pipe-separated MRU list (max 12) used by **Open Recent**
 - **`[Viewer0]..[Viewer3]`** (auto-managed)
   - `CurrentFolder`
   - `DisplayedFile`

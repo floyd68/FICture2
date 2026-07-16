@@ -273,6 +273,8 @@ target_sources(FICture2 PRIVATE
     ImageBrowserThumbStripController.cpp
     ImageGpuResourceCache.cpp
     ImageViewUtil.cpp
+    RecentFiles.cpp
+    ScreenshotUtil.cpp
     ThumbImageTile.cpp
     ThumbNavTile.cpp
     app.manifest

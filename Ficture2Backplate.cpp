@@ -14,6 +14,8 @@
 #include "ImageCore/ImageDecodeDispatcher.h"
 #include "ImageAwareVfs.h"
 #include "VirtualPath.h"
+#include "RecentFiles.h"
+#include "ScreenshotUtil.h"
 
 #include <algorithm>
 #include <cmath>
@@ -206,6 +208,8 @@ namespace
         RotateReset,
         ShowInExplorerAtPoint,
         ShowAbout,
+        SaveScreenshot,
+        ClearRecent,
         RegisterAssociations,
         UnregisterAssociations,
         RegisterThumbnailProvider,
@@ -264,6 +268,8 @@ namespace
     static const CommandMapEntry kContextIntegrationMap[] =
     {
         { IDM_CTX_SHOW_IN_EXPLORER, BrowserCommandAction::ShowInExplorerAtPoint },
+        { IDM_CTX_SAVE_SCREENSHOT, BrowserCommandAction::SaveScreenshot },
+        { IDM_CTX_CLEAR_RECENT, BrowserCommandAction::ClearRecent },
         { IDM_CTX_ABOUT, BrowserCommandAction::ShowAbout },
     };
 
@@ -661,6 +667,74 @@ namespace
         return true;
     }
 
+    bool TryExecuteSaveScreenshotAction(
+        IImageBrowserOps* browserOps,
+        BrowserCommandAction action,
+        HWND ownerWindow)
+    {
+        if (browserOps == nullptr || action != BrowserCommandAction::SaveScreenshot)
+        {
+            return false;
+        }
+
+        D2D1_RECT_F rect {};
+        if (!browserOps->BrowserTryGetMainImageClientRect(rect))
+        {
+            return true;
+        }
+
+        const std::wstring displayed = browserOps->BrowserGetDisplayedFilePath();
+        std::filesystem::path imagePath = displayed.empty()
+            ? std::filesystem::path()
+            : std::filesystem::path(displayed);
+        const std::wstring folder = imagePath.has_parent_path()
+            ? imagePath.parent_path().wstring()
+            : std::wstring();
+        const std::wstring stem = imagePath.has_stem()
+            ? imagePath.stem().wstring()
+            : L"ficture2";
+
+        std::wstring name = stem + L"_screenshot1.png";
+        for (int n = 1; !folder.empty() && n < 1000; ++n)
+        {
+            name = stem + L"_screenshot" + std::to_wstring(n) + L".png";
+            std::error_code ec;
+            if (!std::filesystem::exists(std::filesystem::path(folder) / name, ec))
+            {
+                break;
+            }
+        }
+
+        std::wstring outPath;
+        if (!ScreenshotUtil::ShowSavePngDialog(ownerWindow, folder, name, outPath))
+        {
+            return true;
+        }
+
+        if (!ScreenshotUtil::SaveClientRectPng(ownerWindow, rect, outPath))
+        {
+            FIC2_LOG_ERROR("[Screenshot] Save failed: {}", std::filesystem::path(outPath).string());
+            MessageBoxW(
+                ownerWindow,
+                (L"Failed to save screenshot:\n" + outPath).c_str(),
+                L"FICture2",
+                MB_OK | MB_ICONERROR);
+        }
+
+        return true;
+    }
+
+    bool TryExecuteClearRecentAction(BrowserCommandAction action)
+    {
+        if (action != BrowserCommandAction::ClearRecent)
+        {
+            return false;
+        }
+
+        RecentFiles::Clear(FICture2App::GetIniFilePath());
+        return true;
+    }
+
     bool TryExecuteSystemAction(BrowserCommandAction action, HWND ownerWindow)
     {
         if (action == BrowserCommandAction::ShowAbout)
@@ -784,6 +858,16 @@ namespace
         }
 
         if (TryExecuteShowInExplorerAction(browserOps, action, ptClient, ownerWindow))
+        {
+            return;
+        }
+
+        if (TryExecuteSaveScreenshotAction(browserOps, action, ownerWindow))
+        {
+            return;
+        }
+
+        if (TryExecuteClearRecentAction(action))
         {
             return;
         }
@@ -1592,6 +1676,11 @@ bool Ficture2Backplate::ShowImageBrowserContextMenu(FD2D::Wnd* source, const POI
         payload.showAlpha = !m_alphaCheckerboardEnabled;
         payload.samplingLabel = SamplingLabelForRenderer(snapshot.highQualitySampling);
         payload.hasExplorerTarget = snapshot.hasExplorerTarget;
+        {
+            D2D1_RECT_F mainRect {};
+            payload.canSaveScreenshot = browserQuery->BrowserTryGetMainImageClientRect(mainRect);
+        }
+        payload.recentFiles = RecentFiles::Load(FICture2App::GetIniFilePath());
 #if FICTURE2_ENABLE_REGISTRATION_MENU
         payload.thumbRegistered = FICture2App::IsThumbnailProviderRegistered();
         payload.associationsRegistered = FICture2App::AreFileAssociationsRegistered();
@@ -1606,7 +1695,21 @@ bool Ficture2Backplate::ShowImageBrowserContextMenu(FD2D::Wnd* source, const POI
         const UINT cmd = ImageBrowserContextMenu::TrackAndReturnCommand(hPopup, m_window, ptClient);
         if (cmd != 0)
         {
-            (void)HandleImageBrowserContextMenuCommand(source, cmd, ptClient);
+            if (cmd >= IDM_CTX_RECENT_BASE &&
+                cmd <= IDM_CTX_RECENT_LAST &&
+                (cmd - IDM_CTX_RECENT_BASE) < payload.recentFiles.size())
+            {
+                const std::wstring& path = payload.recentFiles[cmd - IDM_CTX_RECENT_BASE];
+                auto* browserOps = AsImageBrowserOps(source);
+                if (browserOps != nullptr)
+                {
+                    browserOps->BrowserRestoreOpenFile(path);
+                }
+            }
+            else
+            {
+                (void)HandleImageBrowserContextMenuCommand(source, cmd, ptClient);
+            }
         }
     }
 

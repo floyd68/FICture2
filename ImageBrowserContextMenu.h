@@ -3,6 +3,7 @@
 #include <Windows.h>
 
 #include <string>
+#include <vector>
 
 namespace ImageBrowserContextMenu
 {
@@ -14,8 +15,10 @@ namespace ImageBrowserContextMenu
         bool showAlpha { true };
         std::wstring samplingLabel {};
         bool hasExplorerTarget { false };
+        bool canSaveScreenshot { false };
         bool thumbRegistered { false };
         bool associationsRegistered { false };
+        std::vector<std::wstring> recentFiles {};
     };
 
     void Configure(HMENU hPopup, const ConfigurePayload& payload);
