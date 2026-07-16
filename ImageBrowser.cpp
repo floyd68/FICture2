@@ -18,7 +18,7 @@
 #include "ImageBrowserKeyboardController.h"
 #include "ImageBrowserThumbLayoutCoordinator.h"
 #include "ImageBrowserAssets.h"
-#include "IpcCompareRequest.h"
+#include "IpcOpenRequest.h"
 #include "Ficture2Backplate.h"
 #include "AppLog.h"
 
@@ -156,6 +156,14 @@ namespace
             }
 
             return dynamic_cast<Ficture2Backplate*>(bp);
+        }
+
+        void NotifyIpcOpenSnapshotChanged()
+        {
+            if (auto* ficBp = FictureBackplateRef())
+            {
+                ficBp->RefreshIpcOpenSnapshot();
+            }
         }
 
         bool TryGetSyncedThumbStripHeight(float& outHeight) const
@@ -509,8 +517,8 @@ namespace
         {
             switch (id)
             {
-            case CMD_FIC2_IPC_COMPARE:
-                return HandleIpcCompareMessage(lParam);
+            case CMD_FIC2_IPC_OPEN:
+                return HandleIpcOpenMessage();
             case CMD_FIC2_DEFERRED_ACTION:
                 return HandleDeferredActionMessage();
             case CMD_FIC2_ASYNC_THUMB_READY:
@@ -520,21 +528,16 @@ namespace
             }
         }
 
-        bool HandleIpcCompareMessage(LPARAM lParam)
+        bool HandleIpcOpenMessage()
         {
-            auto* req = reinterpret_cast<IpcCompareRequest*>(lParam);
-            if (req != nullptr)
+            auto* ficBp = FictureBackplateRef();
+            if (ficBp == nullptr)
             {
-                FIC2_LOG_INFO("[IPC] UI: HandleIpcCompareMessage received path='{}'",
-                    std::filesystem::path(req->path).string());
-                req->compareStarted = TryStartCompareWithFileNameMatch(req->path);
-                FIC2_LOG_INFO("[IPC] UI: TryStartCompareWithFileNameMatch result={}",
-                    req->compareStarted ? "true (compare started)" : "false (no match)");
-                if (req->doneEvent != nullptr)
-                {
-                    SetEvent(reinterpret_cast<HANDLE>(req->doneEvent));
-                }
+                return false;
             }
+
+            FIC2_LOG_INFO("[IPC] UI: draining IPC open queue.");
+            ficBp->DrainIpcOpenQueue();
             return true;
         }
 
@@ -1035,7 +1038,7 @@ namespace
     private:
         static constexpr ULONGLONG kKeyRepeatMinIntervalMs = 60;
         static constexpr UINT CMD_FIC2_DEFERRED_ACTION = WM_APP + 0x7A11;
-        static constexpr UINT CMD_FIC2_IPC_COMPARE = WM_APP + 0x7A12;
+        static constexpr UINT CMD_FIC2_IPC_OPEN = WM_APP + 0x7A12;
         static constexpr UINT CMD_FIC2_ASYNC_THUMB_READY = WM_APP + 0x7A13;
 
         enum class DeferredActionKind
@@ -1605,6 +1608,7 @@ namespace
                     if (!m_initialFile.empty())
                     {
                 m_mainPath = m_initialFile;
+                NotifyIpcOpenSnapshotChanged();
             }
 
         }
@@ -1714,6 +1718,7 @@ namespace
             const std::wstring p = m_items[index].path.wstring();
             mainImage->SetSourceFile(p);
             m_mainPath = p;
+            NotifyIpcOpenSnapshotChanged();
             mainImage->Invalidate();
             RefreshInfoPanel();
         }
@@ -1769,6 +1774,7 @@ namespace
                 {
                     m_mainPath = selectedItem.path.GetDisplayPath();
                 }
+                NotifyIpcOpenSnapshotChanged();
 
                 if (m_mainPane)
                 {
@@ -2177,6 +2183,7 @@ namespace
                         m_mainImage->SetInteractionEnabled(false);
                     }
                     m_mainPath.clear();
+                    NotifyIpcOpenSnapshotChanged();
                     RefreshInfoPanel();
                 }
             }

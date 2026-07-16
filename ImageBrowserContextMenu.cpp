@@ -48,6 +48,17 @@ namespace ImageBrowserContextMenu
 #if FICTURE2_ENABLE_REGISTRATION_MENU
         ModifyMenuW(
             hPopup,
+            IDM_CTX_REGISTER_ASSOCIATIONS,
+            MF_BYCOMMAND | MF_STRING,
+            payload.associationsRegistered
+                ? IDM_CTX_UNREGISTER_ASSOCIATIONS
+                : IDM_CTX_REGISTER_ASSOCIATIONS,
+            payload.associationsRegistered
+                ? L"Unregister &File Associations..."
+                : L"Register &File Associations...");
+
+        ModifyMenuW(
+            hPopup,
             IDM_CTX_REGISTER_THUMBNAIL_PROVIDER,
             MF_BYCOMMAND | MF_STRING,
             payload.thumbRegistered ? IDM_CTX_UNREGISTER_THUMBNAIL_PROVIDER : IDM_CTX_REGISTER_THUMBNAIL_PROVIDER,
@@ -56,6 +67,7 @@ namespace ImageBrowserContextMenu
                 : L"Register &Thumbnail Provider (Admin)...");
 #else
         DeleteMenu(hPopup, IDM_CTX_REGISTER_ASSOCIATIONS, MF_BYCOMMAND);
+        DeleteMenu(hPopup, IDM_CTX_UNREGISTER_ASSOCIATIONS, MF_BYCOMMAND);
         DeleteMenu(hPopup, IDM_CTX_REGISTER_THUMBNAIL_PROVIDER, MF_BYCOMMAND);
         DeleteMenu(hPopup, IDM_CTX_UNREGISTER_THUMBNAIL_PROVIDER, MF_BYCOMMAND);
 #endif

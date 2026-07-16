@@ -21,6 +21,13 @@ namespace FICture2App
     // Manual action: prompt and register per-user (HKCU) file associations.
     bool RegisterSupportedFileAssociations(HWND owner);
 
+    // Manual action: prompt and remove per-user associations written by Register.
+    bool UnregisterSupportedFileAssociations(HWND owner);
+
+    // True when the per-user ProgID from a previous registration is present.
+    // Used to pick which action the app context menu offers.
+    bool AreFileAssociationsRegistered();
+
     // Manual action: elevate and register the ThumbnailProvider DLL via regsvr32.
     void RegisterThumbnailProvider(HWND owner, bool unregister);
 

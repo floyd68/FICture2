@@ -13,7 +13,7 @@
 #include "CommonUtil.h"
 #include "FloarPathByteSource.h"
 #include "ImageBrowser.h"
-#include "IpcCompareRequest.h"
+#include "IpcOpenRequest.h"
 
 #include "FloarLog.h"
 #include "ImageAsyncBinding.h"
@@ -217,18 +217,11 @@ namespace
     }
 
     static constexpr wchar_t kSingleInstanceMutex[] = L"Local\\FICture2_SingleInstance";
-    static constexpr UINT CMD_FIC2_IPC_COMPARE = WM_APP + 0x7A12;
 
-    // IPC server response budget: how long a second instance's request may
-    // wait for this instance's window to exist plus the UI thread processing
-    // the compare. The client is parked on AppIpc's Waiting ack for the
-    // duration; past the budget it is told to proceed as its own instance.
-    constexpr DWORD kIpcResponseBudgetMs = 10000;
-
-    // Published through the ipcUiWindow atomic once shutdown begins, so
-    // pending/future IPC requests answer Ignore immediately instead of
-    // making their client sit out the full response budget.
+    // Sentinel HWND published through ipcUiWindow once shutdown begins.
     const HWND kIpcUiWindowGone = reinterpret_cast<HWND>(static_cast<INT_PTR>(-1));
+
+    constexpr std::size_t kMaxIpcPanes = 4;
 }
 
 int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
@@ -315,97 +308,51 @@ int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
     // Primary instance: start the IPC server IMMEDIATELY. A second instance's
     // pipe-connect budget is 500ms from *its* launch, while this instance still
     // has OleInitialize / FD2D device creation / session restore ahead of it.
-    // Starting the server after CreateWindowed made back-to-back Explorer opens
-    // spawn extra windows instead of starting compare in the first instance.
     //
-    // No window exists yet, so the callback (a per-client AppIpc worker thread;
-    // the client is parked on the Waiting ack) first waits for `ipcUiWindow` to
-    // be published, then marshals the request onto the UI thread, answering
-    // Ignore if the whole exchange exceeds kIpcResponseBudgetMs.
+    // The callback (per-client AppIpc worker) decides on the spot against the
+    // shared IpcOpenQueue - same-file-name gate + pane capacity - queues the
+    // accepted path, and answers immediately. The UI drains the queue when
+    // CMD_FIC2_IPC_OPEN arrives (or right after startup). It never waits for
+    // the UI to load anything.
     auto ipcUiWindow = std::make_shared<std::atomic<HWND>>(nullptr);
+    auto ipcQueue = std::make_shared<IpcOpenQueue>();
     if (!hadExistingInstance)
     {
         FIC2_LOG_INFO("[IPC] Server: starting named-pipe server (pre-UI init).");
-        AppIpc::StartServer([ipcUiWindow](const std::wstring& path) -> AppIpc::Decision
+        if (!initialFile.empty())
+        {
+            ipcQueue->SeedExpected({ initialFile });
+        }
+        AppIpc::StartServer([ipcUiWindow, ipcQueue](const std::wstring& path) -> AppIpc::Decision
         {
             FIC2_LOG_INFO("[IPC] Server: incoming request for path: {}",
                 std::filesystem::path(path).string());
 
-            const ULONGLONG deadline = GetTickCount64() + kIpcResponseBudgetMs;
+            if (!ipcQueue->TryEnqueue(path, kMaxIpcPanes))
+            {
+                FIC2_LOG_INFO("[IPC] Server: declined (no name match / capacity / not ready).");
+                return AppIpc::Decision::Ignore;
+            }
 
             HWND hwnd = ipcUiWindow->load();
-            while (hwnd == nullptr && GetTickCount64() < deadline)
+            if (hwnd != nullptr && hwnd != kIpcUiWindowGone)
             {
-                Sleep(25);
-                hwnd = ipcUiWindow->load();
-            }
-            if (hwnd == nullptr || hwnd == kIpcUiWindowGone)
-            {
-                FIC2_LOG_WARN("[IPC] Server: UI window not available within {}ms "
-                    "(still starting or shutting down) - client proceeds alone.", kIpcResponseBudgetMs);
-                return AppIpc::Decision::Ignore;
-            }
-
-            HANDLE doneEvent = CreateEventW(nullptr, TRUE, FALSE, nullptr);
-            if (doneEvent == nullptr)
-            {
-                FIC2_LOG_ERROR("[IPC] Server: CreateEventW failed (err={}) — ignoring.", GetLastError());
-                return AppIpc::Decision::Ignore;
-            }
-
-            auto* req = new IpcCompareRequest();
-            req->path = path;
-            req->doneEvent = doneEvent;
-            req->compareStarted = false;
-
-            auto* bm = new FD2D::Backplate::BroadcastMessage();
-            bm->message = CMD_FIC2_IPC_COMPARE;
-            bm->wParam = 0;
-            bm->lParam = reinterpret_cast<LPARAM>(req);
-
-            if (!PostMessageW(hwnd, FD2D::Backplate::WM_FD2D_BROADCAST, 0, reinterpret_cast<LPARAM>(bm)))
-            {
-                FIC2_LOG_ERROR("[IPC] Server: PostMessageW failed (err={}) — ignoring.", GetLastError());
-                CloseHandle(doneEvent);
-                delete req;
-                delete bm;
-                return AppIpc::Decision::Ignore;
-            }
-
-            const ULONGLONG now = GetTickCount64();
-            const DWORD waitMs = now < deadline ? static_cast<DWORD>(deadline - now) : 0;
-            FIC2_LOG_DEBUG("[IPC] Server: posted CMD_FIC2_IPC_COMPARE, waiting up to {}ms for UI thread.", waitMs);
-            if (WaitForSingleObject(doneEvent, waitMs) != WAIT_OBJECT_0)
-            {
-                // Deliberate: do not delete req / close doneEvent here. The posted
-                // message still references them, so a UI thread that processes it
-                // *after* this timeout would touch freed memory / a recycled handle.
-                // Abandon them instead - a one-allocation leak on an exceptional path.
-                FIC2_LOG_WARN("[IPC] Server: UI thread did not respond within budget - "
-                    "returning Ignore (request intentionally abandoned, not freed).");
-                return AppIpc::Decision::Ignore;
-            }
-
-            AppIpc::Decision decision = AppIpc::Decision::Ignore;
-            if (req->compareStarted)
-            {
-                decision = AppIpc::Decision::CompareStarted;
-                FIC2_LOG_INFO("[IPC] Server: UI thread confirmed compare started.");
+                auto* bm = new FD2D::Backplate::BroadcastMessage();
+                bm->message = CMD_FIC2_IPC_OPEN;
+                bm->wParam = 0;
+                bm->lParam = 0;
+                if (!PostMessageW(hwnd, FD2D::Backplate::WM_FD2D_BROADCAST, 0, reinterpret_cast<LPARAM>(bm)))
+                {
+                    delete bm; // queue entry stays; startup/next drain picks it up
+                }
                 if (IsIconic(hwnd))
                 {
                     ShowWindowAsync(hwnd, SW_RESTORE);
                 }
                 SetForegroundWindow(hwnd);
             }
-            else
-            {
-                FIC2_LOG_INFO("[IPC] Server: UI thread responded (compareStarted=false).");
-            }
-
-            CloseHandle(doneEvent);
-            delete req;
-            FIC2_LOG_INFO("[IPC] Server: returning decision={}.", static_cast<int>(decision));
-            return decision;
+            FIC2_LOG_INFO("[IPC] Server: queued path (CompareStarted).");
+            return AppIpc::Decision::CompareStarted;
         });
     }
 
@@ -515,18 +462,19 @@ int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
 
         // Force the first D3D/D2D render pass to absorb the GPU driver cold-start
         // penalty (shader compilation, pipeline state caching — typically 150–200 ms).
-        // The IPC pipe is already listening (StartServer ran before UI init); this
-        // warm-up blocks the UI thread but per-client workers keep accepting and
-        // parking clients on Waiting acks until ipcUiWindow is published below.
-        // The window is not yet visible so there is no visual artifact.
+        // The IPC pipe is already listening; queue-or-decline workers answer without
+        // waiting for this warm-up. The window is not yet visible so there is no
+        // visual artifact.
         backplate->Render();
         FIC2_LOG_STEP(t_startup, "Render() warm-up (GPU driver cold start)");
 
+        backplate->SetIpcOpenQueue(ipcQueue);
+
         // Persist window placement while the HWND is still valid (before destruction).
-        backplate->SetOnBeforeDestroy([iniFile, weakBackplate = std::weak_ptr<Ficture2Backplate>(backplate), ipcUiWindow](HWND hwnd)
+        backplate->SetOnBeforeDestroy([iniFile, weakBackplate = std::weak_ptr<Ficture2Backplate>(backplate), ipcUiWindow, ipcQueue](HWND hwnd)
         {
-            // Stop routing IPC compares at a window that is about to die;
-            // pending/future requests answer Ignore right away.
+            ipcQueue->MarkShuttingDown();
+            // Stop routing IPC wakes at a window that is about to die.
             ipcUiWindow->store(kIpcUiWindowGone);
             FICture2App::SaveWindowPlacement(hwnd);
             if (auto bp = weakBackplate.lock())
@@ -584,9 +532,12 @@ int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
         FIC2_LOG_STEP(t_startup, "total pre-Show");
 
         // UI is fully wired (browser attached, session restored) - publish the
-        // window so parked IPC requests can be posted at it. Broadcasts posted
-        // from here on are processed once RunMessageLoop starts.
+        // window so queued IPC opens can wake the UI thread, then drain anything
+        // accepted during boot.
+        ipcQueue->MarkUiReady();
+        backplate->RefreshIpcOpenSnapshot();
         ipcUiWindow->store(backplate->Window());
+        backplate->DrainIpcOpenQueue();
 
         // Use the show command saved in the INI if available; otherwise fall back
         // to the system nCmdShow (e.g. SW_SHOWNORMAL for a normal launch).

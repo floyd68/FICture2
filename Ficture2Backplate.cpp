@@ -207,6 +207,7 @@ namespace
         ShowInExplorerAtPoint,
         ShowAbout,
         RegisterAssociations,
+        UnregisterAssociations,
         RegisterThumbnailProvider,
         UnregisterThumbnailProvider
     };
@@ -270,6 +271,7 @@ namespace
     static const CommandMapEntry kContextRegistrationMap[] =
     {
         { IDM_CTX_REGISTER_ASSOCIATIONS, BrowserCommandAction::RegisterAssociations },
+        { IDM_CTX_UNREGISTER_ASSOCIATIONS, BrowserCommandAction::UnregisterAssociations },
         { IDM_CTX_REGISTER_THUMBNAIL_PROVIDER, BrowserCommandAction::RegisterThumbnailProvider },
         { IDM_CTX_UNREGISTER_THUMBNAIL_PROVIDER, BrowserCommandAction::UnregisterThumbnailProvider },
     };
@@ -671,6 +673,12 @@ namespace
         if (action == BrowserCommandAction::RegisterAssociations)
         {
             FICture2App::RegisterSupportedFileAssociations(ownerWindow);
+            return true;
+        }
+
+        if (action == BrowserCommandAction::UnregisterAssociations)
+        {
+            FICture2App::UnregisterSupportedFileAssociations(ownerWindow);
             return true;
         }
 
@@ -1325,24 +1333,134 @@ void Ficture2Backplate::SynchronizeAlphaCheckerboard(FD2D::Wnd* source, bool che
 
 bool Ficture2Backplate::TryStartCompareWithFileNameMatch(const std::wstring& incomingFilePath)
 {
-    if (!m_eventBus)
+    if (!m_eventBus || incomingFilePath.empty())
+    {
+        return false;
+    }
+
+    const std::wstring incomingName = IpcOpenQueue::FileNameLower(incomingFilePath);
+    if (incomingName.empty())
     {
         return false;
     }
 
     const auto browsers = m_eventBus->ImageBrowsersSnapshot();
-    if (browsers.empty())
+    for (auto* browser : browsers)
     {
-        return false;
+        auto* browserOps = AsImageBrowserOps(browser);
+        if (browserOps == nullptr)
+        {
+            continue;
+        }
+
+        if (browserOps->BrowserGetActiveFileNameLower() != incomingName)
+        {
+            continue;
+        }
+
+        // Name matches an open pane - open the incoming path as a new horizontal viewer.
+        browserOps->BrowserOpenAdditionalFileInHorizontalSplit(incomingFilePath);
+        RefreshIpcOpenSnapshot();
+        return true;
     }
 
-    auto* browserOps = AsImageBrowserOps(browsers.front());
-    if (browserOps == nullptr)
+    return false;
+}
+
+void Ficture2Backplate::SetIpcOpenQueue(std::shared_ptr<IpcOpenQueue> queue)
+{
+    m_ipcQueue = std::move(queue);
+    // Do not snapshot here: panes may not be named yet, and wiping would
+    // clear SeedExpected from the command line.
+}
+
+void Ficture2Backplate::RefreshIpcOpenSnapshot()
+{
+    if (!m_ipcQueue || !m_eventBus)
     {
-        return false;
+        return;
     }
 
-    return browserOps->BrowserTryStartCompareWithFileNameMatch(incomingFilePath);
+    std::vector<std::wstring> names;
+    for (auto* browser : m_eventBus->ImageBrowsersSnapshot())
+    {
+        auto* browserOps = AsImageBrowserOps(browser);
+        if (browserOps == nullptr)
+        {
+            continue;
+        }
+
+        const std::wstring path = browserOps->BrowserGetDisplayedFilePath();
+        std::wstring name = browserOps->BrowserGetActiveFileNameLower();
+        if (name.empty())
+        {
+            name = IpcOpenQueue::FileNameLower(path);
+        }
+        if (!name.empty())
+        {
+            names.push_back(std::move(name));
+        }
+    }
+
+    std::lock_guard<std::mutex> lock(m_ipcQueue->mutex);
+    m_ipcQueue->loadedCount = names.size();
+    m_ipcQueue->openNamesLower = std::move(names);
+}
+
+void Ficture2Backplate::DrainIpcOpenQueue()
+{
+    if (!m_ipcQueue)
+    {
+        return;
+    }
+
+    for (;;)
+    {
+        std::wstring path;
+        {
+            std::lock_guard<std::mutex> lock(m_ipcQueue->mutex);
+            if (m_ipcQueue->pending.empty())
+            {
+                break;
+            }
+            path = std::move(m_ipcQueue->pending.front());
+            m_ipcQueue->pending.pop_front();
+        }
+
+        if (TryStartCompareWithFileNameMatch(path))
+        {
+            continue;
+        }
+
+        // Empty viewer (or no matching open name after a race): open in root.
+        const auto browsers = m_eventBus ? m_eventBus->ImageBrowsersSnapshot()
+                                         : std::vector<FD2D::Wnd*>{};
+        bool anyOpen = false;
+        for (auto* browser : browsers)
+        {
+            auto* ops = AsImageBrowserOps(browser);
+            if (ops != nullptr && !ops->BrowserGetDisplayedFilePath().empty())
+            {
+                anyOpen = true;
+                break;
+            }
+        }
+        if (!anyOpen)
+        {
+            OpenFileInRoot(path);
+            RefreshIpcOpenSnapshot();
+            continue;
+        }
+
+        // Sender was told CompareStarted and exited - land the file somewhere.
+        FIC2_LOG_WARN("[IPC] Drain: queued path no longer fits here - spawning a new instance.");
+        wchar_t exePath[MAX_PATH] {};
+        if (GetModuleFileNameW(nullptr, exePath, MAX_PATH) > 0)
+        {
+            const std::wstring args = L"\"" + path + L"\"";
+            ShellExecuteW(nullptr, L"open", exePath, args.c_str(), nullptr, SW_SHOWNORMAL);
+        }
+    }
 }
 
 void Ficture2Backplate::OpenFileInRoot(const std::wstring& filePath)
@@ -1476,8 +1594,10 @@ bool Ficture2Backplate::ShowImageBrowserContextMenu(FD2D::Wnd* source, const POI
         payload.hasExplorerTarget = snapshot.hasExplorerTarget;
 #if FICTURE2_ENABLE_REGISTRATION_MENU
         payload.thumbRegistered = FICture2App::IsThumbnailProviderRegistered();
+        payload.associationsRegistered = FICture2App::AreFileAssociationsRegistered();
 #else
         payload.thumbRegistered = false;
+        payload.associationsRegistered = false;
 #endif
 
         ImageBrowserContextMenu::Configure(hPopup, payload);

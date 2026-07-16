@@ -15,6 +15,7 @@ namespace ImageBrowserContextMenu
         std::wstring samplingLabel {};
         bool hasExplorerTarget { false };
         bool thumbRegistered { false };
+        bool associationsRegistered { false };
     };
 
     void Configure(HMENU hPopup, const ConfigurePayload& payload);

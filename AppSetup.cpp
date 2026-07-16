@@ -256,6 +256,79 @@ namespace
         return ok;
     }
 
+    // Deleting something that is already gone still counts as success.
+    bool DeleteRegTree(HKEY root, const std::wstring& subKey)
+    {
+        const LONG rc = RegDeleteTreeW(root, subKey.c_str());
+        return rc == ERROR_SUCCESS || rc == ERROR_FILE_NOT_FOUND || rc == ERROR_PATH_NOT_FOUND;
+    }
+
+    bool DeleteRegValue(HKEY root, const std::wstring& subKey, const wchar_t* valueName)
+    {
+        const LONG rc = RegDeleteKeyValueW(root, subKey.c_str(), valueName);
+        return rc == ERROR_SUCCESS || rc == ERROR_FILE_NOT_FOUND || rc == ERROR_PATH_NOT_FOUND;
+    }
+
+    std::wstring ReadRegSzValue(HKEY root, const std::wstring& subKey, const wchar_t* valueNameOrNull)
+    {
+        wchar_t buffer[512] {};
+        DWORD bytes = sizeof(buffer) - sizeof(wchar_t);
+        DWORD type = 0;
+        const LONG rc = RegGetValueW(
+            root,
+            subKey.c_str(),
+            valueNameOrNull,
+            RRF_RT_REG_SZ,
+            &type,
+            buffer,
+            &bytes);
+        if (rc != ERROR_SUCCESS)
+        {
+            return {};
+        }
+        return buffer;
+    }
+
+    bool UnregisterPerUserFileAssociations(const std::wstring& exePath, const std::vector<std::wstring>& extensions)
+    {
+        const std::wstring appName = L"FICture2";
+        const std::wstring progId = L"FICture2.Image";
+        const std::wstring exeName = std::filesystem::path(exePath).filename().wstring();
+        bool ok = true;
+
+        // Direct extension mapping: only clear (Default) when it still points at us.
+        for (const auto& ext : extensions)
+        {
+            if (ext.empty() || ext[0] != L'.')
+            {
+                continue;
+            }
+
+            const std::wstring extKey = L"Software\\Classes\\" + ext;
+            if (_wcsicmp(ReadRegSzValue(HKEY_CURRENT_USER, extKey, nullptr).c_str(), progId.c_str()) == 0)
+            {
+                ok = ok && DeleteRegValue(HKEY_CURRENT_USER, extKey, nullptr);
+            }
+            ok = ok && DeleteRegTree(HKEY_CURRENT_USER, extKey + L"\\OpenWithProgids\\" + progId);
+        }
+
+        if (!exeName.empty())
+        {
+            ok = ok && DeleteRegTree(HKEY_CURRENT_USER, L"Software\\Classes\\Applications\\" + exeName);
+        }
+
+        ok = ok && DeleteRegValue(HKEY_CURRENT_USER, L"Software\\RegisteredApplications", appName.c_str());
+        ok = ok && DeleteRegTree(HKEY_CURRENT_USER, L"Software\\" + appName + L"\\Capabilities");
+        // Only remove the Capabilities subtree; leave any future app keys intact.
+        // If Capabilities was the only child, prune the empty FICture2 key best-effort.
+        (void)RegDeleteKeyW(HKEY_CURRENT_USER, (L"Software\\" + appName).c_str());
+
+        ok = ok && DeleteRegTree(HKEY_CURRENT_USER, L"Software\\Classes\\" + progId);
+
+        SHChangeNotify(SHCNE_ASSOCCHANGED, SHCNF_IDLIST, nullptr, nullptr);
+        return ok;
+    }
+
     void WriteIniInt(const std::wstring& iniFile, const wchar_t* section, const wchar_t* key, int value)
     {
         if (iniFile.empty() || section == nullptr || key == nullptr)
@@ -513,6 +586,63 @@ namespace FICture2App
 #endif
 
         return enabled;
+    }
+
+    bool UnregisterSupportedFileAssociations(HWND owner)
+    {
+        const int choice = MessageBoxW(
+            owner,
+            L"Remove the per-user file associations for FICture2?\n"
+            L"(Explorer will fall back to whatever handler is registered next.)\n\n"
+            L"Do you want to remove them now?",
+            L"FICture2 - File Associations",
+            MB_ICONQUESTION | MB_YESNO);
+        if (choice != IDYES)
+        {
+            return false;
+        }
+
+        wchar_t exePath[MAX_PATH] {};
+        GetModuleFileNameW(nullptr, exePath, static_cast<DWORD>(std::size(exePath)));
+
+        const std::vector<std::wstring> exts = ImageCore::ImageDecodeDispatcher::GetSupportedExtensions();
+        const bool removed = UnregisterPerUserFileAssociations(exePath, exts);
+
+        const std::wstring iniFile = GetIniFilePath();
+        if (!iniFile.empty())
+        {
+            WriteIniInt(iniFile, L"General", L"AssociationsEnabled", 0);
+        }
+
+        if (!removed)
+        {
+            MessageBoxW(
+                owner,
+                L"Failed to fully remove file associations.\n\n"
+                L"Some entries may remain; you can clear them in Windows Settings > Apps > Default apps.",
+                L"FICture2",
+                MB_OK | MB_ICONWARNING);
+            return false;
+        }
+
+        MessageBoxW(
+            owner,
+            L"Per-user file associations were removed.",
+            L"FICture2",
+            MB_OK | MB_ICONINFORMATION);
+        return true;
+    }
+
+    bool AreFileAssociationsRegistered()
+    {
+        HKEY key = nullptr;
+        const std::wstring progIdKey = L"Software\\Classes\\FICture2.Image";
+        if (RegOpenKeyExW(HKEY_CURRENT_USER, progIdKey.c_str(), 0, KEY_READ, &key) != ERROR_SUCCESS)
+        {
+            return false;
+        }
+        RegCloseKey(key);
+        return true;
     }
 
     void RegisterThumbnailProvider(HWND owner, bool unregister)

@@ -2,6 +2,7 @@
 
 #include "FD2D/Backplate.h"
 #include "ImageViewTypes.h"
+#include "IpcOpenRequest.h"
 
 #include <cstdint>
 #include <functional>
@@ -87,6 +88,9 @@ public:
     void SynchronizeFocusedBackgroundColor(FD2D::Wnd* source, const D2D1_COLOR_F& color);
     void SynchronizeAlphaCheckerboard(FD2D::Wnd* source, bool checkerEnabled);
     bool TryStartCompareWithFileNameMatch(const std::wstring& incomingFilePath);
+    void SetIpcOpenQueue(std::shared_ptr<IpcOpenQueue> queue);
+    void RefreshIpcOpenSnapshot();
+    void DrainIpcOpenQueue();
     void OpenFileInRoot(const std::wstring& filePath);
     void OpenAdditionalFilesSideBySide(const std::vector<std::wstring>& filePaths);
     void OpenAdditionalFilesSideBySideAfter(const std::vector<std::wstring>& filePaths, const std::wstring& afterName);
@@ -121,6 +125,7 @@ private:
     D2D1_COLOR_F m_focusedBackgroundColor { 0.18f, 0.16f, 0.03f, 1.0f };
     float m_imageZoomStiffness { 80.0f };
     bool m_imageBrowserIniInitialized { false };
+    std::shared_ptr<IpcOpenQueue> m_ipcQueue {};
 
 protected:
     FD2D::Wnd* FindTargetWnd(const POINT& ptClient) override;
