@@ -31,6 +31,7 @@ void ImageBrowserThumbnailPane::Build(
     m_thumbScroll->SetScrollStep(96.0f);
     m_thumbScroll->SetSmoothTimeMs(110);
     m_thumbScroll->SetVerticalScrollEnabled(false);
+    m_thumbScroll->SetScrollBarsVisible(true); // horizontal bar when the strip overflows
     m_thumbScroll->SetContent(m_thumbPanel);
 
     ClearChildren();
