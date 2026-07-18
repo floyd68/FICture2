@@ -253,7 +253,7 @@ For details and the exact CMake flags used, see `docs/libarchive_integration.md`
   - additional Explorer opens while a compare is already in progress are queued and applied as soon as capacity frees up (instead of getting stuck)
   - boot-queued IPC opens are drained once before the session becomes eligible to save
 - **Open Recent**: right-click menu lists recently viewed images (persisted in the INI); includes **Clear Recent Files**
-- **Save Pane Screenshot**: right-click menu saves a PNG of the current main-image pane (suggested filename next to the open file)
+- **Save Pane Screenshot**: right-click menu saves a PNG of the current main-image pane from the composed offscreen frame (independent of desktop occlusion; suggested filename next to the open file)
 - **Path / info bar**:
   - hover the path for the full path tooltip; right-click the path to copy it
   - truncated info text shows a tooltip on hover

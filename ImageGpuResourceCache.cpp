@@ -33,6 +33,7 @@ bool ImageGpuResourceCache::TryGet(
     UINT& outW,
     UINT& outH,
     DXGI_FORMAT& outFmt,
+    ImageAlphaInfo& outAlpha,
     uint64_t deviceGeneration)
 {
     std::lock_guard<std::mutex> lock(m_mutex);
@@ -53,6 +54,7 @@ bool ImageGpuResourceCache::TryGet(
     outW = it->second.width;
     outH = it->second.height;
     outFmt = it->second.format;
+    outAlpha = it->second.alpha;
     return true;
 }
 
@@ -62,6 +64,7 @@ void ImageGpuResourceCache::Put(
     UINT w,
     UINT h,
     DXGI_FORMAT format,
+    const ImageAlphaInfo& alpha,
     uint64_t deviceGeneration)
 {
     if (!srv)
@@ -85,6 +88,7 @@ void ImageGpuResourceCache::Put(
     entry.width = w;
     entry.height = h;
     entry.format = format;
+    entry.alpha = alpha;
     entry.lruIt = m_lru.begin();
     m_cache.emplace(path, std::move(entry));
 

@@ -1,6 +1,8 @@
 #include "ScreenshotUtil.h"
 #include "AppLog.h"
 
+#include "FD2D/Backplate.h"
+
 #ifndef NOMINMAX
 #define NOMINMAX
 #endif
@@ -9,8 +11,7 @@
 #include <shobjidl.h>
 #include <wrl/client.h>
 
-#include <algorithm>
-#include <cmath>
+#include <cstdint>
 #include <vector>
 
 namespace ScreenshotUtil
@@ -86,195 +87,123 @@ namespace ScreenshotUtil
         return true;
     }
 
-    bool SaveClientRectPng(HWND hwnd, const D2D1_RECT_F& clientRect, const std::wstring& pngPath)
+    bool SaveRenderSurfaceRectPng(
+        FD2D::Backplate& backplate,
+        const D2D1_RECT_F& logicalRect,
+        const std::wstring& pngPath)
     {
-        if (hwnd == nullptr || !IsWindow(hwnd) || pngPath.empty())
+        if (pngPath.empty())
         {
             return false;
         }
 
-        const int left = static_cast<int>(std::floor(clientRect.left));
-        const int top = static_cast<int>(std::floor(clientRect.top));
-        const int right = static_cast<int>(std::ceil(clientRect.right));
-        const int bottom = static_cast<int>(std::ceil(clientRect.bottom));
-        const int width = (std::max)(1, right - left);
-        const int height = (std::max)(1, bottom - top);
+        // Refresh the application-owned offscreen frame, then read it back.
+        // Unlike desktop/window DC capture this cannot include pixels from
+        // occluding apps.
+        backplate.Render();
 
-        // Prefer screen capture: flip-model DXGI swap chains often yield a black
-        // window DC via GetDC(hwnd)/BitBlt. Desktop BitBlt sees the composed pixels.
-        POINT screenOrigin { left, top };
-        if (!ClientToScreen(hwnd, &screenOrigin))
+        std::vector<std::uint8_t> pixels;
+        UINT width = 0;
+        UINT height = 0;
+        UINT stride = 0;
+        if (FAILED(backplate.ReadComposedPixels(
+                logicalRect,
+                pixels,
+                width,
+                height,
+                stride)) ||
+            pixels.empty() ||
+            width == 0 ||
+            height == 0)
         {
             return false;
         }
 
-        HDC screenDc = GetDC(nullptr);
-        if (screenDc == nullptr)
-        {
-            return false;
-        }
-
-        HDC memDc = CreateCompatibleDC(screenDc);
-        if (memDc == nullptr)
-        {
-            ReleaseDC(nullptr, screenDc);
-            return false;
-        }
-
-        BITMAPINFO bmi {};
-        bmi.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
-        bmi.bmiHeader.biWidth = width;
-        bmi.bmiHeader.biHeight = -height; // top-down
-        bmi.bmiHeader.biPlanes = 1;
-        bmi.bmiHeader.biBitCount = 32;
-        bmi.bmiHeader.biCompression = BI_RGB;
-
-        void* bits = nullptr;
-        HBITMAP dib = CreateDIBSection(screenDc, &bmi, DIB_RGB_COLORS, &bits, nullptr, 0);
-        if (dib == nullptr || bits == nullptr)
-        {
-            DeleteDC(memDc);
-            ReleaseDC(nullptr, screenDc);
-            return false;
-        }
-
-        HGDIOBJ old = SelectObject(memDc, dib);
-        constexpr DWORD kCaptureFlags = SRCCOPY | CAPTUREBLT;
-        BOOL bltOk = BitBlt(
-            memDc,
-            0,
-            0,
-            width,
-            height,
-            screenDc,
-            screenOrigin.x,
-            screenOrigin.y,
-            kCaptureFlags);
-
-        // Fallback: PrintWindow with PW_RENDERFULLCONTENT (Win8.1+), then crop.
-        if (!bltOk)
-        {
-            constexpr UINT kPwRenderFullContent = 0x00000002;
-            RECT client {};
-            GetClientRect(hwnd, &client);
-            const int fullW = (std::max)(1, static_cast<int>(client.right - client.left));
-            const int fullH = (std::max)(1, static_cast<int>(client.bottom - client.top));
-
-            BITMAPINFO fullBmi = bmi;
-            fullBmi.bmiHeader.biWidth = fullW;
-            fullBmi.bmiHeader.biHeight = -fullH;
-            void* fullBits = nullptr;
-            HBITMAP fullDib = CreateDIBSection(screenDc, &fullBmi, DIB_RGB_COLORS, &fullBits, nullptr, 0);
-            if (fullDib != nullptr && fullBits != nullptr)
-            {
-                HDC fullDc = CreateCompatibleDC(screenDc);
-                if (fullDc != nullptr)
-                {
-                    HGDIOBJ fullOld = SelectObject(fullDc, fullDib);
-                    if (PrintWindow(hwnd, fullDc, kPwRenderFullContent))
-                    {
-                        bltOk = BitBlt(memDc, 0, 0, width, height, fullDc, left, top, SRCCOPY);
-                    }
-                    SelectObject(fullDc, fullOld);
-                    DeleteDC(fullDc);
-                }
-                DeleteObject(fullDib);
-            }
-        }
-
-        SelectObject(memDc, old);
-        DeleteDC(memDc);
-        ReleaseDC(nullptr, screenDc);
-
-        if (!bltOk)
-        {
-            DeleteObject(dib);
-            return false;
-        }
-
-        Microsoft::WRL::ComPtr<IWICImagingFactory> wic;
-        HRESULT hr = CoCreateInstance(
+        using Microsoft::WRL::ComPtr;
+        ComPtr<IWICImagingFactory> factory;
+        HRESULT result = CoCreateInstance(
             CLSID_WICImagingFactory,
             nullptr,
             CLSCTX_INPROC_SERVER,
-            IID_PPV_ARGS(&wic));
-        if (FAILED(hr) || !wic)
-        {
-            DeleteObject(dib);
-            return false;
-        }
-
-        Microsoft::WRL::ComPtr<IWICBitmap> wicBitmap;
-        hr = wic->CreateBitmapFromHBITMAP(dib, nullptr, WICBitmapIgnoreAlpha, &wicBitmap);
-        DeleteObject(dib);
-        if (FAILED(hr) || !wicBitmap)
+            IID_PPV_ARGS(&factory));
+        if (FAILED(result) || !factory)
         {
             return false;
         }
 
-        Microsoft::WRL::ComPtr<IWICStream> stream;
-        hr = wic->CreateStream(&stream);
-        if (FAILED(hr) || !stream)
+        ComPtr<IWICStream> stream;
+        result = factory->CreateStream(&stream);
+        if (FAILED(result) || !stream)
         {
             return false;
         }
-        hr = stream->InitializeFromFilename(pngPath.c_str(), GENERIC_WRITE);
-        if (FAILED(hr))
-        {
-            return false;
-        }
-
-        Microsoft::WRL::ComPtr<IWICBitmapEncoder> encoder;
-        hr = wic->CreateEncoder(GUID_ContainerFormatPng, nullptr, &encoder);
-        if (FAILED(hr) || !encoder)
-        {
-            return false;
-        }
-        hr = encoder->Initialize(stream.Get(), WICBitmapEncoderNoCache);
-        if (FAILED(hr))
+        result = stream->InitializeFromFilename(pngPath.c_str(), GENERIC_WRITE);
+        if (FAILED(result))
         {
             return false;
         }
 
-        Microsoft::WRL::ComPtr<IWICBitmapFrameEncode> frame;
-        Microsoft::WRL::ComPtr<IPropertyBag2> props;
-        hr = encoder->CreateNewFrame(&frame, &props);
-        if (FAILED(hr) || !frame)
+        ComPtr<IWICBitmapEncoder> encoder;
+        result = factory->CreateEncoder(
+            GUID_ContainerFormatPng,
+            nullptr,
+            &encoder);
+        if (FAILED(result) || !encoder)
         {
             return false;
         }
-        hr = frame->Initialize(props.Get());
-        if (FAILED(hr))
+        result = encoder->Initialize(stream.Get(), WICBitmapEncoderNoCache);
+        if (FAILED(result))
         {
             return false;
         }
-        hr = frame->SetSize(static_cast<UINT>(width), static_cast<UINT>(height));
-        if (FAILED(hr))
+
+        ComPtr<IWICBitmapFrameEncode> frame;
+        ComPtr<IPropertyBag2> properties;
+        result = encoder->CreateNewFrame(&frame, &properties);
+        if (FAILED(result) || !frame)
+        {
+            return false;
+        }
+        result = frame->Initialize(properties.Get());
+        if (FAILED(result))
+        {
+            return false;
+        }
+        result = frame->SetSize(width, height);
+        if (FAILED(result))
         {
             return false;
         }
 
         WICPixelFormatGUID format = GUID_WICPixelFormat32bppBGRA;
-        hr = frame->SetPixelFormat(&format);
-        if (FAILED(hr))
+        result = frame->SetPixelFormat(&format);
+        if (FAILED(result) ||
+            !IsEqualGUID(format, GUID_WICPixelFormat32bppBGRA))
         {
             return false;
         }
 
-        hr = frame->WriteSource(wicBitmap.Get(), nullptr);
-        if (FAILED(hr))
+        result = frame->WritePixels(
+            height,
+            stride,
+            static_cast<UINT>(pixels.size()),
+            pixels.data());
+        if (FAILED(result))
         {
             return false;
         }
-        hr = frame->Commit();
-        if (FAILED(hr))
+        result = frame->Commit();
+        if (FAILED(result))
         {
             return false;
         }
-        hr = encoder->Commit();
-        if (FAILED(hr))
+        result = encoder->Commit();
+        if (FAILED(result))
         {
-            FIC2_LOG_ERROR("[Screenshot] PNG encode commit failed (hr=0x{:08X})", static_cast<unsigned>(hr));
+            FIC2_LOG_ERROR(
+                "[Screenshot] PNG encode commit failed (hr=0x{:08X})",
+                static_cast<unsigned>(result));
             return false;
         }
 

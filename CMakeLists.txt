@@ -254,6 +254,7 @@ target_sources(FICture2 PRIVATE
     FICture2.cpp
     Ficture2Backplate.cpp
     FloarPathByteSource.cpp
+    ImageAlphaPresentation.cpp
     ImageAsyncBinding.cpp
     ImageBrowser.cpp
     ImageBrowserAsyncThumbLoader.cpp

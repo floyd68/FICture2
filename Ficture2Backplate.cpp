@@ -670,6 +670,7 @@ namespace
     }
 
     bool TryExecuteSaveScreenshotAction(
+        FD2D::Backplate& backplate,
         IImageBrowserOps* browserOps,
         BrowserCommandAction action,
         HWND ownerWindow)
@@ -680,7 +681,11 @@ namespace
         }
 
         D2D1_RECT_F rect {};
-        if (!browserOps->BrowserTryGetMainImageClientRect(rect))
+        const bool canCapture =
+            backplate.D3DDevice() != nullptr &&
+            backplate.UseOffscreenBuffer() &&
+            browserOps->BrowserTryGetMainImageClientRect(rect);
+        if (!canCapture)
         {
             return true;
         }
@@ -713,7 +718,7 @@ namespace
             return true;
         }
 
-        if (!ScreenshotUtil::SaveClientRectPng(ownerWindow, rect, outPath))
+        if (!ScreenshotUtil::SaveRenderSurfaceRectPng(backplate, rect, outPath))
         {
             FIC2_LOG_ERROR("[Screenshot] Save failed: {}", std::filesystem::path(outPath).string());
             MessageBoxW(
@@ -864,7 +869,7 @@ namespace
             return;
         }
 
-        if (TryExecuteSaveScreenshotAction(browserOps, action, ownerWindow))
+        if (TryExecuteSaveScreenshotAction(*backplate, browserOps, action, ownerWindow))
         {
             return;
         }
@@ -1680,7 +1685,10 @@ bool Ficture2Backplate::ShowImageBrowserContextMenu(FD2D::Wnd* source, const POI
         payload.hasExplorerTarget = snapshot.hasExplorerTarget;
         {
             D2D1_RECT_F mainRect {};
-            payload.canSaveScreenshot = browserQuery->BrowserTryGetMainImageClientRect(mainRect);
+            payload.canSaveScreenshot =
+                D3DDevice() != nullptr &&
+                UseOffscreenBuffer() &&
+                browserQuery->BrowserTryGetMainImageClientRect(mainRect);
         }
         payload.recentFiles = RecentFiles::Load(FICture2App::GetIniFilePath());
 #if FICTURE2_ENABLE_REGISTRATION_MENU

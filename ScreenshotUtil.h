@@ -6,10 +6,21 @@
 struct HWND__;
 using HWND = HWND__*;
 
+namespace FD2D
+{
+class Backplate;
+}
+
 namespace ScreenshotUtil
 {
-    // Capture a client-space rectangle from hwnd into a PNG file.
-    bool SaveClientRectPng(HWND hwnd, const D2D1_RECT_F& clientRect, const std::wstring& pngPath);
+    // Capture a logical client-space rectangle from the last composed offscreen
+    // frame into a PNG. Call after ensuring the backplate has a current frame
+    // (this helper invokes Render()). Independent of desktop occlusion; requires
+    // the D3D + offscreen-buffer path (fails for D2D-only backends).
+    bool SaveRenderSurfaceRectPng(
+        FD2D::Backplate& backplate,
+        const D2D1_RECT_F& logicalRect,
+        const std::wstring& pngPath);
 
     // "Save As" dialog filtered to *.png.
     bool ShowSavePngDialog(

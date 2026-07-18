@@ -14,6 +14,7 @@
 
 #include "ImageCore/ImageRequest.h"
 #include "ImageCore/ImageLoader.h"
+#include "ImageCore/DecodedImage.h"
 #include "FD2D/Backplate.h"
 
 #include <d2d1.h>
@@ -73,6 +74,9 @@ struct ImageAsyncBindingState
         uint32_t height { 0 };
         uint32_t rowPitch { 0 };
         DXGI_FORMAT format { DXGI_FORMAT_UNKNOWN };
+        ImageCore::AlphaEncoding alphaEncoding { ImageCore::AlphaEncoding::Unknown };
+        ImageCore::AlphaUsage alphaUsageHint { ImageCore::AlphaUsage::Auto };
+        bool sourceWasBlockCompressed { false };
         std::wstring sourcePath {};
     };
 

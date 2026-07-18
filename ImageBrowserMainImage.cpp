@@ -2,6 +2,7 @@
 
 #include "AppLog.h"
 #include "CommonUtil.h"
+#include "ImageAlphaPresentation.h"
 #include "ImageGpuResourceCache.h"
 #include "FD2D/Backplate.h"
 #include "FD2D/Util.h"
@@ -9,10 +10,58 @@
 #include <algorithm>
 #include <cmath>
 #include <chrono>
+#include <cstdint>
 #include <format>
+#include <memory>
+#include <vector>
 
 namespace
 {
+    ImageAlphaInfo AlphaInfoFromPayload(const ImageAsyncBinding::Payload& payload)
+    {
+        return
+        {
+            payload.alphaEncoding,
+            payload.alphaUsageHint,
+            payload.sourceWasBlockCompressed,
+        };
+    }
+
+    ImageCore::DecodedImage DecodedImageFromPayload(const ImageAsyncBinding::Payload& payload)
+    {
+        ImageCore::DecodedImage image {};
+        image.width = payload.width;
+        image.height = payload.height;
+        image.dxgiFormat = payload.format;
+        image.alphaEncoding = payload.alphaEncoding;
+        image.alphaUsageHint = payload.alphaUsageHint;
+        image.sourceWasBlockCompressed = payload.sourceWasBlockCompressed;
+        image.rowPitchBytes = payload.rowPitch;
+        image.blockBytes = payload.blocks ? static_cast<uint32_t>(payload.blocks->size()) : 0;
+        image.blocks = payload.blocks;
+        return image;
+    }
+
+    HRESULT CreatePremultipliedD2DBitmap(
+        ID2D1RenderTarget* target,
+        const ImageAsyncBinding::Payload& payload,
+        Microsoft::WRL::ComPtr<ID2D1Bitmap>& outBitmap)
+    {
+        const ImageAlphaInfo alpha = AlphaInfoFromPayload(payload);
+        const ImageCore::AlphaUsage usage = ResolveAlphaUsage(alpha);
+        const ImageCore::DecodedImage decoded = DecodedImageFromPayload(payload);
+        const std::vector<std::uint8_t> presentation = BuildBgra8Presentation(decoded, usage);
+        if (presentation.empty())
+        {
+            return E_FAIL;
+        }
+
+        ImageAsyncBinding::Payload present = payload;
+        present.blocks = std::make_shared<std::vector<std::uint8_t>>(presentation);
+        return ImageAsyncBinding::CreateD2DBitmap(
+            target, present, D2D1_ALPHA_MODE_PREMULTIPLIED, outBitmap);
+    }
+
     void LogImageHr(const wchar_t* stage, const std::wstring& path, HRESULT hr)
     {
         if (SUCCEEDED(hr))
@@ -144,6 +193,10 @@ void ImageBrowserMainImage::SyncTextureDrawState()
     ds.rotationQuarters = m_rotationQuarters;
     ds.highQualitySampling = m_highQualitySampling;
     ds.alphaCheckerboardEnabled = m_alphaCheckerboardEnabled;
+    ds.sourceAlphaEncoding =
+        m_alpha.encoding == ImageCore::AlphaEncoding::Premultiplied ? 1 : 0;
+    ds.sourceAlphaUsage =
+        ResolveAlphaUsage(m_alpha) == ImageCore::AlphaUsage::Data ? 1 : 0;
     m_texture->SetDrawState(ds);
 }
 
@@ -360,6 +413,7 @@ HRESULT ImageBrowserMainImage::SetSourceFile(const std::wstring& filePath)
     m_loadedW = 0;
     m_loadedH = 0;
     m_loadedFormat = DXGI_FORMAT_UNKNOWN;
+    m_alpha = {};
     m_cpuPayload = {};
     m_needsCpuReupload = false;
 
@@ -370,8 +424,9 @@ HRESULT ImageBrowserMainImage::SetSourceFile(const std::wstring& filePath)
         UINT cw = 0;
         UINT ch = 0;
         DXGI_FORMAT cachedFormat = DXGI_FORMAT_UNKNOWN;
+        ImageAlphaInfo cachedAlpha {};
         if (ImageGpuResourceCache::Instance().TryGet(
-            normalized, cachedSrv, cw, ch, cachedFormat, DeviceGeneration()))
+            normalized, cachedSrv, cw, ch, cachedFormat, cachedAlpha, DeviceGeneration()))
         {
             if (m_texture)
             {
@@ -382,6 +437,7 @@ HRESULT ImageBrowserMainImage::SetSourceFile(const std::wstring& filePath)
             m_loadedW = cw;
             m_loadedH = ch;
             m_loadedFormat = cachedFormat;
+            m_alpha = cachedAlpha;
             m_binding.SetLoading(false);
             m_request.source = normalized;
             SyncTextureDrawState();
@@ -411,6 +467,7 @@ void ImageBrowserMainImage::ClearSource()
     m_loadedW = 0;
     m_loadedH = 0;
     m_loadedFormat = DXGI_FORMAT_UNKNOWN;
+    m_alpha = {};
     m_cpuPayload = {};
     m_needsCpuReupload = false;
     m_request.source.clear();
@@ -536,8 +593,7 @@ void ImageBrowserMainImage::TryReuploadCpuPayload(ID2D1RenderTarget* target)
     }
 
     Microsoft::WRL::ComPtr<ID2D1Bitmap> d2dBitmap;
-    const HRESULT hrBmp = ImageAsyncBinding::CreateD2DBitmap(
-        target, m_cpuPayload, D2D1_ALPHA_MODE_PREMULTIPLIED, d2dBitmap);
+    const HRESULT hrBmp = CreatePremultipliedD2DBitmap(target, m_cpuPayload, d2dBitmap);
     if (SUCCEEDED(hrBmp) && d2dBitmap)
     {
         m_texture->SetBitmap(d2dBitmap);
@@ -545,7 +601,9 @@ void ImageBrowserMainImage::TryReuploadCpuPayload(ID2D1RenderTarget* target)
         m_loadedW = m_cpuPayload.width;
         m_loadedH = m_cpuPayload.height;
         m_loadedFormat = m_cpuPayload.format;
+        m_alpha = AlphaInfoFromPayload(m_cpuPayload);
         m_needsCpuReupload = false;
+        SyncTextureDrawState();
     }
     else
     {
@@ -616,13 +674,15 @@ void ImageBrowserMainImage::ApplyPendingPayload(ID2D1RenderTarget* target)
                     m_loadedW = pending.width;
                     m_loadedH = pending.height;
                     m_loadedFormat = pending.format;
+                    m_alpha = AlphaInfoFromPayload(pending);
                     m_cpuPayload = {};
                     m_needsCpuReupload = false;
 
                     ImageGpuResourceCache::Instance().Put(
                         pending.sourcePath, srv, pending.width, pending.height,
-                        pending.format, DeviceGeneration());
+                        pending.format, m_alpha, DeviceGeneration());
 
+                    SyncTextureDrawState();
                     usedGpu = true;
                     applied = true;
                 }
@@ -661,8 +721,7 @@ void ImageBrowserMainImage::ApplyPendingPayload(ID2D1RenderTarget* target)
         }
 
         Microsoft::WRL::ComPtr<ID2D1Bitmap> d2dBitmap;
-        const HRESULT hrBmp = ImageAsyncBinding::CreateD2DBitmap(
-            target, pending, D2D1_ALPHA_MODE_PREMULTIPLIED, d2dBitmap);
+        const HRESULT hrBmp = CreatePremultipliedD2DBitmap(target, pending, d2dBitmap);
         if (SUCCEEDED(hrBmp) && d2dBitmap)
         {
             if (m_texture)
@@ -673,8 +732,10 @@ void ImageBrowserMainImage::ApplyPendingPayload(ID2D1RenderTarget* target)
             m_loadedW = pending.width;
             m_loadedH = pending.height;
             m_loadedFormat = pending.format;
+            m_alpha = AlphaInfoFromPayload(pending);
             m_cpuPayload = pending;
             m_needsCpuReupload = false;
+            SyncTextureDrawState();
             applied = true;
         }
         else

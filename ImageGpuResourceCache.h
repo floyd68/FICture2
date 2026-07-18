@@ -1,5 +1,7 @@
 #pragma once
 
+#include "ImageAlphaPresentation.h"
+
 #include <d3d11.h>
 #include <dxgiformat.h>
 #include <wrl/client.h>
@@ -26,6 +28,7 @@ public:
         UINT& outW,
         UINT& outH,
         DXGI_FORMAT& outFmt,
+        ImageAlphaInfo& outAlpha,
         uint64_t deviceGeneration);
 
     void Put(
@@ -34,6 +37,7 @@ public:
         UINT w,
         UINT h,
         DXGI_FORMAT format,
+        const ImageAlphaInfo& alpha,
         uint64_t deviceGeneration);
 
     void Clear();
@@ -50,6 +54,7 @@ private:
         UINT width { 0 };
         UINT height { 0 };
         DXGI_FORMAT format { DXGI_FORMAT_UNKNOWN };
+        ImageAlphaInfo alpha {};
         std::list<std::wstring>::iterator lruIt {};
     };
 

@@ -245,6 +245,9 @@ void ImageAsyncBinding::OnDecodeComplete(
         state->pending.height = image.height;
         state->pending.rowPitch = image.rowPitchBytes;
         state->pending.format = image.dxgiFormat;
+        state->pending.alphaEncoding = image.alphaEncoding;
+        state->pending.alphaUsageHint = image.alphaUsageHint;
+        state->pending.sourceWasBlockCompressed = image.sourceWasBlockCompressed;
         state->pending.sourcePath = normalizedSource;
         state->failedPath.clear();
         state->failedHr = S_OK;

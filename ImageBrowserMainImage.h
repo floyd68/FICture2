@@ -3,6 +3,7 @@
 #include "FD2D/Wnd.h"
 #include "FD2D/Image.h"
 #include "FD2D/Spinner.h"
+#include "ImageAlphaPresentation.h"
 #include "ImageAsyncBinding.h"
 #include "ImageViewTypes.h"
 #include "ImageCore/ImageRequest.h"
@@ -96,6 +97,7 @@ private:
     uint32_t m_loadedW { 0 };
     uint32_t m_loadedH { 0 };
     DXGI_FORMAT m_loadedFormat { DXGI_FORMAT_UNKNOWN };
+    ImageAlphaInfo m_alpha {};
 
     bool m_alphaCheckerboardEnabled { false };
     bool m_interactionEnabled { true };
