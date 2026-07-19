@@ -1,10 +1,12 @@
 #pragma once
 
+#include "ImageCore/DecodedImage.h"
 #include "ImageViewTypes.h"
 
 #include <d2d1.h>
 #include <windows.h>
 
+#include <cstdint>
 #include <memory>
 #include <string>
 #include <vector>
@@ -56,6 +58,12 @@ public:
     virtual void BrowserCmdRotateRight() = 0;
     virtual void BrowserCmdRotate180()   = 0;
     virtual void BrowserCmdRotateReset() = 0;
+    virtual void BrowserCmdMipPrevious() = 0;
+    virtual void BrowserCmdMipNext() = 0;
+    virtual void BrowserCmdSelectMip(uint32_t mipLevel) = 0;
+    virtual void BrowserCmdSetChannelMode(int mode) = 0;
+    virtual void BrowserCmdSetAlphaUsageOverride(ImageCore::AlphaUsage usage) = 0;
+    virtual void BrowserCmdShowImageInformation() = 0;
 };
 
 class IImageBrowserQuery
@@ -66,6 +74,12 @@ public:
         bool showNavItems { true };
         bool highQualitySampling { true };
         bool hasExplorerTarget { false };
+        bool hasImage { false };
+        ImageCore::AlphaUsage alphaUsageOverride { ImageCore::AlphaUsage::Auto };
+        uint32_t mipLevels { 1 };
+        uint32_t mipLevel { 0 };
+        uint32_t sourceWidth { 0 };
+        uint32_t sourceHeight { 0 };
     };
 
     virtual ~IImageBrowserQuery() = default;

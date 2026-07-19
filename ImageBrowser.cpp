@@ -647,6 +647,23 @@ namespace
                 return false;
             }
 
+            // Image-view letter keys (NIFDiff parity). Handled before type-to-select.
+            if (!event.modifiers.control &&
+                !event.modifiers.alt &&
+                !event.modifiers.shift)
+            {
+                switch (event.keyCode)
+                {
+                case 'R': BrowserCmdSetChannelMode(1); return true;
+                case 'G': BrowserCmdSetChannelMode(2); return true;
+                case 'B': BrowserCmdSetChannelMode(3); return true;
+                case 'A': BrowserCmdSetChannelMode(4); return true;
+                case 'N': BrowserCmdSetChannelMode(0); return true;
+                case 'I': BrowserCmdShowImageInformation(); return true;
+                default: break;
+                }
+            }
+
             return HandleTypeToSelectKeyDown(event);
         }
 
@@ -892,7 +909,7 @@ namespace
             }
 
             auto vp = Floar::VirtualPath::Parse(filePath);
-            if (!vp || !vp->Exists())
+            if (!vp || !Floar::VirtualFileSystem::Exists(*vp))
             {
                 return;
             }
@@ -1370,6 +1387,73 @@ namespace
             m->SetViewTransform(vt, true /*notify → sync*/);
         }
 
+        void BrowserCmdMipPrevious() override
+        {
+            auto m = ActiveMainImage();
+            if (!m)
+            {
+                return;
+            }
+            const uint32_t mip = m->MipLevel();
+            if (mip > 0)
+            {
+                m->SelectMip(mip - 1);
+            }
+        }
+
+        void BrowserCmdMipNext() override
+        {
+            auto m = ActiveMainImage();
+            if (!m)
+            {
+                return;
+            }
+            const uint32_t mip = m->MipLevel();
+            if (mip + 1 < m->MipLevels())
+            {
+                m->SelectMip(mip + 1);
+            }
+        }
+
+        void BrowserCmdSelectMip(uint32_t mipLevel) override
+        {
+            if (auto m = ActiveMainImage())
+            {
+                m->SelectMip(mipLevel);
+            }
+        }
+
+        void BrowserCmdSetChannelMode(int mode) override
+        {
+            if (auto m = ActiveMainImage())
+            {
+                m->SetChannelMode(mode);
+            }
+        }
+
+        void BrowserCmdSetAlphaUsageOverride(ImageCore::AlphaUsage usage) override
+        {
+            if (auto m = ActiveMainImage())
+            {
+                m->SetAlphaUsageOverride(usage);
+            }
+        }
+
+        void BrowserCmdShowImageInformation() override
+        {
+            auto m = ActiveMainImage();
+            auto* ficBp = FictureBackplateRef();
+            if (!m || ficBp == nullptr || ficBp->Window() == nullptr)
+            {
+                return;
+            }
+            MessageBoxW(
+                ficBp->Window(),
+                m->InformationText().c_str(),
+                L"Image Information",
+                MB_ICONINFORMATION | MB_OK);
+        }
+
         bool BrowserContextMenuPrepareForDisplay(const POINT& ptClient) override
         {
             D2D1_RECT_F mainRect {};
@@ -1391,6 +1475,16 @@ namespace
             auto mainImage = ActiveMainImage();
             snapshot.highQualitySampling = mainImage ? mainImage->HighQualitySampling() : true;
             snapshot.hasExplorerTarget = !GetContextMenuTargetImagePathAtPoint(ptClient).empty();
+            if (mainImage)
+            {
+                const auto info = mainImage->GetLoadedInfo();
+                snapshot.hasImage = !info.sourcePath.empty() && info.width > 0 && info.height > 0;
+                snapshot.alphaUsageOverride = mainImage->AlphaUsageOverride();
+                snapshot.mipLevels = mainImage->MipLevels();
+                snapshot.mipLevel = mainImage->MipLevel();
+                snapshot.sourceWidth = info.sourceWidth ? info.sourceWidth : info.width;
+                snapshot.sourceHeight = info.sourceHeight ? info.sourceHeight : info.height;
+            }
             return snapshot;
         }
 

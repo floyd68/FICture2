@@ -13,6 +13,7 @@
 #include <cstdint>
 #include <format>
 #include <memory>
+#include <string>
 #include <vector>
 
 namespace
@@ -39,16 +40,19 @@ namespace
         image.rowPitchBytes = payload.rowPitch;
         image.blockBytes = payload.blocks ? static_cast<uint32_t>(payload.blocks->size()) : 0;
         image.blocks = payload.blocks;
+        image.sourceMipLevels = payload.sourceMipLevels;
+        image.sourceMipIndex = payload.sourceMipIndex;
         return image;
     }
 
     HRESULT CreatePremultipliedD2DBitmap(
         ID2D1RenderTarget* target,
         const ImageAsyncBinding::Payload& payload,
+        ImageCore::AlphaUsage overrideUsage,
         Microsoft::WRL::ComPtr<ID2D1Bitmap>& outBitmap)
     {
         const ImageAlphaInfo alpha = AlphaInfoFromPayload(payload);
-        const ImageCore::AlphaUsage usage = ResolveAlphaUsage(alpha);
+        const ImageCore::AlphaUsage usage = ResolveAlphaUsage(alpha, overrideUsage);
         const ImageCore::DecodedImage decoded = DecodedImageFromPayload(payload);
         const std::vector<std::uint8_t> presentation = BuildBgra8Presentation(decoded, usage);
         if (presentation.empty())
@@ -60,6 +64,70 @@ namespace
         present.blocks = std::make_shared<std::vector<std::uint8_t>>(presentation);
         return ImageAsyncBinding::CreateD2DBitmap(
             target, present, D2D1_ALPHA_MODE_PREMULTIPLIED, outBitmap);
+    }
+
+    const wchar_t* ChannelName(int mode)
+    {
+        switch (mode)
+        {
+        case 1: return L"R";
+        case 2: return L"G";
+        case 3: return L"B";
+        case 4: return L"A";
+        default: return L"RGBA";
+        }
+    }
+
+    const wchar_t* AlphaEncodingName(ImageCore::AlphaEncoding encoding)
+    {
+        switch (encoding)
+        {
+        case ImageCore::AlphaEncoding::Straight: return L"Straight";
+        case ImageCore::AlphaEncoding::Premultiplied: return L"Premultiplied";
+        case ImageCore::AlphaEncoding::Opaque: return L"Opaque";
+        default: return L"Unknown";
+        }
+    }
+
+    const wchar_t* AlphaUsageName(ImageCore::AlphaUsage usage)
+    {
+        switch (usage)
+        {
+        case ImageCore::AlphaUsage::Coverage: return L"Transparency";
+        case ImageCore::AlphaUsage::Data: return L"Opaque (data)";
+        case ImageCore::AlphaUsage::Auto: return L"Auto";
+        default: return L"Unknown";
+        }
+    }
+
+    int BitsPerPixel(DXGI_FORMAT format)
+    {
+        switch (format)
+        {
+        case DXGI_FORMAT_BC1_UNORM:
+        case DXGI_FORMAT_BC1_UNORM_SRGB:
+        case DXGI_FORMAT_BC4_UNORM:
+        case DXGI_FORMAT_BC4_SNORM:
+            return 4;
+        case DXGI_FORMAT_BC2_UNORM:
+        case DXGI_FORMAT_BC2_UNORM_SRGB:
+        case DXGI_FORMAT_BC3_UNORM:
+        case DXGI_FORMAT_BC3_UNORM_SRGB:
+        case DXGI_FORMAT_BC5_UNORM:
+        case DXGI_FORMAT_BC5_SNORM:
+        case DXGI_FORMAT_BC6H_UF16:
+        case DXGI_FORMAT_BC6H_SF16:
+        case DXGI_FORMAT_BC7_UNORM:
+        case DXGI_FORMAT_BC7_UNORM_SRGB:
+            return 8;
+        case DXGI_FORMAT_B8G8R8A8_UNORM:
+        case DXGI_FORMAT_B8G8R8A8_UNORM_SRGB:
+        case DXGI_FORMAT_R8G8B8A8_UNORM:
+        case DXGI_FORMAT_R8G8B8A8_UNORM_SRGB:
+            return 32;
+        default:
+            return 0;
+        }
     }
 
     void LogImageHr(const wchar_t* stage, const std::wstring& path, HRESULT hr)
@@ -193,10 +261,13 @@ void ImageBrowserMainImage::SyncTextureDrawState()
     ds.rotationQuarters = m_rotationQuarters;
     ds.highQualitySampling = m_highQualitySampling;
     ds.alphaCheckerboardEnabled = m_alphaCheckerboardEnabled;
+    ds.channelMode = m_channelMode;
     ds.sourceAlphaEncoding =
         m_alpha.encoding == ImageCore::AlphaEncoding::Premultiplied ? 1 : 0;
     ds.sourceAlphaUsage =
-        ResolveAlphaUsage(m_alpha) == ImageCore::AlphaUsage::Data ? 1 : 0;
+        ResolveAlphaUsage(m_alpha, m_alphaUsageOverride) == ImageCore::AlphaUsage::Data
+            ? 1
+            : 0;
     m_texture->SetDrawState(ds);
 }
 
@@ -224,6 +295,11 @@ bool ImageBrowserMainImage::TryGetContentSize(D2D1_SIZE_F& outSize) const
 bool ImageBrowserMainImage::HasDisplayedContentForCurrentPath() const
 {
     if (m_loadedFilePath != m_filePath || m_filePath.empty())
+    {
+        return false;
+    }
+
+    if (m_sourceMipIndex != m_request.mipLevel)
     {
         return false;
     }
@@ -302,6 +378,8 @@ ImageViewTransform ImageBrowserMainImage::GetViewTransform() const
     vt.panX = m_panX;
     vt.panY = m_panY;
     vt.rotationQuarters = m_rotationQuarters;
+    vt.channelMode = m_channelMode;
+    vt.mipLevel = m_sourceMipIndex;
     return vt;
 }
 
@@ -311,6 +389,23 @@ ImageLoadedInfo ImageBrowserMainImage::GetLoadedInfo() const
     info.width = m_loadedW;
     info.height = m_loadedH;
     info.format = m_loadedFormat;
+    info.sourceMipLevels = (std::max)(1u, m_sourceMipLevels);
+    info.sourceMipIndex = m_sourceMipIndex;
+    info.sourceWidth = m_sourceWidth;
+    info.sourceHeight = m_sourceHeight;
+    info.alphaEncoding = m_alpha.encoding;
+    info.alphaUsageHint = m_alpha.usageHint;
+    info.alphaUsageOverride = m_alphaUsageOverride;
+    info.effectiveAlphaUsage = EffectiveAlphaUsage();
+    info.sourceWasBlockCompressed = m_alpha.sourceWasBlockCompressed;
+    info.gpuPresentation = m_gpuPresentation;
+    info.channelMode = m_channelMode;
+    info.alphaCheckerboardEnabled = m_alphaCheckerboardEnabled;
+    info.highQualitySampling = m_highQualitySampling;
+    info.zoomScale = m_zoomScale;
+    info.panX = m_panX;
+    info.panY = m_panY;
+    info.rotationQuarters = m_rotationQuarters;
     info.sourcePath = m_loadedFilePath;
     return info;
 }
@@ -323,11 +418,22 @@ void ImageBrowserMainImage::SetViewTransform(const ImageViewTransform& vt, bool 
     m_panX = vt.panX;
     m_panY = vt.panY;
     m_rotationQuarters = ((vt.rotationQuarters % 4) + 4) % 4;
+    m_channelMode = (std::max)(0, (std::min)(4, vt.channelMode));
 
     m_panning = false;
     m_panArmed = false;
     m_pointerZoomActive = false;
     m_lastZoomAnimMs = CommonUtil::NowMs();
+
+    const uint32_t maxMip = (std::max)(1u, m_sourceMipLevels) - 1u;
+    const uint32_t desiredMip = (std::min)(vt.mipLevel, maxMip);
+    if (desiredMip != m_sourceMipIndex || desiredMip != m_request.mipLevel)
+    {
+        const bool prevSuppress = m_suppressViewNotify;
+        m_suppressViewNotify = true;
+        SelectMip(desiredMip);
+        m_suppressViewNotify = prevSuppress;
+    }
 
     ClampPanToVisible();
     SyncTextureDrawState();
@@ -365,6 +471,179 @@ void ImageBrowserMainImage::RotateCCW()
     auto vt = GetViewTransform();
     vt.rotationQuarters = (vt.rotationQuarters + 3) % 4;
     SetViewTransform(vt, true);
+}
+
+void ImageBrowserMainImage::SetChannelMode(int mode)
+{
+    const int clamped = (std::max)(0, (std::min)(4, mode));
+    m_channelMode = (m_channelMode == clamped) ? 0 : clamped;
+    SyncTextureDrawState();
+    Invalidate();
+    if (!m_suppressViewNotify && m_onViewChanged)
+    {
+        m_onViewChanged(GetViewTransform());
+    }
+}
+
+void ImageBrowserMainImage::SetAlphaUsageOverride(ImageCore::AlphaUsage usage)
+{
+    if (m_alphaUsageOverride == usage)
+    {
+        return;
+    }
+
+    m_alphaUsageOverride = usage;
+    SyncTextureDrawState();
+    if (!m_gpuPresentation && m_cpuPayload.blocks && !m_cpuPayload.sourcePath.empty())
+    {
+        m_needsCpuReupload = true;
+    }
+    Invalidate();
+    if (!m_suppressViewNotify && m_onViewChanged)
+    {
+        m_onViewChanged(GetViewTransform());
+    }
+}
+
+ImageCore::AlphaUsage ImageBrowserMainImage::EffectiveAlphaUsage() const
+{
+    return ResolveAlphaUsage(m_alpha, m_alphaUsageOverride);
+}
+
+std::wstring ImageBrowserMainImage::InformationText() const
+{
+    if (m_loadedFilePath.empty() || m_loadedW == 0 || m_loadedH == 0)
+    {
+        return L"No image is loaded.";
+    }
+
+    const int bpp = BitsPerPixel(m_loadedFormat);
+    std::wstring text =
+        L"Path: " + m_loadedFilePath +
+        L"\n\nCurrent dimensions: " +
+        std::to_wstring(m_loadedW) + L" \u00d7 " + std::to_wstring(m_loadedH) +
+        L"\nSource dimensions: " +
+        std::to_wstring(m_sourceWidth) + L" \u00d7 " + std::to_wstring(m_sourceHeight) +
+        L"\nPixel format: DXGI " + std::to_wstring(static_cast<unsigned>(m_loadedFormat)) +
+        L"\nEffective bits per pixel: " +
+        (bpp > 0 ? std::to_wstring(bpp) : L"Unknown") +
+        L"\nMip level: " +
+        std::to_wstring(m_sourceMipIndex) + L" / " +
+        std::to_wstring((std::max)(1u, m_sourceMipLevels) - 1u) +
+        L" (" + std::to_wstring((std::max)(1u, m_sourceMipLevels)) + L" levels)" +
+        L"\nSource compression: " +
+        (m_alpha.sourceWasBlockCompressed ? L"Block compressed" : L"Uncompressed") +
+        L"\nPresentation: " +
+        (m_gpuPresentation ? L"D3D11 texture" : L"D2D bitmap") +
+        L"\n\nAlpha encoding: " + AlphaEncodingName(m_alpha.encoding) +
+        L"\nAlpha decoder hint: " + AlphaUsageName(m_alpha.usageHint) +
+        L"\nAlpha override: " + AlphaUsageName(m_alphaUsageOverride) +
+        L"\nEffective alpha usage: " + AlphaUsageName(EffectiveAlphaUsage()) +
+        L"\n\nChannel: " + ChannelName(m_channelMode) +
+        L"\nCheckerboard: " + (m_alphaCheckerboardEnabled ? L"On" : L"Off") +
+        L"\nZoom: " +
+        std::to_wstring(static_cast<int>(std::lround(m_zoomScale * 100.0f))) +
+        L"%\nRotation: " +
+        std::to_wstring((((m_rotationQuarters % 4) + 4) % 4) * 90) +
+        L"\u00b0\nPan: " +
+        std::to_wstring(static_cast<int>(std::lround(m_panX))) + L", " +
+        std::to_wstring(static_cast<int>(std::lround(m_panY))) +
+        L" px\nSampling: " +
+        (m_highQualitySampling
+            ? (m_gpuPresentation ? L"D3D11 anisotropic" : L"D2D smooth")
+            : (m_gpuPresentation ? L"D3D11 point" : L"D2D nearest"));
+    return text;
+}
+
+bool ImageBrowserMainImage::SelectMip(uint32_t mipLevel)
+{
+    if (m_filePath.empty())
+    {
+        return false;
+    }
+
+    const uint32_t levels = (std::max)(1u, m_sourceMipLevels);
+    if (mipLevel >= levels)
+    {
+        return false;
+    }
+    if (mipLevel == m_sourceMipIndex && HasDisplayedContentForCurrentPath())
+    {
+        return true;
+    }
+
+    m_request.mipLevel = mipLevel;
+    m_selectingMip = true;
+    m_binding.Cancel();
+    m_binding.ClearFailure();
+    m_forceCpuDecode.store(false);
+
+    if (BackplateRef() != nullptr)
+    {
+        Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> cachedSrv;
+        UINT cw = 0;
+        UINT ch = 0;
+        DXGI_FORMAT cachedFormat = DXGI_FORMAT_UNKNOWN;
+        ImageAlphaInfo cachedAlpha {};
+        uint32_t cachedMipLevels = 1;
+        uint32_t cachedMipIndex = 0;
+        if (ImageGpuResourceCache::Instance().TryGet(
+                m_filePath,
+                mipLevel,
+                cachedSrv,
+                cw,
+                ch,
+                cachedFormat,
+                cachedAlpha,
+                cachedMipLevels,
+                cachedMipIndex,
+                DeviceGeneration()))
+        {
+            if (m_texture)
+            {
+                m_texture->SetShaderResource(cachedSrv);
+            }
+            m_loadedFilePath = m_filePath;
+            m_loadedW = cw;
+            m_loadedH = ch;
+            m_loadedFormat = cachedFormat;
+            m_alpha = cachedAlpha;
+            m_sourceMipLevels = (std::max)(1u, cachedMipLevels);
+            m_sourceMipIndex = cachedMipIndex;
+            if (cachedMipIndex == 0)
+            {
+                m_sourceWidth = cw;
+                m_sourceHeight = ch;
+            }
+            m_gpuPresentation = true;
+            m_needsCpuReupload = false;
+            m_selectingMip = false;
+            m_binding.SetLoading(false);
+            ClampPanToVisible();
+            SyncTextureDrawState();
+            Invalidate();
+            if (!m_suppressViewNotify && m_onViewChanged)
+            {
+                m_onViewChanged(GetViewTransform());
+            }
+            return true;
+        }
+    }
+
+    m_binding.SetLoading(false);
+    RequestImageLoad();
+    Invalidate();
+    return true;
+}
+
+uint32_t ImageBrowserMainImage::MipLevel() const
+{
+    return m_sourceMipIndex;
+}
+
+uint32_t ImageBrowserMainImage::MipLevels() const
+{
+    return (std::max)(1u, m_sourceMipLevels);
 }
 
 HRESULT ImageBrowserMainImage::SetSourceFile(const std::wstring& filePath)
@@ -414,6 +693,15 @@ HRESULT ImageBrowserMainImage::SetSourceFile(const std::wstring& filePath)
     m_loadedH = 0;
     m_loadedFormat = DXGI_FORMAT_UNKNOWN;
     m_alpha = {};
+    m_sourceMipLevels = 1;
+    m_sourceMipIndex = 0;
+    m_sourceWidth = 0;
+    m_sourceHeight = 0;
+    m_selectingMip = false;
+    m_gpuPresentation = false;
+    m_channelMode = 0;
+    m_alphaUsageOverride = ImageCore::AlphaUsage::Auto;
+    m_request.mipLevel = 0;
     m_cpuPayload = {};
     m_needsCpuReupload = false;
 
@@ -425,8 +713,19 @@ HRESULT ImageBrowserMainImage::SetSourceFile(const std::wstring& filePath)
         UINT ch = 0;
         DXGI_FORMAT cachedFormat = DXGI_FORMAT_UNKNOWN;
         ImageAlphaInfo cachedAlpha {};
+        uint32_t cachedMipLevels = 1;
+        uint32_t cachedMipIndex = 0;
         if (ImageGpuResourceCache::Instance().TryGet(
-            normalized, cachedSrv, cw, ch, cachedFormat, cachedAlpha, DeviceGeneration()))
+                normalized,
+                0,
+                cachedSrv,
+                cw,
+                ch,
+                cachedFormat,
+                cachedAlpha,
+                cachedMipLevels,
+                cachedMipIndex,
+                DeviceGeneration()))
         {
             if (m_texture)
             {
@@ -438,8 +737,14 @@ HRESULT ImageBrowserMainImage::SetSourceFile(const std::wstring& filePath)
             m_loadedH = ch;
             m_loadedFormat = cachedFormat;
             m_alpha = cachedAlpha;
+            m_sourceMipLevels = (std::max)(1u, cachedMipLevels);
+            m_sourceMipIndex = cachedMipIndex;
+            m_sourceWidth = cw;
+            m_sourceHeight = ch;
+            m_gpuPresentation = true;
             m_binding.SetLoading(false);
             m_request.source = normalized;
+            m_request.mipLevel = 0;
             SyncTextureDrawState();
             Invalidate();
             return S_OK;
@@ -451,6 +756,7 @@ HRESULT ImageBrowserMainImage::SetSourceFile(const std::wstring& filePath)
     m_forceCpuDecode.store(false);
     m_binding.SetLoading(false);
     m_request.source = normalized;
+    m_request.mipLevel = 0;
 
     // Keep previous image content while the next image loads (no Clear).
     SyncTextureDrawState();
@@ -468,9 +774,18 @@ void ImageBrowserMainImage::ClearSource()
     m_loadedH = 0;
     m_loadedFormat = DXGI_FORMAT_UNKNOWN;
     m_alpha = {};
+    m_sourceMipLevels = 1;
+    m_sourceMipIndex = 0;
+    m_sourceWidth = 0;
+    m_sourceHeight = 0;
+    m_selectingMip = false;
+    m_gpuPresentation = false;
+    m_channelMode = 0;
+    m_alphaUsageOverride = ImageCore::AlphaUsage::Auto;
     m_cpuPayload = {};
     m_needsCpuReupload = false;
     m_request.source.clear();
+    m_request.mipLevel = 0;
 
     if (m_texture)
     {
@@ -566,6 +881,7 @@ void ImageBrowserMainImage::RequestImageLoad()
 
     m_request.source = m_filePath;
     m_request.purpose = ImageCore::ImagePurpose::FullResolution;
+    // m_request.mipLevel is owned by SetSourceFile / SelectMip.
 
     if (m_forceCpuDecode.load() || BackplateRef() == nullptr || BackplateRef()->D3DDevice() == nullptr)
     {
@@ -593,7 +909,8 @@ void ImageBrowserMainImage::TryReuploadCpuPayload(ID2D1RenderTarget* target)
     }
 
     Microsoft::WRL::ComPtr<ID2D1Bitmap> d2dBitmap;
-    const HRESULT hrBmp = CreatePremultipliedD2DBitmap(target, m_cpuPayload, d2dBitmap);
+    const HRESULT hrBmp = CreatePremultipliedD2DBitmap(
+        target, m_cpuPayload, m_alphaUsageOverride, d2dBitmap);
     if (SUCCEEDED(hrBmp) && d2dBitmap)
     {
         m_texture->SetBitmap(d2dBitmap);
@@ -602,6 +919,14 @@ void ImageBrowserMainImage::TryReuploadCpuPayload(ID2D1RenderTarget* target)
         m_loadedH = m_cpuPayload.height;
         m_loadedFormat = m_cpuPayload.format;
         m_alpha = AlphaInfoFromPayload(m_cpuPayload);
+        m_sourceMipLevels = (std::max)(1u, m_cpuPayload.sourceMipLevels);
+        m_sourceMipIndex = m_cpuPayload.sourceMipIndex;
+        if (m_cpuPayload.sourceMipIndex == 0)
+        {
+            m_sourceWidth = m_cpuPayload.width;
+            m_sourceHeight = m_cpuPayload.height;
+        }
+        m_gpuPresentation = false;
         m_needsCpuReupload = false;
         SyncTextureDrawState();
     }
@@ -675,12 +1000,29 @@ void ImageBrowserMainImage::ApplyPendingPayload(ID2D1RenderTarget* target)
                     m_loadedH = pending.height;
                     m_loadedFormat = pending.format;
                     m_alpha = AlphaInfoFromPayload(pending);
+                    m_sourceMipLevels = (std::max)(1u, pending.sourceMipLevels);
+                    m_sourceMipIndex = pending.sourceMipIndex;
+                    if (pending.sourceMipIndex == 0)
+                    {
+                        m_sourceWidth = pending.width;
+                        m_sourceHeight = pending.height;
+                    }
+                    m_gpuPresentation = true;
                     m_cpuPayload = {};
                     m_needsCpuReupload = false;
+                    m_selectingMip = false;
 
                     ImageGpuResourceCache::Instance().Put(
-                        pending.sourcePath, srv, pending.width, pending.height,
-                        pending.format, m_alpha, DeviceGeneration());
+                        pending.sourcePath,
+                        pending.sourceMipIndex,
+                        srv,
+                        pending.width,
+                        pending.height,
+                        pending.format,
+                        m_alpha,
+                        m_sourceMipLevels,
+                        m_sourceMipIndex,
+                        DeviceGeneration());
 
                     SyncTextureDrawState();
                     usedGpu = true;
@@ -713,6 +1055,76 @@ void ImageBrowserMainImage::ApplyPendingPayload(ID2D1RenderTarget* target)
         }
     }
 
+    // Prefer D3D SRV for uncompressed BGRA8 when available so channel isolation works.
+    if (!usedGpu &&
+        ImageAsyncBinding::IsCpuBgra8Format(pending.format) &&
+        BackplateRef() != nullptr &&
+        BackplateRef()->D3DDevice() != nullptr &&
+        !m_forceCpuDecode.load())
+    {
+        ID3D11Device* dev = BackplateRef()->D3DDevice();
+        D3D11_TEXTURE2D_DESC td {};
+        td.Width = pending.width;
+        td.Height = pending.height;
+        td.MipLevels = 1;
+        td.ArraySize = 1;
+        td.Format = DXGI_FORMAT_B8G8R8A8_UNORM;
+        td.SampleDesc.Count = 1;
+        td.Usage = D3D11_USAGE_IMMUTABLE;
+        td.BindFlags = D3D11_BIND_SHADER_RESOURCE;
+
+        D3D11_SUBRESOURCE_DATA init {};
+        init.pSysMem = pending.blocks->data();
+        init.SysMemPitch = pending.rowPitch ? pending.rowPitch : pending.width * 4u;
+
+        Microsoft::WRL::ComPtr<ID3D11Texture2D> tex;
+        const HRESULT hrTex = dev->CreateTexture2D(&td, &init, &tex);
+        if (SUCCEEDED(hrTex) && tex)
+        {
+            Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> srv;
+            const HRESULT hrSrv = dev->CreateShaderResourceView(tex.Get(), nullptr, &srv);
+            if (SUCCEEDED(hrSrv) && srv)
+            {
+                if (m_texture)
+                {
+                    m_texture->SetShaderResource(srv);
+                }
+                m_loadedFilePath = pending.sourcePath;
+                m_loadedW = pending.width;
+                m_loadedH = pending.height;
+                m_loadedFormat = pending.format;
+                m_alpha = AlphaInfoFromPayload(pending);
+                m_sourceMipLevels = (std::max)(1u, pending.sourceMipLevels);
+                m_sourceMipIndex = pending.sourceMipIndex;
+                if (pending.sourceMipIndex == 0)
+                {
+                    m_sourceWidth = pending.width;
+                    m_sourceHeight = pending.height;
+                }
+                m_gpuPresentation = true;
+                m_cpuPayload = pending;
+                m_needsCpuReupload = false;
+                m_selectingMip = false;
+
+                ImageGpuResourceCache::Instance().Put(
+                    pending.sourcePath,
+                    pending.sourceMipIndex,
+                    srv,
+                    pending.width,
+                    pending.height,
+                    DXGI_FORMAT_B8G8R8A8_UNORM,
+                    m_alpha,
+                    m_sourceMipLevels,
+                    m_sourceMipIndex,
+                    DeviceGeneration());
+
+                SyncTextureDrawState();
+                usedGpu = true;
+                applied = true;
+            }
+        }
+    }
+
     if (!usedGpu)
     {
         if (!target)
@@ -721,7 +1133,8 @@ void ImageBrowserMainImage::ApplyPendingPayload(ID2D1RenderTarget* target)
         }
 
         Microsoft::WRL::ComPtr<ID2D1Bitmap> d2dBitmap;
-        const HRESULT hrBmp = CreatePremultipliedD2DBitmap(target, pending, d2dBitmap);
+        const HRESULT hrBmp = CreatePremultipliedD2DBitmap(
+            target, pending, m_alphaUsageOverride, d2dBitmap);
         if (SUCCEEDED(hrBmp) && d2dBitmap)
         {
             if (m_texture)
@@ -733,8 +1146,17 @@ void ImageBrowserMainImage::ApplyPendingPayload(ID2D1RenderTarget* target)
             m_loadedH = pending.height;
             m_loadedFormat = pending.format;
             m_alpha = AlphaInfoFromPayload(pending);
+            m_sourceMipLevels = (std::max)(1u, pending.sourceMipLevels);
+            m_sourceMipIndex = pending.sourceMipIndex;
+            if (pending.sourceMipIndex == 0)
+            {
+                m_sourceWidth = pending.width;
+                m_sourceHeight = pending.height;
+            }
+            m_gpuPresentation = false;
             m_cpuPayload = pending;
             m_needsCpuReupload = false;
+            m_selectingMip = false;
             SyncTextureDrawState();
             applied = true;
         }
@@ -806,7 +1228,15 @@ void ImageBrowserMainImage::OnRender(ID2D1RenderTarget* target)
     {
         if (m_binding.IsFailedFor(m_filePath))
         {
-            if (m_spinner)
+            if (m_selectingMip)
+            {
+                // Keep the previously displayed mip and allow future attempts.
+                m_selectingMip = false;
+                m_request.mipLevel = m_sourceMipIndex;
+                m_binding.ClearFailure();
+                m_binding.SetLoading(false);
+            }
+            else if (m_spinner)
             {
                 m_spinner->SetActive(false);
             }

@@ -208,6 +208,9 @@ namespace
         RotateRight,
         Rotate180,
         RotateReset,
+        MipPrevious,
+        MipNext,
+        ShowImageInformation,
         ShowInExplorerAtPoint,
         ShowAbout,
         SaveScreenshot,
@@ -324,6 +327,9 @@ namespace
         // < / > : rotate left / right (Shift+comma / Shift+period)
         { VK_OEM_COMMA,  false, true, false, BrowserCommandAction::RotateLeft  },
         { VK_OEM_PERIOD, false, true, false, BrowserCommandAction::RotateRight },
+        // Ctrl+[ / Ctrl+] : previous / next DDS mip level
+        { VK_OEM_4, true, false, false, BrowserCommandAction::MipPrevious },
+        { VK_OEM_6, true, false, false, BrowserCommandAction::MipNext },
     };
 
     // Keep in sync with ImageBrowserDragController's default insert threshold.
@@ -348,6 +354,9 @@ namespace
         { BrowserCommandAction::RotateRight, &IImageBrowserOps::BrowserCmdRotateRight },
         { BrowserCommandAction::Rotate180,   &IImageBrowserOps::BrowserCmdRotate180   },
         { BrowserCommandAction::RotateReset, &IImageBrowserOps::BrowserCmdRotateReset },
+        { BrowserCommandAction::MipPrevious, &IImageBrowserOps::BrowserCmdMipPrevious },
+        { BrowserCommandAction::MipNext, &IImageBrowserOps::BrowserCmdMipNext },
+        { BrowserCommandAction::ShowImageInformation, &IImageBrowserOps::BrowserCmdShowImageInformation },
     };
 
     std::wstring BuildSupportedImageDialogFilter()
@@ -1683,6 +1692,12 @@ bool Ficture2Backplate::ShowImageBrowserContextMenu(FD2D::Wnd* source, const POI
         payload.showAlpha = !m_alphaCheckerboardEnabled;
         payload.samplingLabel = SamplingLabelForRenderer(snapshot.highQualitySampling);
         payload.hasExplorerTarget = snapshot.hasExplorerTarget;
+        payload.hasImage = snapshot.hasImage;
+        payload.alphaUsageOverride = snapshot.alphaUsageOverride;
+        payload.mipLevels = snapshot.mipLevels;
+        payload.mipLevel = snapshot.mipLevel;
+        payload.sourceWidth = snapshot.sourceWidth;
+        payload.sourceHeight = snapshot.sourceHeight;
         {
             D2D1_RECT_F mainRect {};
             payload.canSaveScreenshot =
@@ -1705,16 +1720,39 @@ bool Ficture2Backplate::ShowImageBrowserContextMenu(FD2D::Wnd* source, const POI
         const UINT cmd = ImageBrowserContextMenu::TrackAndReturnCommand(hPopup, m_window, ptClient);
         if (cmd != 0)
         {
+            auto* browserOps = AsImageBrowserOps(source);
             if (cmd >= IDM_CTX_RECENT_BASE &&
                 cmd <= IDM_CTX_RECENT_LAST &&
                 (cmd - IDM_CTX_RECENT_BASE) < payload.recentFiles.size())
             {
                 const std::wstring& path = payload.recentFiles[cmd - IDM_CTX_RECENT_BASE];
-                auto* browserOps = AsImageBrowserOps(source);
                 if (browserOps != nullptr)
                 {
                     browserOps->BrowserRestoreOpenFile(path);
                 }
+            }
+            else if (browserOps != nullptr &&
+                cmd >= IDM_CTX_MIP_BASE &&
+                cmd <= IDM_CTX_MIP_LAST &&
+                (cmd - IDM_CTX_MIP_BASE) < payload.mipLevels)
+            {
+                browserOps->BrowserCmdSelectMip(cmd - IDM_CTX_MIP_BASE);
+            }
+            else if (browserOps != nullptr && cmd == IDM_CTX_ALPHA_AUTO)
+            {
+                browserOps->BrowserCmdSetAlphaUsageOverride(ImageCore::AlphaUsage::Auto);
+            }
+            else if (browserOps != nullptr && cmd == IDM_CTX_ALPHA_COVERAGE)
+            {
+                browserOps->BrowserCmdSetAlphaUsageOverride(ImageCore::AlphaUsage::Coverage);
+            }
+            else if (browserOps != nullptr && cmd == IDM_CTX_ALPHA_DATA)
+            {
+                browserOps->BrowserCmdSetAlphaUsageOverride(ImageCore::AlphaUsage::Data);
+            }
+            else if (browserOps != nullptr && cmd == IDM_CTX_IMAGE_INFORMATION)
+            {
+                browserOps->BrowserCmdShowImageInformation();
             }
             else
             {
@@ -1968,7 +2006,7 @@ bool Ficture2Backplate::TryRestoreImageBrowserSession(const std::wstring& iniFil
         if (!viewer.filePath.empty())
         {
             auto vp = Floar::VirtualPath::Parse(viewer.filePath);
-            if (vp && vp->Exists())
+            if (vp && Floar::VirtualFileSystem::Exists(*vp))
             {
                 valid.push_back(viewer);
                 continue;

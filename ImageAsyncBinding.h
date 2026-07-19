@@ -77,6 +77,8 @@ struct ImageAsyncBindingState
         ImageCore::AlphaEncoding alphaEncoding { ImageCore::AlphaEncoding::Unknown };
         ImageCore::AlphaUsage alphaUsageHint { ImageCore::AlphaUsage::Auto };
         bool sourceWasBlockCompressed { false };
+        uint32_t sourceMipLevels { 1 };
+        uint32_t sourceMipIndex { 0 };
         std::wstring sourcePath {};
     };
 

@@ -74,6 +74,69 @@ namespace ImageBrowserContextMenu
                 L"Open &Recent");
         }
 
+        if (payload.hasImage)
+        {
+            InsertMenuW(
+                hPopup,
+                IDM_CTX_TOGGLE_DIRECTORIES,
+                MF_BYCOMMAND | MF_STRING,
+                IDM_CTX_IMAGE_INFORMATION,
+                L"Image &Information...\tI");
+
+            if (payload.mipLevels > 1)
+            {
+                HMENU mipMenu = CreatePopupMenu();
+                if (mipMenu != nullptr)
+                {
+                    const uint32_t levels = (std::min)(
+                        payload.mipLevels,
+                        static_cast<uint32_t>(IDM_CTX_MIP_LAST - IDM_CTX_MIP_BASE + 1));
+                    for (uint32_t mip = 0; mip < levels; ++mip)
+                    {
+                        const UINT width = (std::max)(1u, payload.sourceWidth >> mip);
+                        const UINT height = (std::max)(1u, payload.sourceHeight >> mip);
+                        const std::wstring label =
+                            L"Mip " + std::to_wstring(mip) +
+                            L" (" + std::to_wstring(width) +
+                            L" \u00d7 " + std::to_wstring(height) + L")";
+                        AppendMenuW(
+                            mipMenu,
+                            MF_STRING | (mip == payload.mipLevel ? MF_CHECKED : MF_UNCHECKED),
+                            IDM_CTX_MIP_BASE + mip,
+                            label.c_str());
+                    }
+                    InsertMenuW(
+                        hPopup,
+                        IDM_CTX_TOGGLE_DIRECTORIES,
+                        MF_BYCOMMAND | MF_POPUP,
+                        reinterpret_cast<UINT_PTR>(mipMenu),
+                        L"&Mip Level\tCtrl+[ / Ctrl+]");
+                }
+            }
+
+            HMENU alphaMenu = CreatePopupMenu();
+            if (alphaMenu != nullptr)
+            {
+                auto aItem = [&](UINT id, const wchar_t* label, ImageCore::AlphaUsage usage)
+                {
+                    AppendMenuW(
+                        alphaMenu,
+                        MF_STRING | (payload.alphaUsageOverride == usage ? MF_CHECKED : MF_UNCHECKED),
+                        id,
+                        label);
+                };
+                aItem(IDM_CTX_ALPHA_AUTO, L"&Auto", ImageCore::AlphaUsage::Auto);
+                aItem(IDM_CTX_ALPHA_COVERAGE, L"Treat as &Transparency", ImageCore::AlphaUsage::Coverage);
+                aItem(IDM_CTX_ALPHA_DATA, L"Treat as &Opaque (data)", ImageCore::AlphaUsage::Data);
+                InsertMenuW(
+                    hPopup,
+                    IDM_CTX_TOGGLE_DIRECTORIES,
+                    MF_BYCOMMAND | MF_POPUP,
+                    reinterpret_cast<UINT_PTR>(alphaMenu),
+                    L"Alpha &Channel");
+            }
+        }
+
         AppendMenuW(hPopup, MF_SEPARATOR, 0, nullptr);
         AppendMenuW(
             hPopup,

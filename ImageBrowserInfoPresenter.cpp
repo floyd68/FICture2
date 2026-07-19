@@ -146,6 +146,57 @@ ImageBrowserInfoPresenter::Output ImageBrowserInfoPresenter::Build(const Input& 
         output.infoText += dimensions;
         output.infoText += L" | ";
         output.infoText += DxgiFormatToString(format);
+        if (input.hasLoadedInfo && input.loadedInfo.sourceWasBlockCompressed)
+        {
+            output.infoText += L" | BC";
+        }
+        if (input.loadedInfo.sourceMipLevels > 1)
+        {
+            output.infoText += L" | Mip ";
+            output.infoText += std::to_wstring(input.loadedInfo.sourceMipIndex);
+            output.infoText += L" / ";
+            output.infoText += std::to_wstring(input.loadedInfo.sourceMipLevels - 1);
+            output.infoText += L" (";
+            output.infoText += std::to_wstring(input.loadedInfo.sourceMipLevels);
+            output.infoText += L" levels)";
+            if (input.loadedInfo.sourceMipIndex != 0 &&
+                input.loadedInfo.sourceWidth > 0 &&
+                input.loadedInfo.sourceHeight > 0)
+            {
+                output.infoText += L" | Source ";
+                output.infoText += std::to_wstring(input.loadedInfo.sourceWidth);
+                output.infoText += L" x ";
+                output.infoText += std::to_wstring(input.loadedInfo.sourceHeight);
+            }
+        }
+        if (input.hasLoadedInfo && width > 0 && height > 0)
+        {
+            static const wchar_t* kChannelNames[] = { L"RGBA", L"R", L"G", L"B", L"A" };
+            const int channel = (std::max)(0, (std::min)(4, input.loadedInfo.channelMode));
+            output.infoText += L" | ";
+            output.infoText += kChannelNames[channel];
+
+            auto alphaName = [](ImageCore::AlphaUsage usage) -> const wchar_t*
+            {
+                switch (usage)
+                {
+                case ImageCore::AlphaUsage::Coverage: return L"Transparency";
+                case ImageCore::AlphaUsage::Data: return L"Opaque";
+                case ImageCore::AlphaUsage::Auto: return L"Auto";
+                default: return L"Unknown";
+                }
+            };
+            output.infoText += L" | Alpha ";
+            output.infoText += alphaName(input.loadedInfo.effectiveAlphaUsage);
+            if (input.loadedInfo.alphaUsageOverride == ImageCore::AlphaUsage::Auto)
+            {
+                output.infoText += L" (Auto)";
+            }
+            else
+            {
+                output.infoText += L" (Override)";
+            }
+        }
         if (!archiveLabel.empty())
         {
             output.infoText += L" | ";

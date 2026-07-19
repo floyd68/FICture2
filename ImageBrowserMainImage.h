@@ -55,12 +55,27 @@ public:
     void RotateCW();
     void RotateCCW();
 
+    bool SelectMip(uint32_t mipLevel);
+    uint32_t MipLevel() const;
+    uint32_t MipLevels() const;
+
+    // 0=RGBA, 1=R, 2=G, 3=B, 4=A. Re-selecting the active mode returns to RGBA.
+    void SetChannelMode(int mode);
+    int ChannelMode() const { return m_channelMode; }
+
+    void SetAlphaUsageOverride(ImageCore::AlphaUsage usage);
+    ImageCore::AlphaUsage AlphaUsageOverride() const { return m_alphaUsageOverride; }
+    ImageCore::AlphaUsage EffectiveAlphaUsage() const;
+
     void SetAlphaCheckerboardEnabled(bool enabled);
     bool AlphaCheckerboardEnabled() const { return m_alphaCheckerboardEnabled; }
 
     void SetHighQualitySampling(bool enabled);
     bool HighQualitySampling() const { return m_highQualitySampling; }
     void ToggleSamplingQuality();
+
+    bool GpuPresentation() const { return m_gpuPresentation; }
+    std::wstring InformationText() const;
 
     void OnAttached(FD2D::Backplate& backplate) override;
     void OnGraphicsInvalidated(
@@ -98,6 +113,14 @@ private:
     uint32_t m_loadedH { 0 };
     DXGI_FORMAT m_loadedFormat { DXGI_FORMAT_UNKNOWN };
     ImageAlphaInfo m_alpha {};
+    ImageCore::AlphaUsage m_alphaUsageOverride { ImageCore::AlphaUsage::Auto };
+    uint32_t m_sourceMipLevels { 1 };
+    uint32_t m_sourceMipIndex { 0 };
+    uint32_t m_sourceWidth { 0 };
+    uint32_t m_sourceHeight { 0 };
+    bool m_selectingMip { false };
+    bool m_gpuPresentation { false };
+    int m_channelMode { 0 };
 
     bool m_alphaCheckerboardEnabled { false };
     bool m_interactionEnabled { true };

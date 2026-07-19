@@ -248,6 +248,8 @@ void ImageAsyncBinding::OnDecodeComplete(
         state->pending.alphaEncoding = image.alphaEncoding;
         state->pending.alphaUsageHint = image.alphaUsageHint;
         state->pending.sourceWasBlockCompressed = image.sourceWasBlockCompressed;
+        state->pending.sourceMipLevels = (std::max)(1u, image.sourceMipLevels);
+        state->pending.sourceMipIndex = image.sourceMipIndex;
         state->pending.sourcePath = normalizedSource;
         state->failedPath.clear();
         state->failedHr = S_OK;

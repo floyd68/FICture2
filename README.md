@@ -236,6 +236,12 @@ For details and the exact CMake flags used, see `docs/libarchive_integration.md`
   - zoom is critically-damped spring animated
   - pointer-based zoom (the point under the mouse stays fixed)
 - **Sampling quality toggle** for scaled image display (D2D + D3D11 paths)
+- **DDS mip inspection**: decode and display a selected mip level from the source chain
+  - **Ctrl + [** / **Ctrl + ]** step to the previous / next mip; right-click **Mip Level** picks a level
+  - Current mip index and source dimensions are shown in the info bar when a chain exists
+- **Channel isolation**: **R** / **G** / **B** / **A** show one channel as grayscale; **N** restores RGBA (D3D path)
+- **Alpha usage override**: right-click **Alpha Channel** chooses Auto / Transparency / Opaque (data)
+- **Image Information**: **I** (or context menu) shows path, format, mip, alpha, channel, and view state
 - **Image rotation**: rotate the current image 90° at a time
   - `<` / `>` keys rotate left / right; right-click menu adds **Rotate 180°** and **Reset Rotation**
   - Resets automatically when a different image is selected
@@ -283,15 +289,20 @@ For details and the exact CMake flags used, see `docs/libarchive_integration.md`
   - image: show in main view
 - **Backspace**: navigate up (same as `..`)
 - **Alt + Up**: navigate up (Explorer-style)
-- **N**: toggle navigation items visibility **globally** (folders + `..`) across all `ImageBrowser` instances
-- **Q**: toggle sampling quality (low/high)
+- **Alt + N**: toggle navigation items visibility **globally** (folders + `..`) across all `ImageBrowser` instances
+- **Alt + Q**: toggle sampling quality (low/high)
+- **Alt + A**: toggle alpha checkerboard
 - **Ctrl + O**: open file dialog, replace current viewer image/folder context
 - **Ctrl + Shift + O**: open file dialog, create a new viewer (up to 8 total); layout rebuilds to equal widths
 
 ### Main image view (focused `ImageBrowser`)
 
+- **R** / **G** / **B** / **A**: isolate a channel as grayscale; **N**: restore RGBA
+- **I**: Image Information dialog
 - **<**: rotate the current image 90° left
 - **>**: rotate the current image 90° right
+- **Ctrl + [**: previous DDS mip level
+- **Ctrl + ]**: next DDS mip level
 
 ## Mouse controls (main image)
 

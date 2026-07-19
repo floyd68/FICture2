@@ -33,6 +33,12 @@
 #define IDM_CTX_ROTATE_RIGHT            32787
 #define IDM_CTX_ROTATE_180              32788
 #define IDM_CTX_ROTATE_RESET            32789
+#define IDM_CTX_IMAGE_INFORMATION       32793
+#define IDM_CTX_ALPHA_AUTO              32794
+#define IDM_CTX_ALPHA_COVERAGE          32795
+#define IDM_CTX_ALPHA_DATA              32796
+#define IDM_CTX_MIP_BASE                32820
+#define IDM_CTX_MIP_LAST                32851
 #define IDC_STATIC                      -1
 
 // Next default values for new objects
@@ -41,7 +47,7 @@
 #ifndef APSTUDIO_READONLY_SYMBOLS
 #define _APS_NO_MFC                     1
 #define _APS_NEXT_RESOURCE_VALUE        132
-#define _APS_NEXT_COMMAND_VALUE         32820
+#define _APS_NEXT_COMMAND_VALUE         32852
 #define _APS_NEXT_CONTROL_VALUE         1000
 #define _APS_NEXT_SYMED_VALUE           110
 #endif
