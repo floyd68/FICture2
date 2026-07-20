@@ -221,8 +221,10 @@ For details and the exact CMake flags used, see `docs/libarchive_integration.md`
 ## Features
 
 - **Thumbnail strip + main image** optimized for DDS-heavy folders
+  - Horizontal **scrollbar** appears when the strip overflows (drag to scroll)
 - **Folder navigation** inside the thumbnail strip (includes `..` “up” item)
-- **Archive browsing**: ZIP / 7Z / RAR / BA2 (images and folders)
+- **Archive browsing**: ZIP / 7Z / RAR / BA2 / BSA (images and folders)
+  - Archive readers are cached so browsing large BA2/BSA packs stays responsive
 - **Supported image formats**: DDS, PNG, JPG/JPEG, BMP, GIF, TIF/TIFF, TGA
 - **Compare / multi-view**: open up to **8** viewers in an equal-width compare grid
   - 1–4 panes: single row
@@ -240,7 +242,11 @@ For details and the exact CMake flags used, see `docs/libarchive_integration.md`
   - **Ctrl + [** / **Ctrl + ]** step to the previous / next mip; right-click **Mip Level** picks a level
   - Current mip index and source dimensions are shown in the info bar when a chain exists
 - **Channel isolation**: **R** / **G** / **B** / **A** show one channel as grayscale; **N** restores RGBA (D3D path)
-- **Alpha usage override**: right-click **Alpha Channel** chooses Auto / Transparency / Opaque (data)
+- **Alpha presentation**:
+  - Separates alpha *encoding* (straight / premultiplied) from alpha *usage* (transparency / data)
+  - Data-bearing alpha (e.g. height in a normal map) no longer darkens the color channels by default
+  - Right-click **Alpha Channel** overrides Auto / Transparency / Opaque (data)
+  - **Alt + A** toggles the alpha checkerboard background (display aid only)
 - **Image Information**: **I** (or context menu) shows path, format, mip, alpha, channel, and view state
 - **Image rotation**: rotate the current image 90° at a time
   - `<` / `>` keys rotate left / right; right-click menu adds **Rotate 180°** and **Reset Rotation**
@@ -266,6 +272,7 @@ For details and the exact CMake flags used, see `docs/libarchive_integration.md`
 - **Drag & drop** (main image region):
   - **Left 3/4** drop zone: replace the current `ImageBrowser` folder/image with the dropped path (**red overlay** while dragging)
   - **Right 1/4** drop zone: insert a new `ImageBrowser` to the right and open the dropped path there (**green overlay** while dragging)
+  - Overlays paint above the compare chrome so the tint stays visible across panes
   - **Multi-select drag & drop**: drop multiple images/folders/archives to open up to 8 viewers
   - **Unsupported files** show an X cursor and cannot be dropped
 - **File associations**: register or unregister supported image types from the context menu (per-user / HKCU only; menu label toggles based on current state)
@@ -324,7 +331,7 @@ For details and the exact CMake flags used, see `docs/libarchive_integration.md`
 ## Supported formats
 
 - **Images**: `.dds`, `.png`, `.jpg`, `.jpeg`, `.bmp`, `.gif`, `.tif`, `.tiff`, `.tga`
-- **Archives**: `.zip`, `.7z`, `.rar`, `.ba2` (browse images + folders)
+- **Archives**: `.zip`, `.7z`, `.rar`, `.ba2`, `.bsa` (browse images + folders)
 
 ## File associations & thumbnails
 

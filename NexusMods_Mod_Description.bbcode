@@ -1,6 +1,6 @@
 [center][size=5][b]FICture2 – Ultra-Fast Image Compare & DDS Texture Viewer for Modders[/b][/size][/center]
 
-[center][size=6][url=https://github.com/floyd68/FICture2/releases/tag/1.5]v1.5 Release[/url][/size][/center]
+[center][size=6][url=https://github.com/floyd68/FICture2/releases/tag/1.6]v1.6 Release[/url][/size][/center]
 
 [b]FICture2[/b] is an ultra-lightweight, high-performance image viewer and comparison tool built specifically for game modders and texture artists.
 
@@ -10,7 +10,22 @@ Double-click a texture and you're already comparing it.
 [center][size=4][b]📺 Demo Video[/b][/size]
 [youtube]2eowYOEa5dw[/youtube][/center]
 
-[size=4][b]🆕 What's New in v1.5[/b][/size]
+[size=4][b]🆕 What's New in v1.6[/b][/size]
+[list]
+[*][b]New:[/b] DDS mip inspection — [b]Ctrl + [[/b] / [b]Ctrl + ][/b] step mip levels; right-click [b]Mip Level[/b] picks a level. Current mip and source dimensions show in the info bar[/*]
+[*][b]New:[/b] Channel isolation — [b]R[/b] / [b]G[/b] / [b]B[/b] / [b]A[/b] show one channel as grayscale; [b]N[/b] restores RGBA (D3D path)[/*]
+[*][b]New:[/b] Alpha Channel override — right-click chooses Auto / Transparency / Opaque (data). Encoding (straight/premultiplied) is kept separate from usage so data-bearing alpha no longer darkens colors by mistake[/*]
+[*][b]New:[/b] Image Information — press [b]I[/b] (or use the context menu) for path, format, mip, alpha, channel, and view state[/*]
+[*][b]New:[/b] Compare up to [b]8[/b] viewers in an equal-width grid (5–6 panes: 2×3; 7–8 panes: 2×4)[/*]
+[*][b]New:[/b] Open Recent (MRU) from the right-click menu, with Clear Recent Files[/*]
+[*][b]New:[/b] Save Pane Screenshot from the composed offscreen frame — not blocked by overlapping windows[/*]
+[*][b]New:[/b] BSA archive browsing alongside ZIP / 7Z / RAR / BA2; archive readers are cached for snappier large-pack browsing[/*]
+[*][b]New:[/b] Thumbnail-strip horizontal scrollbar when the strip overflows[/*]
+[*][b]Improved:[/b] Path / info bar tooltips; right-click the path to copy it[/*]
+[*][b]Changed:[/b] Hotkeys — navigation toggle is now [b]Alt + N[/b], sampling quality is [b]Alt + Q[/b], alpha checkerboard is [b]Alt + A[/b] ([b]N[/b] is used to restore RGBA after channel isolation)[/*]
+[/list]
+
+[size=4][b]What's New in v1.5[/b][/size]
 [list]
 [*][b]New:[/b] Image rotation — rotate the current image 90° with the [b]<[/b] / [b]>[/b] keys, or use the right-click menu for Rotate Left/Right, Rotate 180°, and Reset Rotation. The current angle is shown next to the zoom percentage[/*]
 [*][b]Fixed:[/b] Rotated images no longer lose their aspect ratio — they now stay correctly proportioned at any rotation[/*]
@@ -86,7 +101,8 @@ but in reality:
 [list]
 [*]Native DDS support via DirectXTex[/*]
 [*]Correct decoding of BC1 / BC3 / BC4 / BC5 / BC6H / BC7[/*]
-[*]Accurate alpha channel handling[/*]
+[*]Accurate alpha channel handling (encoding vs usage; coverage vs data)[/*]
+[*]Mip-level inspection without flattening the chain[/*]
 [*]No forced recompression[/*]
 [*]No incorrect color-space shortcuts[/*]
 [/list]
@@ -107,7 +123,7 @@ What you see in FICture2 is what the engine actually gets.
 [size=4][b]🔄 Image Compare Mode (Side-by-Side)[/b][/size]
 
 [list]
-[*]Compare 2–4 images simultaneously[/*]
+[*]Compare 2–8 images simultaneously[/*]
 [*]Perfect for A/B testing multiple texture replacements[/*]
 [*]Split-view comparison with synchronized navigation[/*]
 [/list]
@@ -140,15 +156,17 @@ FICture2 is a natural companion tool for Vortex.
 [*]Images and subfolders (including ..)[/*]
 [*]Folder previews with embedded image thumbnails[/*]
 [*]Handles real mod directory structures[/*]
+[*]Browse inside ZIP / 7Z / RAR / BA2 / BSA archives[/*]
 [/list]
 
 
 [size=4][b]🧭 Quick Usage Tips[/b][/size]
 
 [list]
-[*]Drag & drop images/folders/archives to open quickly (drop multiple files to open up to 4 views)[/*]
+[*]Drag & drop images/folders/archives to open quickly (drop multiple files to open up to 8 views)[/*]
 [*]Right-click the main view to register file associations for supported image types[/*]
 [*]Right-click to register DDS thumbnails in Explorer (admin prompt appears)[/*]
+[*]Use [b]R/G/B/A[/b] and mip shortcuts to inspect packed texture channels[/*]
 [/list]
 
 
@@ -156,7 +174,7 @@ FICture2 is a natural companion tool for Vortex.
 
 [list]
 [*]Images: DDS, PNG, JPG/JPEG/JFIF, BMP, GIF, TIF/TIFF, TGA, ICO, WEBP, HEIF/HEIC, HDR, EXR[/*]
-[*]Archives: ZIP, 7Z, RAR, BA2 (browse images + folders)[/*]
+[*]Archives: ZIP, 7Z, RAR, BA2, BSA (browse images + folders)[/*]
 [/list]
 
 
@@ -168,11 +186,15 @@ FICture2 is a natural companion tool for Vortex.
 [*]Left / Right: move selection in the thumbnail list[/*]
 [*]Enter: open selected image/folder[/*]
 [*]Backspace / Alt + Up: go to parent folder[/*]
-[*]N: show/hide folders (including ..)[/*]
-[*]Q: toggle sampling quality (sharp pixels vs smooth)[/*]
+[*]Alt + N: show/hide folders (including ..)[/*]
+[*]Alt + Q: toggle sampling quality (sharp pixels vs smooth)[/*]
+[*]Alt + A: toggle alpha checkerboard[/*]
+[*]R / G / B / A: isolate a channel; N: restore RGBA[/*]
+[*]I: Image Information[/*]
+[*]Ctrl + [ / Ctrl + ]: previous / next DDS mip level[/*]
 [*]< / >: rotate the current image 90° left / right[/*]
 [*]Ctrl + O: open and replace current view[/*]
-[*]Ctrl + Shift + O: open a new view (up to 4)[/*]
+[*]Ctrl + Shift + O: open a new view (up to 8)[/*]
 [/list]
 
 

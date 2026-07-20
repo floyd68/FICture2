@@ -437,14 +437,22 @@ namespace
             }
 
             Wnd::OnRender(target);
+        }
 
-            if (target == nullptr)
+        // Fixed-band overlays (FD2D OverlayLayer): paint chrome after the content
+        // tree so drag tint / folder icons stay above siblings without a z-index.
+        void OnRenderOverlay(
+            ID2D1RenderTarget* target,
+            FD2D::OverlayLayer layer) override
+        {
+            if (target == nullptr || layer != FD2D::OverlayLayer::Chrome)
             {
                 return;
             }
 
-            // Drag&drop overlay (drawn on top of the main image area only).
-            if (m_dragOverlay != ImageBrowserDragController::OverlayKind::None && m_mainPane != nullptr)
+            // Drag&drop overlay (main image area only).
+            if (m_dragOverlay != ImageBrowserDragController::OverlayKind::None &&
+                m_mainPane != nullptr)
             {
                 m_mainPane->RenderOnMainRect([this, target](const D2D1_RECT_F& mainRect)
                 {
@@ -452,9 +460,10 @@ namespace
                 });
             }
 
-            // Draw folder / parent-folder icon in main image area if a folder is selected
+            // Folder / parent-folder icon when a folder tile is selected.
             if (m_selectedIndex < m_items.size() &&
-                (m_items[m_selectedIndex].kind == ThumbItemKind::Folder || m_items[m_selectedIndex].kind == ThumbItemKind::Up) &&
+                (m_items[m_selectedIndex].kind == ThumbItemKind::Folder ||
+                    m_items[m_selectedIndex].kind == ThumbItemKind::Up) &&
                 m_mainPane != nullptr)
             {
                 const bool isUp = (m_items[m_selectedIndex].kind == ThumbItemKind::Up);
@@ -470,6 +479,14 @@ namespace
                     }
                 }
             }
+        }
+
+        // Decorative chrome only — do not claim the Chrome input band (keeps
+        // hover tooltips and normal hit-testing intact while drag tint paints).
+        bool IsOverlayActive(FD2D::OverlayLayer layer) const override
+        {
+            UNREFERENCED_PARAMETER(layer);
+            return false;
         }
 
         bool OnInputEvent(const FD2D::InputEvent& event) override
