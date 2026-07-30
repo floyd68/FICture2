@@ -17,6 +17,20 @@ Watch the demo: [https://youtu.be/2eowYOEa5dw](https://youtu.be/2eowYOEa5dw)
 
 FICture2 is available on NexusMods: [https://www.nexusmods.com/fallout4/mods/100267](https://www.nexusmods.com/fallout4/mods/100267)
 
+## What's New in v1.7
+
+- **New:** DDS mip inspection — **Ctrl + [** / **Ctrl + ]** step mip levels; right-click **Mip Level** picks a level. Current mip and source dimensions show in the info bar
+- **New:** Channel isolation — **R** / **G** / **B** / **A** show one channel as grayscale; **N** restores RGBA (D3D path)
+- **New:** Alpha Channel override — right-click chooses Auto / Transparency / Opaque (data). Encoding (straight/premultiplied) is kept separate from usage so data-bearing alpha no longer darkens colors by mistake
+- **New:** Image Information — press **I** (or use the context menu) for path, format, mip, alpha, channel, and view state
+- **New:** Compare up to **8** viewers in an equal-width grid (5–6 panes: 2×3; 7–8 panes: 2×4)
+- **New:** Open Recent (MRU) from the right-click menu, with Clear Recent Files
+- **New:** Save Pane Screenshot from the composed offscreen frame — not blocked by overlapping windows
+- **New:** BSA archive browsing alongside ZIP / 7Z / RAR / BA2; archive readers are cached for snappier large-pack browsing
+- **New:** Thumbnail-strip horizontal scrollbar when the strip overflows
+- **Improved:** Path / info bar tooltips; right-click the path to copy it
+- **Changed:** Hotkeys — navigation toggle is now **Alt + N**, sampling quality is **Alt + Q**, alpha checkerboard is **Alt + A** (**N** is used to restore RGBA after channel isolation)
+
 ## Why FICture2 exists
 
 Most image viewers claim to support DDS — but in reality:
