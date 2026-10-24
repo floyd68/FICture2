@@ -239,7 +239,7 @@ endif()
 # First-party test options. Testing must be enabled at the top level before the
 # subprojects that register tests are added; vendored suites stay off through
 # BUILD_TESTING above.
-if(FICTURE2_BUILD_TESTS OR IMAGECORE_BUILD_TESTS)
+if(FICTURE2_BUILD_TESTS OR IMAGECORE_BUILD_TESTS OR FD2D_BUILD_TESTS)
     enable_testing()
 endif()
 
