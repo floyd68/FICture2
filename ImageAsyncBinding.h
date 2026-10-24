@@ -30,6 +30,20 @@
 
 class ImageAsyncBinding;
 
+// Decode backend used by ImageAsyncBinding. Production uses ImageCore::ImageLoader;
+// tests install a fake through ImageAsyncBinding::SetDecodeServiceForTesting to
+// control when and in which order completions are delivered.
+class IImageDecodeService
+{
+public:
+    virtual ~IImageDecodeService() = default;
+
+    virtual ImageCore::ImageHandle RequestDecoded(
+        const ImageCore::ImageRequest& request,
+        ImageCore::DecodedImageLoadCallback callback) = 0;
+    virtual void Cancel(ImageCore::ImageHandle handle) = 0;
+};
+
 // Global registry so app shutdown can invalidate all in-flight bindings
 // before ImageCore::ImageLoader::Shutdown().
 class ImageAsyncBindingRegistry
@@ -135,6 +149,10 @@ public:
     {
         return fmt == DXGI_FORMAT_B8G8R8A8_UNORM || fmt == DXGI_FORMAT_B8G8R8A8_UNORM_SRGB;
     }
+
+    // Tests only: route decode requests/cancels to `service` (nullptr restores
+    // ImageCore::ImageLoader). Install before creating bindings that use it.
+    static void SetDecodeServiceForTesting(IImageDecodeService* service);
 
 private:
     friend class ImageAsyncBindingRegistry;

@@ -8,6 +8,29 @@
 
 namespace
 {
+    std::atomic<IImageDecodeService*> g_decodeServiceOverride { nullptr };
+
+    ImageCore::ImageHandle RequestDecode(
+        const ImageCore::ImageRequest& request,
+        ImageCore::DecodedImageLoadCallback callback)
+    {
+        if (IImageDecodeService* service = g_decodeServiceOverride.load())
+        {
+            return service->RequestDecoded(request, std::move(callback));
+        }
+        return ImageCore::ImageLoader::Instance().RequestDecoded(request, std::move(callback));
+    }
+
+    void CancelDecode(ImageCore::ImageHandle handle)
+    {
+        if (IImageDecodeService* service = g_decodeServiceOverride.load())
+        {
+            service->Cancel(handle);
+            return;
+        }
+        ImageCore::ImageLoader::Instance().Cancel(handle);
+    }
+
     void RequestRedrawFromState(const std::shared_ptr<ImageAsyncBindingState>& state)
     {
         if (!state)
@@ -121,7 +144,7 @@ void ImageAsyncBinding::InvalidateState(const std::shared_ptr<ImageAsyncBindingS
 
     if (handle != 0)
     {
-        ImageCore::ImageLoader::Instance().Cancel(handle);
+        CancelDecode(handle);
     }
 
     state->loading.store(false);
@@ -162,14 +185,14 @@ void ImageAsyncBinding::RequestLoad(
 
     if (oldHandle != 0)
     {
-        ImageCore::ImageLoader::Instance().Cancel(oldHandle);
+        CancelDecode(oldHandle);
     }
 
     m_state->inflightGeneration.store(gen);
     m_state->loading.store(true);
 
     auto state = m_state;
-    const ImageCore::ImageHandle handle = ImageCore::ImageLoader::Instance().RequestDecoded(
+    const ImageCore::ImageHandle handle = RequestDecode(
         request,
         [state, gen, normalizedPath](HRESULT hr, ImageCore::DecodedImage image)
         {
@@ -204,7 +227,7 @@ void ImageAsyncBinding::RequestLoad(
         else if (handle != 0)
         {
             // Cancelled / superseded before we could store the handle.
-            ImageCore::ImageLoader::Instance().Cancel(handle);
+            CancelDecode(handle);
         }
     }
 }
@@ -360,6 +383,11 @@ bool ImageAsyncBinding::HasPendingCpuBgra8For(const std::wstring& path) const
     return m_state->pending.blocks
         && IsCpuBgra8Format(m_state->pending.format)
         && m_state->pending.sourcePath == path;
+}
+
+void ImageAsyncBinding::SetDecodeServiceForTesting(IImageDecodeService* service)
+{
+    g_decodeServiceOverride.store(service);
 }
 
 HRESULT ImageAsyncBinding::CreateD2DBitmap(

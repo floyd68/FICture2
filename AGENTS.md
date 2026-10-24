@@ -56,14 +56,16 @@
   C++20, CMake >= 3.21. Shipped builds use `MinSizeRel`.
 - Local verification for every PR:
   ```
-  cmake -S . -B build -G "Visual Studio 18 2026" -A x64
+  cmake -S . -B build -G "Visual Studio 18 2026" -A x64 -DFICTURE2_BUILD_TESTS=ON
   cmake --build build --config Debug
   cmake --build build --config MinSizeRel
+  ctest --test-dir build -C Debug --output-on-failure
   ```
   Report new warnings introduced by the change.
-- There is no first-party test suite yet. Each repository gets its test option
-  (default OFF) with its first test-bearing issue: `FICTURE2_BUILD_TESTS`
-  (FICture2 #7), `IMAGECORE_BUILD_TESTS`, `FD2D_BUILD_TESTS`,
+- FICture2 tests live in `tests/` and build with
+  `-DFICTURE2_BUILD_TESTS=ON` (non-window tests only). Each repository gets its
+  test option (default OFF) with its first test-bearing issue:
+  `FICTURE2_BUILD_TESTS` (FICture2 #7), `IMAGECORE_BUILD_TESTS`, `FD2D_BUILD_TESTS`,
   `FLOAR_BUILD_TESTS`, and `THUMBNAILPROVIDER_BUILD_TESTS`; vendored
   dependency tests stay off. ImageCore, FD2D and ThumbnailProvider have no
   standalone CMake project and depend on the FICture2 tree, so their tests are
