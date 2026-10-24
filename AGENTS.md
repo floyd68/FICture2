@@ -64,8 +64,12 @@
 - There is no first-party test suite yet. Each repository gets its test option
   (default OFF) with its first test-bearing issue: `FICTURE2_BUILD_TESTS`
   (FICture2 #7), `IMAGECORE_BUILD_TESTS`, `FD2D_BUILD_TESTS`,
-  `FLOAR_BUILD_TESTS`, and one for ThumbnailProvider; vendored dependency
-  tests stay off. When test targets exist, also run
+  `FLOAR_BUILD_TESTS`, and `THUMBNAILPROVIDER_BUILD_TESTS`; vendored
+  dependency tests stay off. ImageCore, FD2D and ThumbnailProvider have no
+  standalone CMake project and depend on the FICture2 tree, so their tests are
+  enabled when configuring FICture2 (for example
+  `-DIMAGECORE_BUILD_TESTS=ON`); Floar can also be built standalone. When test
+  targets exist, also run
   `ctest --test-dir build -C Debug --output-on-failure` and treat failures as
   blocking. New logic that can be tested without a window (scheduler, binding,
   IPC queue, caches, path handling) should come with tests once the test option
