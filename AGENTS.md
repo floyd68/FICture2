@@ -56,7 +56,7 @@
   C++20, CMake >= 3.21. Shipped builds use `MinSizeRel`.
 - Local verification for every PR:
   ```
-  cmake -S . -B build -G "Visual Studio 18 2026" -A x64 -DFICTURE2_BUILD_TESTS=ON
+  cmake -S . -B build -G "Visual Studio 18 2026" -A x64 -DFICTURE2_BUILD_TESTS=ON -DIMAGECORE_BUILD_TESTS=ON
   cmake --build build --config Debug
   cmake --build build --config MinSizeRel
   ctest --test-dir build -C Debug --output-on-failure
@@ -127,7 +127,21 @@
    issue. The reviewer is authorized to merge every PR that passes
    review, except a `needs-manual-test` PR, which waits until the manual test
    is reported done.
-6. GitHub does not allow approving or requesting changes on a PR authored by
+6. **Submodule PR + consuming FICture2 PR (one unit):** review both together,
+   then merge in this order:
+   1. Squash-merge the submodule PR into the submodule's `master` and delete
+      its branch. The squash creates a new commit; the branch commit that the
+      FICture2 PR pins is no longer on any branch.
+   2. On the FICture2 branch, re-pin the submodule to that squash commit on the
+      submodule's `master` (`git -C <Submodule> fetch` then check out the
+      commit, commit `Bump <Submodule> pin; ...`), push, and re-run the
+      required builds and tests.
+   3. Confirm the pinned commit is reachable from the submodule's
+      `origin/master`, then squash-merge the FICture2 PR. Its
+      `Fixes floyd68/<repo>#N` closes the submodule issue.
+
+   Never merge the FICture2 PR while it pins a submodule branch commit.
+7. GitHub does not allow approving or requesting changes on a PR authored by
    the same account; review state is expressed with labels and comments.
 
 ## Command: "배포" (release)
