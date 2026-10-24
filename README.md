@@ -19,6 +19,7 @@ FICture2 is available on NexusMods: [https://www.nexusmods.com/fallout4/mods/100
 
 ## What's New in v1.7
 
+- **Fixed:** An intermittent hang on exit (and a way for thumbnails to stall) caused by decode threads missing their shutdown or cache-space wakeup
 - **Fixed:** A redraw-signal race that could leave decoded images waiting for another repaint
 - **Fixed:** Thumbnails now load when only one decode worker is available, including the default configuration on two-hardware-thread systems
 - **New:** DDS mip inspection — **Ctrl + [** / **Ctrl + ]** step mip levels; right-click **Mip Level** picks a level. Current mip and source dimensions show in the info bar
