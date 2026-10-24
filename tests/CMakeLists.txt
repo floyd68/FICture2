@@ -14,6 +14,10 @@ add_executable(FICture2Tests
     ${PROJECT_SOURCE_DIR}/ImageGpuResourceCache.cpp
     ${PROJECT_SOURCE_DIR}/ImageAlphaPresentation.cpp
     ${PROJECT_SOURCE_DIR}/ImageBrowserMainImage.cpp
+    ${PROJECT_SOURCE_DIR}/ImageBrowserThumbImage.cpp
+    ${PROJECT_SOURCE_DIR}/ImageBrowserAssets.cpp
+    ${PROJECT_SOURCE_DIR}/ThumbImageTile.cpp
+    ${PROJECT_SOURCE_DIR}/ThumbNavTile.cpp
     ${PROJECT_SOURCE_DIR}/ImageAsyncBinding.cpp
 )
 

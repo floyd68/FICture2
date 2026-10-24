@@ -2,10 +2,13 @@
 
 #include "CommonUtil.h"
 #include "FD2D/Backplate.h"
+#include "FD2D/Core.h"
 #include "ImageAsyncBinding.h"
 #include "ImageBrowserMainImage.h"
 #include "ImageGpuResourceCache.h"
 #include "ImageSourceIdentity.h"
+#include "ThumbImageTile.h"
+#include "ThumbNavTile.h"
 
 #include <windows.h>
 #include <d2d1.h>
@@ -13,6 +16,7 @@
 #include <wincodec.h>
 #include <wrl/client.h>
 
+#include <cstdio>
 #include <filesystem>
 #include <fstream>
 #include <memory>
@@ -28,6 +32,11 @@ namespace FD2D
 {
     struct BackplateTestAccess
     {
+        static void TargetRecreated(Backplate& backplate)
+        {
+            backplate.InvalidateGraphics(GraphicsInvalidationReason::TargetRecreated, false, true, false);
+        }
+
         static void DeviceLost(Backplate& backplate)
         {
             backplate.DiscardDeviceResources();
@@ -296,4 +305,100 @@ FIC2_TEST(MainImage_DeviceLossAtNonzeroMipKeepsSourceMetadata)
     FIC2_CHECK(main->MipLevels() == 3);
     // Old-device SRVs were released from the cache.
     FIC2_CHECK(ImageGpuResourceCache::Instance().EntryCount() == 0);
+}
+
+namespace
+{
+    // A software render target on its own D2D factory (= its own resource domain).
+    struct DomainCanvas
+    {
+        ComPtr<ID2D1Factory> d2d;
+        ComPtr<IWICBitmap> bitmap;
+        ComPtr<ID2D1RenderTarget> target;
+
+        bool Create(IWICImagingFactory* wic)
+        {
+            if (FAILED(D2D1CreateFactory(D2D1_FACTORY_TYPE_SINGLE_THREADED, d2d.GetAddressOf())) ||
+                FAILED(wic->CreateBitmap(96, 96, GUID_WICPixelFormat32bppPBGRA, WICBitmapCacheOnLoad, &bitmap)))
+            {
+                return false;
+            }
+            const D2D1_RENDER_TARGET_PROPERTIES props = D2D1::RenderTargetProperties(
+                D2D1_RENDER_TARGET_TYPE_SOFTWARE,
+                D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM, D2D1_ALPHA_MODE_PREMULTIPLIED), 96.0f, 96.0f);
+            return SUCCEEDED(d2d->CreateWicBitmapRenderTarget(bitmap.Get(), props, &target));
+        }
+
+        HRESULT Draw(FD2D::Wnd& wnd)
+        {
+            target->BeginDraw();
+            target->Clear(D2D1::ColorF(0, 0, 0, 1));
+            wnd.OnRender(target.Get());
+            return target->EndDraw();
+        }
+    };
+
+    struct CoreScope
+    {
+        HRESULT hr = S_FALSE;
+        CoreScope()
+        {
+            FD2D::InitContext context {};
+            context.instance = GetModuleHandleW(nullptr);
+            hr = FD2D::Core::Initialize(context);
+        }
+        ~CoreScope()
+        {
+            if (hr == S_OK)
+            {
+                FD2D::Core::Shutdown();
+            }
+        }
+    };
+}
+
+FIC2_TEST(MainImage_ThumbnailTilesRebuildBrushesAfterTargetChange)
+{
+    // Regression (device recreation left the window frozen): the tiles' brushes
+    // and their embedded caption/badge Text labels kept resources from the old
+    // target, so every frame after a device loss failed EndDraw.
+    ComScope com;
+    CoreScope core;   // captions need DirectWrite
+    ComPtr<IWICImagingFactory> wic;
+    FIC2_REQUIRE(SUCCEEDED(CoCreateInstance(CLSID_WICImagingFactory, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&wic))));
+    DomainCanvas a;
+    DomainCanvas b;
+    FIC2_REQUIRE(a.Create(wic.Get()));
+    FIC2_REQUIRE(b.Create(wic.Get()));
+
+    struct Case
+    {
+        const char* name;
+        std::shared_ptr<FD2D::Wnd> wnd;
+    };
+    auto imageTile = std::make_shared<ThumbImageTile>(L"imageTile");
+    imageTile->SetCaption(L"caption.dds");
+    auto navTile = std::make_shared<ThumbNavTile>(L"navTile");
+    navTile->SetIcon(ThumbNavTile::IconKind::Folder);
+    navTile->SetText(L"folder");
+    navTile->SetBadgeText(L"ZIP");
+    const Case cases[] = { { "ThumbImageTile", imageTile }, { "ThumbNavTile", navTile } };
+
+    for (const auto& c : cases)
+    {
+        FD2D::Backplate backplate(L"tile-test");
+        FIC2_REQUIRE(backplate.AddWnd(c.wnd));
+        c.wnd->SetLayoutRect(D2D1::RectF(0.0f, 0.0f, 96.0f, 96.0f));
+
+        const HRESULT first = a.Draw(*c.wnd);
+        const HRESULT otherDomainSameGeneration = b.Draw(*c.wnd);
+        FD2D::BackplateTestAccess::TargetRecreated(backplate);
+        const HRESULT afterTargetBump = b.Draw(*c.wnd);
+        std::printf("  %-14s first 0x%08X, other domain same generation 0x%08X, after target bump 0x%08X\n",
+            c.name, static_cast<unsigned>(first), static_cast<unsigned>(otherDomainSameGeneration),
+            static_cast<unsigned>(afterTargetBump));
+        FIC2_CHECK(SUCCEEDED(first));
+        FIC2_CHECK(FAILED(otherDomainSameGeneration));   // resources are cached ...
+        FIC2_CHECK(SUCCEEDED(afterTargetBump));          // ... and rebuilt for the new target
+    }
 }

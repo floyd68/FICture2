@@ -425,6 +425,10 @@ namespace
                 if (!d3dActive)
                 {
                     const D2D1_COLOR_F bg = paneFocused ? m_browserFocusedBackgroundColor : m_browserBackgroundColor;
+                    if (RefreshTargetResourceStamp(m_browserBackgroundBrushStamp))
+                    {
+                        m_browserBackgroundBrush.Reset();
+                    }
                     if (!m_browserBackgroundBrush)
                     {
                         (void)target->CreateSolidColorBrush(bg, m_browserBackgroundBrush.ReleaseAndGetAddressOf());
@@ -457,7 +461,7 @@ namespace
             {
                 m_mainPane->RenderOnMainRect([this, target](const D2D1_RECT_F& mainRect)
                 {
-                    m_dragController.DrawOverlay(target, mainRect, m_dragOverlay);
+                    m_dragController.DrawOverlay(target, mainRect, m_dragOverlay, CurrentTargetStamp());
                 });
             }
 
@@ -471,7 +475,7 @@ namespace
                 const auto iconKind = isUp
                     ? ImageBrowserAssets::FolderIconKind::FolderUp
                     : ImageBrowserAssets::FolderIconKind::Folder;
-                if (m_assets.EnsureFolderBitmap(target, iconKind))
+                if (m_assets.EnsureFolderBitmap(target, CurrentTargetStamp(), iconKind))
                 {
                     ID2D1Bitmap* bitmap = isUp ? m_assets.FolderUpBitmap() : m_assets.FolderBitmap();
                     if (bitmap != nullptr)
@@ -2925,6 +2929,7 @@ namespace
         D2D1_COLOR_F m_browserBackgroundColor { 0.09f, 0.09f, 0.10f, 1.0f };
         D2D1_COLOR_F m_browserFocusedBackgroundColor { 0.18f, 0.16f, 0.03f, 1.0f };
         Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> m_browserBackgroundBrush {};
+        FD2D::GraphicsResourceStamp m_browserBackgroundBrushStamp {};
 
         static void CaptureSplitRatiosRecursive(
             const std::shared_ptr<FD2D::Wnd>& node,

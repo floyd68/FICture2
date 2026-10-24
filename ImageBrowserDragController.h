@@ -43,7 +43,10 @@ public:
         FD2D::FileDragVisual& outVisual,
         OverlayKind& outOverlay) const;
 
-    void DrawOverlay(ID2D1RenderTarget* target, const D2D1_RECT_F& rect, OverlayKind kind);
+    // `stamp`: the owner's current target stamp; cached brushes are recreated
+    // when it changes (target/device recreation).
+    void DrawOverlay(ID2D1RenderTarget* target, const D2D1_RECT_F& rect, OverlayKind kind,
+        const FD2D::GraphicsResourceStamp& stamp);
     void SetInsertThreshold(float threshold);
     float InsertThreshold() const { return m_insertThreshold; }
 
@@ -51,4 +54,5 @@ private:
     float m_insertThreshold { 0.75f };
     Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> m_replaceBrush {};
     Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> m_insertBrush {};
+    FD2D::GraphicsResourceStamp m_brushStamp {};
 };

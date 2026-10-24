@@ -182,7 +182,10 @@ bool ImageBrowserAssets::CreateFolderIconBitmap(
     return true;
 }
 
-bool ImageBrowserAssets::EnsureFolderBitmap(ID2D1RenderTarget* target, FolderIconKind kind)
+bool ImageBrowserAssets::EnsureFolderBitmap(
+    ID2D1RenderTarget* target,
+    const FD2D::GraphicsResourceStamp& stamp,
+    FolderIconKind kind)
 {
     if (target == nullptr)
     {
@@ -191,22 +194,22 @@ bool ImageBrowserAssets::EnsureFolderBitmap(ID2D1RenderTarget* target, FolderIco
 
     Microsoft::WRL::ComPtr<ID2D1Bitmap>& bitmap =
         (kind == FolderIconKind::FolderUp) ? m_folderUpBitmap : m_folderBitmap;
-    ID2D1RenderTarget*& cachedTarget =
-        (kind == FolderIconKind::FolderUp) ? m_folderUpBitmapTarget : m_folderBitmapTarget;
+    FD2D::GraphicsResourceStamp& cachedStamp =
+        (kind == FolderIconKind::FolderUp) ? m_folderUpBitmapStamp : m_folderBitmapStamp;
 
-    if (bitmap && cachedTarget == target)
+    if (bitmap && cachedStamp == stamp)
     {
         return true;
     }
 
     bitmap.Reset();
-    cachedTarget = nullptr;
+    cachedStamp = {};
 
     if (!CreateFolderIconBitmap(target, kind, nullptr, bitmap))
     {
         return false;
     }
 
-    cachedTarget = target;
+    cachedStamp = stamp;
     return true;
 }

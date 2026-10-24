@@ -36,7 +36,7 @@ void ThumbNavTile::SetIcon(IconKind kind)
 
     m_icon = kind;
     m_folderBitmap.Reset();
-    m_folderBitmapTarget = nullptr;
+    m_folderBitmapStamp = {};
     m_folderBitmapKind = IconKind::None;
     Invalidate();
 }
@@ -62,7 +62,7 @@ void ThumbNavTile::SetIconTint(IconTint tint)
 
     m_iconTint = tint;
     m_folderBitmap.Reset();
-    m_folderBitmapTarget = nullptr;
+    m_folderBitmapStamp = {};
     m_folderBitmapKind = IconKind::None;
     Invalidate();
 }
@@ -249,6 +249,16 @@ void ThumbNavTile::OnRender(ID2D1RenderTarget* target)
         return;
     }
 
+    // Brushes belong to the render target that created them.
+    if (RefreshTargetResourceStamp(m_brushStamp))
+    {
+        m_strokeBrush.Reset();
+        m_labelBackdropBrush.Reset();
+        m_badgeBackdropBrush.Reset();
+        // Embedded labels are not attached to the backplate: driven from here.
+        m_label.ResetTargetResources();
+        m_badgeLabel.ResetTargetResources();
+    }
     if (!m_strokeBrush)
     {
         target->CreateSolidColorBrush(D2D1::ColorF(D2D1::ColorF::White), &m_strokeBrush);
@@ -355,13 +365,13 @@ bool ThumbNavTile::EnsureFolderBitmap(ID2D1RenderTarget* target)
         return false;
     }
 
-    if (m_folderBitmap && m_folderBitmapTarget == target && m_folderBitmapKind == m_icon)
+    if (m_folderBitmap && m_folderBitmapStamp == CurrentTargetStamp() && m_folderBitmapKind == m_icon)
     {
         return true;
     }
 
     m_folderBitmap.Reset();
-    m_folderBitmapTarget = nullptr;
+    m_folderBitmapStamp = {};
     m_folderBitmapKind = IconKind::None;
 
     D2D1_COLOR_F tintColor {};
@@ -386,7 +396,7 @@ bool ThumbNavTile::EnsureFolderBitmap(ID2D1RenderTarget* target)
         return false;
     }
 
-    m_folderBitmapTarget = target;
+    m_folderBitmapStamp = CurrentTargetStamp();
     m_folderBitmapKind = m_icon;
     return true;
 }

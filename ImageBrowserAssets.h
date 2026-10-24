@@ -1,5 +1,7 @@
 #pragma once
 
+#include "FD2D/Wnd.h"
+
 #include <d2d1.h>
 #include <wrl/client.h>
 
@@ -21,13 +23,18 @@ public:
         const D2D1_COLOR_F* tintColor,
         Microsoft::WRL::ComPtr<ID2D1Bitmap>& outBitmap);
 
-    bool EnsureFolderBitmap(ID2D1RenderTarget* target, FolderIconKind kind = FolderIconKind::Folder);
+    // `stamp`: the caller's current target stamp; a bitmap from another target
+    // generation (or backplate) is recreated.
+    bool EnsureFolderBitmap(
+        ID2D1RenderTarget* target,
+        const FD2D::GraphicsResourceStamp& stamp,
+        FolderIconKind kind = FolderIconKind::Folder);
     ID2D1Bitmap* FolderBitmap() const { return m_folderBitmap.Get(); }
     ID2D1Bitmap* FolderUpBitmap() const { return m_folderUpBitmap.Get(); }
 
 private:
     Microsoft::WRL::ComPtr<ID2D1Bitmap> m_folderBitmap {};
     Microsoft::WRL::ComPtr<ID2D1Bitmap> m_folderUpBitmap {};
-    ID2D1RenderTarget* m_folderBitmapTarget { nullptr };
-    ID2D1RenderTarget* m_folderUpBitmapTarget { nullptr };
+    FD2D::GraphicsResourceStamp m_folderBitmapStamp {};
+    FD2D::GraphicsResourceStamp m_folderUpBitmapStamp {};
 };
