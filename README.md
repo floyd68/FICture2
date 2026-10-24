@@ -19,6 +19,7 @@ FICture2 is available on NexusMods: [https://www.nexusmods.com/fallout4/mods/100
 
 ## What's New in v1.7
 
+- **Fixed:** Thumbnails of images inside archives could fail to load during fast scrolling or folder changes when an earlier request for the same image was canceled
 - **Fixed:** Fast image switching could leave the main image or a thumbnail stuck loading, or drop the newest image, when an older decode failed or finished at the wrong moment; full-resolution decodes no longer run at background priority
 - **Fixed:** With logging enabled, opening, restoring, or receiving from another instance a path that contains characters outside the system code page no longer crashes, and the log file can be written when FICture2 is installed in such a folder
 - **Fixed:** ZIP, 7z and RAR archives whose path or entry names contain characters outside the system code page can be opened and extracted, and archive logging can no longer break opening or extraction
