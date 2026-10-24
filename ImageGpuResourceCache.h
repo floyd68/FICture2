@@ -1,6 +1,7 @@
 #pragma once
 
 #include "ImageAlphaPresentation.h"
+#include "ImageSourceIdentity.h"
 
 #include <d3d11.h>
 #include <dxgiformat.h>
@@ -13,7 +14,11 @@
 #include <unordered_map>
 
 // FICture2-owned LRU cache of (path, mip) -> ID3D11ShaderResourceView.
-// Cleared automatically when deviceGeneration changes between calls.
+// Entries are valid only for the source identity they were created from (file
+// size + write time, or the host archive's): a lookup with a different
+// identity misses and evicts the stale entry. Cleared automatically when
+// deviceGeneration changes between calls, and explicitly at application
+// shutdown so no SRV keeps a graphics device alive.
 class ImageGpuResourceCache
 {
 public:
@@ -32,6 +37,7 @@ public:
         ImageAlphaInfo& outAlpha,
         uint32_t& outSourceMipLevels,
         uint32_t& outSourceMipIndex,
+        const ImageSourceIdentity& identity,
         uint64_t deviceGeneration);
 
     void Put(
@@ -44,9 +50,16 @@ public:
         const ImageAlphaInfo& alpha,
         uint32_t sourceMipLevels,
         uint32_t sourceMipIndex,
+        const ImageSourceIdentity& identity,
         uint64_t deviceGeneration);
 
+    // Drops every mip cached for `path` (explicit reload / file replaced).
+    void InvalidatePath(const std::wstring& path);
+
     void Clear();
+
+    // Tests/diagnostics.
+    size_t EntryCount() const;
 
 private:
     ImageGpuResourceCache() = default;
@@ -85,9 +98,12 @@ private:
         ImageAlphaInfo alpha {};
         uint32_t sourceMipLevels { 1 };
         uint32_t sourceMipIndex { 0 };
+        ImageSourceIdentity identity {};
         size_t bytes { 0 };
         std::list<Key>::iterator lruIt {};
     };
+
+    void EraseUnlocked(const Key& key);
 
     mutable std::mutex m_mutex;
     std::unordered_map<Key, Entry, KeyHash> m_cache;

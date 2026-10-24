@@ -18,6 +18,7 @@
 
 #include "FloarLog.h"
 #include "ImageAsyncBinding.h"
+#include "ImageGpuResourceCache.h"
 #include "ImageCore/ImageCore.h"
 #include "ImageCore/ImageCoreLog.h"
 #include "ImageCore/ImageDecodeDispatcher.h"
@@ -456,6 +457,7 @@ int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
         {
             ImageAsyncBindingRegistry::Instance().ShutdownPrepare();
             ImageCore::ImageLoader::Instance().Shutdown();
+            ImageGpuResourceCache::Instance().Clear();
             app.Shutdown();
             return FALSE;
         }
@@ -574,6 +576,9 @@ int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
     // (which clears backplates and shuts down Core).
     ImageAsyncBindingRegistry::Instance().ShutdownPrepare();
     ImageCore::ImageLoader::Instance().Shutdown();
+    // Release cached SRVs explicitly: the process-static GPU cache must not keep
+    // the graphics device alive, whichever views are still attached.
+    ImageGpuResourceCache::Instance().Clear();
 
     app.Shutdown();
 

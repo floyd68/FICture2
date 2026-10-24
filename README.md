@@ -19,6 +19,7 @@ FICture2 is available on NexusMods: [https://www.nexusmods.com/fallout4/mods/100
 
 ## What's New in v1.7
 
+- **Fixed:** Replacing an image file (or its archive) and returning to it showed the old picture from the GPU cache; a graphics target recreation no longer drops GPU (channel-isolation) presentation, and device loss or renderer fallback rebuilds the image from the right source
 - **Fixed:** Opening a file from another instance for side-by-side compare, the window title, and view sync now follow the newly selected image immediately instead of the previous image still on screen; screenshots are named after the image actually shown
 - **Fixed:** Thumbnails of images inside archives could fail to load during fast scrolling or folder changes when an earlier request for the same image was canceled
 - **Fixed:** Fast image switching could leave the main image or a thumbnail stuck loading, or drop the newest image, when an older decode failed or finished at the wrong moment; full-resolution decodes no longer run at background priority

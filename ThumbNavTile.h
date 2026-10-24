@@ -68,7 +68,10 @@ private:
     Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> m_badgeBackdropBrush {};
     Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> m_strokeBrush {};
     Microsoft::WRL::ComPtr<ID2D1Bitmap> m_folderBitmap {};
-    ID2D1RenderTarget* m_folderBitmapTarget { nullptr };
+    // Target generations the brushes / folder bitmap were created under (a
+    // recreated device context can reuse the old target's address).
+    FD2D::GraphicsResourceStamp m_brushStamp {};
+    FD2D::GraphicsResourceStamp m_folderBitmapStamp {};
     IconKind m_icon { IconKind::None };
     IconKind m_folderBitmapKind { IconKind::None };
     IconTint m_iconTint { IconTint::None };

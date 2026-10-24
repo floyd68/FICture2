@@ -54,14 +54,14 @@ namespace
         const ImageAlphaInfo alpha = AlphaInfoFromPayload(payload);
         const ImageCore::AlphaUsage usage = ResolveAlphaUsage(alpha, overrideUsage);
         const ImageCore::DecodedImage decoded = DecodedImageFromPayload(payload);
-        const std::vector<std::uint8_t> presentation = BuildBgra8Presentation(decoded, usage);
+        std::vector<std::uint8_t> presentation = BuildBgra8Presentation(decoded, usage);
         if (presentation.empty())
         {
             return E_FAIL;
         }
 
         ImageAsyncBinding::Payload present = payload;
-        present.blocks = std::make_shared<std::vector<std::uint8_t>>(presentation);
+        present.blocks = std::make_shared<std::vector<std::uint8_t>>(std::move(presentation));
         return ImageAsyncBinding::CreateD2DBitmap(
             target, present, D2D1_ALPHA_MODE_PREMULTIPLIED, outBitmap);
     }
@@ -227,6 +227,114 @@ uint64_t ImageBrowserMainImage::DeviceGeneration() const
         return 0;
     }
     return BackplateRef()->GetGraphicsGeneration().device;
+}
+
+void ImageBrowserMainImage::ApplyPresentation(
+    PresentationKind kind,
+    const std::wstring& path,
+    uint32_t width,
+    uint32_t height,
+    DXGI_FORMAT format,
+    const ImageAlphaInfo& alpha,
+    uint32_t sourceMipLevels,
+    uint32_t sourceMipIndex,
+    const ImageSourceIdentity& identity)
+{
+    SetLoadedFilePath(path);
+    m_loadedW = width;
+    m_loadedH = height;
+    m_loadedFormat = format;
+    m_alpha = alpha;
+    m_sourceMipLevels = (std::max)(1u, sourceMipLevels);
+    m_sourceMipIndex = sourceMipIndex;
+    if (sourceMipIndex == 0)
+    {
+        m_sourceWidth = width;
+        m_sourceHeight = height;
+    }
+    m_presentationKind = kind;
+    m_gpuPresentation = (kind == PresentationKind::ShaderResource);
+    // An SRV belongs to the device, a D2D bitmap to the render target.
+    m_presentationStamp = (kind == PresentationKind::ShaderResource) ? CurrentDeviceStamp() : CurrentTargetStamp();
+    m_presentationIdentity = identity;
+    m_needsCpuReupload = false;
+    m_selectingMip = false;
+    SyncTextureDrawState();
+}
+
+void ImageBrowserMainImage::ResetPresentation()
+{
+    m_loadedW = 0;
+    m_loadedH = 0;
+    m_loadedFormat = DXGI_FORMAT_UNKNOWN;
+    m_alpha = {};
+    m_sourceMipLevels = 1;
+    m_sourceMipIndex = 0;
+    m_sourceWidth = 0;
+    m_sourceHeight = 0;
+    m_gpuPresentation = false;
+    m_presentationKind = PresentationKind::None;
+    m_presentationStamp = {};
+    m_presentationIdentity = {};
+}
+
+HRESULT ImageBrowserMainImage::CreateBgraShaderResource(
+    const ImageAsyncBinding::Payload& payload,
+    Microsoft::WRL::ComPtr<ID3D11ShaderResourceView>& outSrv) const
+{
+    ID3D11Device* dev = BackplateRef() != nullptr ? BackplateRef()->D3DDevice() : nullptr;
+    if (dev == nullptr || !payload.blocks || payload.blocks->empty() || !ImageAsyncBinding::IsCpuBgra8Format(payload.format))
+    {
+        return E_NOINTERFACE;
+    }
+
+    D3D11_TEXTURE2D_DESC td {};
+    td.Width = payload.width;
+    td.Height = payload.height;
+    td.MipLevels = 1;
+    td.ArraySize = 1;
+    td.Format = DXGI_FORMAT_B8G8R8A8_UNORM;
+    td.SampleDesc.Count = 1;
+    td.Usage = D3D11_USAGE_IMMUTABLE;
+    td.BindFlags = D3D11_BIND_SHADER_RESOURCE;
+
+    D3D11_SUBRESOURCE_DATA init {};
+    init.pSysMem = payload.blocks->data();
+    init.SysMemPitch = payload.rowPitch ? payload.rowPitch : payload.width * 4u;
+
+    Microsoft::WRL::ComPtr<ID3D11Texture2D> tex;
+    HRESULT hr = dev->CreateTexture2D(&td, &init, &tex);
+    if (FAILED(hr) || !tex)
+    {
+        return FAILED(hr) ? hr : E_FAIL;
+    }
+    hr = dev->CreateShaderResourceView(tex.Get(), nullptr, &outSrv);
+    return (SUCCEEDED(hr) && outSrv) ? S_OK : (FAILED(hr) ? hr : E_FAIL);
+}
+
+void ImageBrowserMainImage::ReloadSource()
+{
+    if (m_filePath.empty())
+    {
+        return;
+    }
+
+    // Everything is reset before Invalidate(), which may render synchronously
+    // and dispatch the reload request right away: that request must be mip 0.
+
+    ImageGpuResourceCache::Instance().InvalidatePath(m_filePath);
+    m_binding.Cancel();
+    m_binding.ClearFailure();
+    m_forceCpuDecode.store(false);
+    m_cpuPayload = {};
+    m_needsCpuReupload = false;
+    m_selectingMip = false;
+    m_request.mipLevel = 0;
+    // The old pixels stay on screen until the new decode arrives, but they are no
+    // longer "the current content", so the next render requests a decode.
+    SetLoadedFilePath({});
+    ResetPresentation();
+    Invalidate();
 }
 
 FD2D::Size ImageBrowserMainImage::Measure(FD2D::Size available)
@@ -585,6 +693,21 @@ bool ImageBrowserMainImage::SelectMip(uint32_t mipLevel)
     {
         return false;
     }
+
+    // Validate against the file as it is now, not the content already shown:
+    // if it (or its host archive) was replaced, every cached mip is stale.
+    // Reload mip 0 first - only it supplies the new source size and mip count -
+    // and select the requested mip once that has been presented. The pending
+    // mip is recorded before ReloadSource(), whose Invalidate() may render.
+    const ImageSourceIdentity current = ImageSourceIdentity::ForPath(m_filePath);
+    if (m_presentationKind != PresentationKind::None && current != m_presentationIdentity)
+    {
+        m_mipAfterReload = mipLevel;
+        ReloadSource();
+        return true;
+    }
+    m_mipAfterReload = 0;
+
     if (mipLevel == m_sourceMipIndex && HasDisplayedContentForCurrentPath())
     {
         return true;
@@ -615,30 +738,17 @@ bool ImageBrowserMainImage::SelectMip(uint32_t mipLevel)
                 cachedAlpha,
                 cachedMipLevels,
                 cachedMipIndex,
+                current,
                 DeviceGeneration()))
         {
             if (m_texture)
             {
                 m_texture->SetShaderResource(cachedSrv);
             }
-            SetLoadedFilePath(m_filePath);
-            m_loadedW = cw;
-            m_loadedH = ch;
-            m_loadedFormat = cachedFormat;
-            m_alpha = cachedAlpha;
-            m_sourceMipLevels = (std::max)(1u, cachedMipLevels);
-            m_sourceMipIndex = cachedMipIndex;
-            if (cachedMipIndex == 0)
-            {
-                m_sourceWidth = cw;
-                m_sourceHeight = ch;
-            }
-            m_gpuPresentation = true;
-            m_needsCpuReupload = false;
-            m_selectingMip = false;
+            ApplyPresentation(PresentationKind::ShaderResource, m_filePath, cw, ch, cachedFormat,
+                cachedAlpha, cachedMipLevels, cachedMipIndex, current);
             m_binding.MarkSettled();
             ClampPanToVisible();
-            SyncTextureDrawState();
             Invalidate();
             if (!m_suppressViewNotify && m_onViewChanged)
             {
@@ -690,15 +800,21 @@ HRESULT ImageBrowserMainImage::SetSourceFile(const std::wstring& filePath)
 
     if (!normalized.empty() && normalized == m_filePath)
     {
+        // The file (or its host archive) was replaced since it was decoded:
+        // reload instead of keeping the stale presentation.
+        if (m_presentationKind != PresentationKind::None &&
+            m_presentationIdentity != ImageSourceIdentity::ForPath(normalized))
+        {
+            ReloadSource();
+            return S_OK;
+        }
+
         if (!m_binding.ClearFailureIfMatches(normalized, true /*requireFailedHr*/))
         {
             return S_FALSE;
         }
-    }
 
-    if (!normalized.empty() && normalized == m_filePath && m_loadedFilePath == m_filePath)
-    {
-        if (HasDisplayedContentForCurrentPath())
+        if (m_loadedFilePath == m_filePath && HasDisplayedContentForCurrentPath())
         {
             return S_FALSE;
         }
@@ -707,16 +823,9 @@ HRESULT ImageBrowserMainImage::SetSourceFile(const std::wstring& filePath)
     // Supersede the in-flight request (cancel its handle, drop any staged payload).
     m_binding.Cancel();
 
-    m_loadedW = 0;
-    m_loadedH = 0;
-    m_loadedFormat = DXGI_FORMAT_UNKNOWN;
-    m_alpha = {};
-    m_sourceMipLevels = 1;
-    m_sourceMipIndex = 0;
-    m_sourceWidth = 0;
-    m_sourceHeight = 0;
+    m_mipAfterReload = 0;
+    ResetPresentation();
     m_selectingMip = false;
-    m_gpuPresentation = false;
     m_channelMode = 0;
     m_alphaUsageOverride = ImageCore::AlphaUsage::Auto;
     m_request.mipLevel = 0;
@@ -733,6 +842,7 @@ HRESULT ImageBrowserMainImage::SetSourceFile(const std::wstring& filePath)
         ImageAlphaInfo cachedAlpha {};
         uint32_t cachedMipLevels = 1;
         uint32_t cachedMipIndex = 0;
+        const ImageSourceIdentity identity = ImageSourceIdentity::ForPath(normalized);
         if (ImageGpuResourceCache::Instance().TryGet(
                 normalized,
                 0,
@@ -743,27 +853,19 @@ HRESULT ImageBrowserMainImage::SetSourceFile(const std::wstring& filePath)
                 cachedAlpha,
                 cachedMipLevels,
                 cachedMipIndex,
+                identity,
                 DeviceGeneration()))
         {
             if (m_texture)
             {
                 m_texture->SetShaderResource(cachedSrv);
             }
-            SetLoadedFilePath(normalized);
             m_filePath = normalized;
-            m_loadedW = cw;
-            m_loadedH = ch;
-            m_loadedFormat = cachedFormat;
-            m_alpha = cachedAlpha;
-            m_sourceMipLevels = (std::max)(1u, cachedMipLevels);
-            m_sourceMipIndex = cachedMipIndex;
-            m_sourceWidth = cw;
-            m_sourceHeight = ch;
-            m_gpuPresentation = true;
+            ApplyPresentation(PresentationKind::ShaderResource, normalized, cw, ch, cachedFormat,
+                cachedAlpha, cachedMipLevels, cachedMipIndex, identity);
             m_binding.MarkSettled();
             m_request.source = normalized;
             m_request.mipLevel = 0;
-            SyncTextureDrawState();
             Invalidate();
             return S_OK;
         }
@@ -788,16 +890,9 @@ void ImageBrowserMainImage::ClearSource()
 
     m_filePath.clear();
     SetLoadedFilePath({});
-    m_loadedW = 0;
-    m_loadedH = 0;
-    m_loadedFormat = DXGI_FORMAT_UNKNOWN;
-    m_alpha = {};
-    m_sourceMipLevels = 1;
-    m_sourceMipIndex = 0;
-    m_sourceWidth = 0;
-    m_sourceHeight = 0;
+    m_mipAfterReload = 0;
+    ResetPresentation();
     m_selectingMip = false;
-    m_gpuPresentation = false;
     m_channelMode = 0;
     m_alphaUsageOverride = ImageCore::AlphaUsage::Auto;
     m_cpuPayload = {};
@@ -900,6 +995,8 @@ void ImageBrowserMainImage::RequestImageLoad()
     m_request.source = m_filePath;
     m_request.purpose = ImageCore::ImagePurpose::FullResolution;
     // m_request.mipLevel is owned by SetSourceFile / SelectMip.
+    // What this decode is made from: validates the GPU cache entry it creates.
+    m_requestIdentity = ImageSourceIdentity::ForPath(m_filePath);
 
     if (m_forceCpuDecode.load() || BackplateRef() == nullptr || BackplateRef()->D3DDevice() == nullptr)
     {
@@ -926,27 +1023,35 @@ void ImageBrowserMainImage::TryReuploadCpuPayload(ID2D1RenderTarget* target)
         return;
     }
 
+    const ImageAlphaInfo alpha = AlphaInfoFromPayload(m_cpuPayload);
+
+    // Recreate the same kind of presentation where possible: a BGRA payload goes
+    // back to an SRV on the (new) D3D device, so GPU/channel presentation is kept.
+    if (!m_forceCpuDecode.load())
+    {
+        Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> srv;
+        if (SUCCEEDED(CreateBgraShaderResource(m_cpuPayload, srv)))
+        {
+            m_texture->SetShaderResource(srv);
+            ApplyPresentation(PresentationKind::ShaderResource, m_cpuPayload.sourcePath, m_cpuPayload.width,
+                m_cpuPayload.height, m_cpuPayload.format, alpha, m_cpuPayload.sourceMipLevels,
+                m_cpuPayload.sourceMipIndex, m_presentationIdentity);
+            ImageGpuResourceCache::Instance().Put(m_cpuPayload.sourcePath, m_cpuPayload.sourceMipIndex, srv,
+                m_cpuPayload.width, m_cpuPayload.height, DXGI_FORMAT_B8G8R8A8_UNORM, m_alpha,
+                m_sourceMipLevels, m_sourceMipIndex, m_presentationIdentity, DeviceGeneration());
+            return;
+        }
+    }
+
     Microsoft::WRL::ComPtr<ID2D1Bitmap> d2dBitmap;
     const HRESULT hrBmp = CreatePremultipliedD2DBitmap(
         target, m_cpuPayload, m_alphaUsageOverride, d2dBitmap);
     if (SUCCEEDED(hrBmp) && d2dBitmap)
     {
         m_texture->SetBitmap(d2dBitmap);
-        SetLoadedFilePath(m_cpuPayload.sourcePath);
-        m_loadedW = m_cpuPayload.width;
-        m_loadedH = m_cpuPayload.height;
-        m_loadedFormat = m_cpuPayload.format;
-        m_alpha = AlphaInfoFromPayload(m_cpuPayload);
-        m_sourceMipLevels = (std::max)(1u, m_cpuPayload.sourceMipLevels);
-        m_sourceMipIndex = m_cpuPayload.sourceMipIndex;
-        if (m_cpuPayload.sourceMipIndex == 0)
-        {
-            m_sourceWidth = m_cpuPayload.width;
-            m_sourceHeight = m_cpuPayload.height;
-        }
-        m_gpuPresentation = false;
-        m_needsCpuReupload = false;
-        SyncTextureDrawState();
+        ApplyPresentation(PresentationKind::Bitmap, m_cpuPayload.sourcePath, m_cpuPayload.width,
+            m_cpuPayload.height, m_cpuPayload.format, alpha, m_cpuPayload.sourceMipLevels,
+            m_cpuPayload.sourceMipIndex, m_presentationIdentity);
     }
     else
     {
@@ -1013,22 +1118,11 @@ void ImageBrowserMainImage::ApplyPendingPayload(ID2D1RenderTarget* target)
                     {
                         m_texture->SetShaderResource(srv);
                     }
-                    SetLoadedFilePath(pending.sourcePath);
-                    m_loadedW = pending.width;
-                    m_loadedH = pending.height;
-                    m_loadedFormat = pending.format;
-                    m_alpha = AlphaInfoFromPayload(pending);
-                    m_sourceMipLevels = (std::max)(1u, pending.sourceMipLevels);
-                    m_sourceMipIndex = pending.sourceMipIndex;
-                    if (pending.sourceMipIndex == 0)
-                    {
-                        m_sourceWidth = pending.width;
-                        m_sourceHeight = pending.height;
-                    }
-                    m_gpuPresentation = true;
+                    ApplyPresentation(PresentationKind::ShaderResource, pending.sourcePath, pending.width,
+                        pending.height, pending.format, AlphaInfoFromPayload(pending), pending.sourceMipLevels,
+                        pending.sourceMipIndex, m_requestIdentity);
+                    // GPU-only content: nothing to re-upload from after a device change.
                     m_cpuPayload = {};
-                    m_needsCpuReupload = false;
-                    m_selectingMip = false;
 
                     ImageGpuResourceCache::Instance().Put(
                         pending.sourcePath,
@@ -1040,9 +1134,9 @@ void ImageBrowserMainImage::ApplyPendingPayload(ID2D1RenderTarget* target)
                         m_alpha,
                         m_sourceMipLevels,
                         m_sourceMipIndex,
+                        m_requestIdentity,
                         DeviceGeneration());
 
-                    SyncTextureDrawState();
                     usedGpu = true;
                     applied = true;
                 }
@@ -1076,70 +1170,36 @@ void ImageBrowserMainImage::ApplyPendingPayload(ID2D1RenderTarget* target)
     // Prefer D3D SRV for uncompressed BGRA8 when available so channel isolation works.
     if (!usedGpu &&
         ImageAsyncBinding::IsCpuBgra8Format(pending.format) &&
-        BackplateRef() != nullptr &&
-        BackplateRef()->D3DDevice() != nullptr &&
         !m_forceCpuDecode.load())
     {
-        ID3D11Device* dev = BackplateRef()->D3DDevice();
-        D3D11_TEXTURE2D_DESC td {};
-        td.Width = pending.width;
-        td.Height = pending.height;
-        td.MipLevels = 1;
-        td.ArraySize = 1;
-        td.Format = DXGI_FORMAT_B8G8R8A8_UNORM;
-        td.SampleDesc.Count = 1;
-        td.Usage = D3D11_USAGE_IMMUTABLE;
-        td.BindFlags = D3D11_BIND_SHADER_RESOURCE;
-
-        D3D11_SUBRESOURCE_DATA init {};
-        init.pSysMem = pending.blocks->data();
-        init.SysMemPitch = pending.rowPitch ? pending.rowPitch : pending.width * 4u;
-
-        Microsoft::WRL::ComPtr<ID3D11Texture2D> tex;
-        const HRESULT hrTex = dev->CreateTexture2D(&td, &init, &tex);
-        if (SUCCEEDED(hrTex) && tex)
+        Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> srv;
+        if (SUCCEEDED(CreateBgraShaderResource(pending, srv)))
         {
-            Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> srv;
-            const HRESULT hrSrv = dev->CreateShaderResourceView(tex.Get(), nullptr, &srv);
-            if (SUCCEEDED(hrSrv) && srv)
+            if (m_texture)
             {
-                if (m_texture)
-                {
-                    m_texture->SetShaderResource(srv);
-                }
-                SetLoadedFilePath(pending.sourcePath);
-                m_loadedW = pending.width;
-                m_loadedH = pending.height;
-                m_loadedFormat = pending.format;
-                m_alpha = AlphaInfoFromPayload(pending);
-                m_sourceMipLevels = (std::max)(1u, pending.sourceMipLevels);
-                m_sourceMipIndex = pending.sourceMipIndex;
-                if (pending.sourceMipIndex == 0)
-                {
-                    m_sourceWidth = pending.width;
-                    m_sourceHeight = pending.height;
-                }
-                m_gpuPresentation = true;
-                m_cpuPayload = pending;
-                m_needsCpuReupload = false;
-                m_selectingMip = false;
-
-                ImageGpuResourceCache::Instance().Put(
-                    pending.sourcePath,
-                    pending.sourceMipIndex,
-                    srv,
-                    pending.width,
-                    pending.height,
-                    DXGI_FORMAT_B8G8R8A8_UNORM,
-                    m_alpha,
-                    m_sourceMipLevels,
-                    m_sourceMipIndex,
-                    DeviceGeneration());
-
-                SyncTextureDrawState();
-                usedGpu = true;
-                applied = true;
+                m_texture->SetShaderResource(srv);
             }
+            ApplyPresentation(PresentationKind::ShaderResource, pending.sourcePath, pending.width,
+                pending.height, pending.format, AlphaInfoFromPayload(pending), pending.sourceMipLevels,
+                pending.sourceMipIndex, m_requestIdentity);
+            // Kept so a device change can rebuild the SRV without decoding again.
+            m_cpuPayload = pending;
+
+            ImageGpuResourceCache::Instance().Put(
+                pending.sourcePath,
+                pending.sourceMipIndex,
+                srv,
+                pending.width,
+                pending.height,
+                DXGI_FORMAT_B8G8R8A8_UNORM,
+                m_alpha,
+                m_sourceMipLevels,
+                m_sourceMipIndex,
+                m_requestIdentity,
+                DeviceGeneration());
+
+            usedGpu = true;
+            applied = true;
         }
     }
 
@@ -1159,23 +1219,10 @@ void ImageBrowserMainImage::ApplyPendingPayload(ID2D1RenderTarget* target)
             {
                 m_texture->SetBitmap(d2dBitmap);
             }
-            SetLoadedFilePath(pending.sourcePath);
-            m_loadedW = pending.width;
-            m_loadedH = pending.height;
-            m_loadedFormat = pending.format;
-            m_alpha = AlphaInfoFromPayload(pending);
-            m_sourceMipLevels = (std::max)(1u, pending.sourceMipLevels);
-            m_sourceMipIndex = pending.sourceMipIndex;
-            if (pending.sourceMipIndex == 0)
-            {
-                m_sourceWidth = pending.width;
-                m_sourceHeight = pending.height;
-            }
-            m_gpuPresentation = false;
+            ApplyPresentation(PresentationKind::Bitmap, pending.sourcePath, pending.width,
+                pending.height, pending.format, AlphaInfoFromPayload(pending), pending.sourceMipLevels,
+                pending.sourceMipIndex, m_requestIdentity);
             m_cpuPayload = pending;
-            m_needsCpuReupload = false;
-            m_selectingMip = false;
-            SyncTextureDrawState();
             applied = true;
         }
         else
@@ -1189,6 +1236,18 @@ void ImageBrowserMainImage::ApplyPendingPayload(ID2D1RenderTarget* target)
     if (applied)
     {
         m_binding.MarkSettled();
+
+        // A replaced source was reloaded at mip 0 on behalf of a mip selection:
+        // now that its size and mip count are known, continue to that mip.
+        if (m_mipAfterReload != 0 && m_sourceMipIndex == 0)
+        {
+            const uint32_t mip = m_mipAfterReload;
+            m_mipAfterReload = 0;
+            if (mip < MipLevels())
+            {
+                (void)SelectMip(mip);
+            }
+        }
     }
 }
 
@@ -1196,36 +1255,62 @@ void ImageBrowserMainImage::OnGraphicsInvalidated(
     FD2D::GraphicsInvalidationReason reason,
     const FD2D::GraphicsGeneration& generation)
 {
-    switch (reason)
+    if (reason == FD2D::GraphicsInvalidationReason::Shutdown)
     {
-    case FD2D::GraphicsInvalidationReason::TargetRecreated:
-        // Image clears its D2D bitmap; keep CPU payload for re-upload. View transform kept.
-        if (m_cpuPayload.blocks && !m_cpuPayload.sourcePath.empty())
-        {
-            m_needsCpuReupload = true;
-        }
-        break;
-
-    case FD2D::GraphicsInvalidationReason::DeviceLost:
-    case FD2D::GraphicsInvalidationReason::RendererFallback:
-    case FD2D::GraphicsInvalidationReason::Shutdown:
+        // Release every cached SRV so none keeps the device alive.
         ImageGpuResourceCache::Instance().Clear();
-        if (m_cpuPayload.blocks && !m_cpuPayload.sourcePath.empty())
-        {
-            m_needsCpuReupload = true;
-        }
-        else if (!m_filePath.empty())
-        {
-            // GPU-only content was lost; force a reload. Keep view transform.
-            SetLoadedFilePath({});
-            m_loadedW = 0;
-            m_loadedH = 0;
-            m_loadedFormat = DXGI_FORMAT_UNKNOWN;
-        }
+        Wnd::OnGraphicsInvalidated(reason, generation);
+        return;
+    }
+
+    // Cached SRVs belong to the old device: release them now rather than on the
+    // next cache call (the cache also clears itself on a generation change).
+    if (generation.device != m_lastSeenDeviceGeneration)
+    {
+        m_lastSeenDeviceGeneration = generation.device;
+        ImageGpuResourceCache::Instance().Clear();
+    }
+
+    // The generations of the presentation's own domain decide; FD2D::Image has
+    // already dropped content from a changed domain.
+    bool domainChanged = false;
+    if (m_presentationKind == PresentationKind::ShaderResource)
+    {
+        domainChanged = !(m_presentationStamp == CurrentDeviceStamp());
+    }
+    else if (m_presentationKind == PresentationKind::Bitmap)
+    {
+        domainChanged = !(m_presentationStamp == CurrentTargetStamp());
+    }
+
+    const bool hasCpuPayload = m_cpuPayload.blocks && !m_cpuPayload.sourcePath.empty();
+    switch (DecidePresentationRecovery(m_presentationKind, domainChanged, hasCpuPayload))
+    {
+    case PresentationRecovery::Keep:
+        // Includes an SRV across a target-only recreation: no downgrade to D2D.
         break;
 
-    case FD2D::GraphicsInvalidationReason::Resize:
+    case PresentationRecovery::Reupload:
+        m_needsCpuReupload = true;
+        Invalidate();
         break;
+
+    case PresentationRecovery::Reload:
+    {
+        // GPU-only content was lost; decode the same source again at the
+        // requested mip. The view transform is kept, and so is the full-source
+        // metadata (size, mip count), which only a mip-0 decode would supply.
+        const uint32_t sourceWidth = m_sourceWidth;
+        const uint32_t sourceHeight = m_sourceHeight;
+        const uint32_t sourceMipLevels = m_sourceMipLevels;
+        SetLoadedFilePath({});
+        ResetPresentation();
+        m_sourceWidth = sourceWidth;
+        m_sourceHeight = sourceHeight;
+        m_sourceMipLevels = sourceMipLevels;
+        Invalidate();
+        break;
+    }
     }
 
     Wnd::OnGraphicsInvalidated(reason, generation);

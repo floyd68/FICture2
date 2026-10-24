@@ -50,4 +50,5 @@ private:
 
     D2D1_RECT_F m_labelRect {};
     Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> m_labelBackdropBrush {};
+    FD2D::GraphicsResourceStamp m_brushStamp {};
 };

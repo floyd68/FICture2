@@ -97,11 +97,22 @@ bool ImageBrowserDragController::HandleFileDrag(
     return true;
 }
 
-void ImageBrowserDragController::DrawOverlay(ID2D1RenderTarget* target, const D2D1_RECT_F& rect, OverlayKind kind)
+void ImageBrowserDragController::DrawOverlay(
+    ID2D1RenderTarget* target,
+    const D2D1_RECT_F& rect,
+    OverlayKind kind,
+    const FD2D::GraphicsResourceStamp& stamp)
 {
     if (!target || kind == OverlayKind::None)
     {
         return;
+    }
+
+    if (!(m_brushStamp == stamp))
+    {
+        m_replaceBrush.Reset();
+        m_insertBrush.Reset();
+        m_brushStamp = stamp;
     }
 
     if (!m_replaceBrush)

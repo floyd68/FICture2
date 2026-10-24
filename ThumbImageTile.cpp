@@ -197,6 +197,12 @@ void ThumbImageTile::EnsureResources(ID2D1RenderTarget* target)
     {
         return;
     }
+    // The backdrop brush belongs to the render target that created it.
+    if (RefreshTargetResourceStamp(m_brushStamp))
+    {
+        m_labelBackdropBrush.Reset();
+        m_label.ResetTargetResources();  // embedded, not attached: driven from here
+    }
     if (!m_labelBackdropBrush)
     {
         (void)target->CreateSolidColorBrush(D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.55f), &m_labelBackdropBrush);

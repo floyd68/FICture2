@@ -5,8 +5,12 @@
 #include "FD2D/Spinner.h"
 #include "ImageAlphaPresentation.h"
 #include "ImageAsyncBinding.h"
+#include "ImagePresentationRecovery.h"
+#include "ImageSourceIdentity.h"
 #include "ImageViewTypes.h"
 #include "ImageCore/ImageRequest.h"
+
+#include <wrl/client.h>
 
 #include <atomic>
 #include <functional>
@@ -31,7 +35,12 @@ public:
     FD2D::Size Measure(FD2D::Size available) override;
     void Arrange(FD2D::Rect finalRect) override;
 
+    // Same path: S_FALSE while it is already shown or loading - unless the file
+    // (or its host archive) changed since it was decoded, which reloads it.
     HRESULT SetSourceFile(const std::wstring& filePath);
+    // Drops cached GPU content for the current file and decodes it again from
+    // mip 0 (the only decode that supplies the full-source size and mip count).
+    void ReloadSource();
     void ClearSource();
 
     void SetOnClick(ClickHandler handler);
@@ -100,6 +109,26 @@ private:
     bool HasDisplayedContentForCurrentPath() const;
     uint64_t DeviceGeneration() const;
 
+    // The one place that records what is on screen (cache hits, GPU formats,
+    // BGRA SRVs, D2D bitmaps, CPU re-upload): loaded metadata, presentation
+    // kind, the resource-domain stamp it belongs to, and its source identity.
+    void ApplyPresentation(
+        PresentationKind kind,
+        const std::wstring& path,
+        uint32_t width,
+        uint32_t height,
+        DXGI_FORMAT format,
+        const ImageAlphaInfo& alpha,
+        uint32_t sourceMipLevels,
+        uint32_t sourceMipIndex,
+        const ImageSourceIdentity& identity);
+    // Forgets the loaded metadata (the presented path is managed separately).
+    void ResetPresentation();
+    // Creates a B8G8R8A8 SRV from a CPU payload on the current D3D device.
+    HRESULT CreateBgraShaderResource(
+        const ImageAsyncBinding::Payload& payload,
+        Microsoft::WRL::ComPtr<ID3D11ShaderResourceView>& outSrv) const;
+
     std::shared_ptr<FD2D::Image> m_texture {};
     std::shared_ptr<FD2D::Spinner> m_spinner {};
     ImageAsyncBinding m_binding {};
@@ -124,6 +153,15 @@ private:
     uint32_t m_sourceHeight { 0 };
     bool m_selectingMip { false };
     bool m_gpuPresentation { false };
+    PresentationKind m_presentationKind { PresentationKind::None };
+    FD2D::GraphicsResourceStamp m_presentationStamp {};
+    ImageSourceIdentity m_presentationIdentity {};
+    // Identity of the file when the current decode was requested.
+    ImageSourceIdentity m_requestIdentity {};
+    // Mip to select once a reload of a replaced source has presented mip 0
+    // (0 = none).
+    uint32_t m_mipAfterReload { 0 };
+    uint64_t m_lastSeenDeviceGeneration { 0 };
     int m_channelMode { 0 };
 
     bool m_alphaCheckerboardEnabled { false };

@@ -71,6 +71,10 @@ private:
     Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> m_selectionBrush {};
     Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> m_selectionShadowBrush {};
     Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> m_selectionFillBrush {};
+    // Target generations the selection brushes and the presented bitmap were
+    // created under (thumbnails present D2D bitmaps only).
+    FD2D::GraphicsResourceStamp m_brushStamp {};
+    FD2D::GraphicsResourceStamp m_bitmapStamp {};
 
     ClickHandler m_onClick {};
     bool m_loadingSpinnerEnabled { true };
