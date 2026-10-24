@@ -5,10 +5,12 @@ add_executable(FICture2Tests
     TestHarness.h
     TestMain.cpp
     AppLogTests.cpp
+    GpuPresentationTests.cpp
     ImageAsyncBindingTests.cpp
     ImageBrowserPathStateTests.cpp
     IpcOpenQueueTests.cpp
     ${PROJECT_SOURCE_DIR}/AppLog.cpp
+    ${PROJECT_SOURCE_DIR}/ImageGpuResourceCache.cpp
     ${PROJECT_SOURCE_DIR}/ImageAsyncBinding.cpp
 )
 
@@ -30,6 +32,7 @@ target_compile_definitions(FICture2Tests PRIVATE
 target_link_libraries(FICture2Tests PRIVATE
     FD2D
     ImageCore
+    Floar
     DirectXTex
     d2d1
     dwrite
@@ -46,6 +49,7 @@ endif()
 add_test(NAME FICture2.IpcOpenQueue COMMAND FICture2Tests IpcOpenQueue_)
 add_test(NAME FICture2.ImageAsyncBinding COMMAND FICture2Tests ImageAsyncBinding_)
 add_test(NAME FICture2.PathState COMMAND FICture2Tests PathState_)
+add_test(NAME FICture2.GpuPresentation COMMAND FICture2Tests GpuPresentation_)
 # AppLog::Init runs once per process, so each Init scenario gets its own entry.
 add_test(NAME FICture2.AppLogText COMMAND FICture2Tests AppLogText_)
 add_test(NAME FICture2.AppLogLazy COMMAND FICture2Tests AppLogLazy_)

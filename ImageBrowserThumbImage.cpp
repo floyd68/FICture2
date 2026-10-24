@@ -230,6 +230,7 @@ void ImageBrowserThumbImage::TryReuploadCpuPayload(ID2D1RenderTarget* target)
     if (SUCCEEDED(hrBmp) && d2dBitmap)
     {
         m_texture->SetBitmap(d2dBitmap);
+        m_bitmapStamp = CurrentTargetStamp();
         m_loadedFilePath = m_cpuPayload.sourcePath;
         m_needsCpuReupload = false;
     }
@@ -270,6 +271,7 @@ void ImageBrowserThumbImage::ApplyPendingPayload(ID2D1RenderTarget* target)
         {
             m_texture->SetBitmap(d2dBitmap);
         }
+        m_bitmapStamp = CurrentTargetStamp();
         m_loadedFilePath = pending.sourcePath;
         m_cpuPayload = pending;
         m_needsCpuReupload = false;
@@ -289,6 +291,12 @@ void ImageBrowserThumbImage::DrawSelectionOverlay(ID2D1RenderTarget* target)
         return;
     }
 
+    if (RefreshTargetResourceStamp(m_brushStamp))
+    {
+        m_selectionBrush.Reset();
+        m_selectionShadowBrush.Reset();
+        m_selectionFillBrush.Reset();
+    }
     if (!m_selectionBrush)
     {
         (void)target->CreateSolidColorBrush(m_selectionStyle.accent, &m_selectionBrush);
@@ -401,27 +409,23 @@ void ImageBrowserThumbImage::OnGraphicsInvalidated(
     FD2D::GraphicsInvalidationReason reason,
     const FD2D::GraphicsGeneration& generation)
 {
-    switch (reason)
+    // The presented bitmap belongs to the render target: rebuild it only when
+    // the target generation it was created under changed (brushes are checked
+    // at render time through m_brushStamp).
+    const bool bitmapLost =
+        reason != FD2D::GraphicsInvalidationReason::Shutdown &&
+        !m_loadedFilePath.empty() &&
+        !(m_bitmapStamp == CurrentTargetStamp());
+    if (bitmapLost)
     {
-    case FD2D::GraphicsInvalidationReason::TargetRecreated:
-    case FD2D::GraphicsInvalidationReason::DeviceLost:
-    case FD2D::GraphicsInvalidationReason::RendererFallback:
-    case FD2D::GraphicsInvalidationReason::Shutdown:
-        m_selectionBrush.Reset();
-        m_selectionShadowBrush.Reset();
-        m_selectionFillBrush.Reset();
         if (m_cpuPayload.blocks && !m_cpuPayload.sourcePath.empty())
         {
             m_needsCpuReupload = true;
         }
-        else if (!m_filePath.empty())
+        else
         {
             m_loadedFilePath.clear();
         }
-        break;
-
-    case FD2D::GraphicsInvalidationReason::Resize:
-        break;
     }
 
     Wnd::OnGraphicsInvalidated(reason, generation);

@@ -61,10 +61,46 @@ void ImageGpuResourceCache::EnsureDeviceGenerationUnlocked(uint64_t deviceGenera
     }
 }
 
+void ImageGpuResourceCache::EraseUnlocked(const Key& key)
+{
+    auto it = m_cache.find(key);
+    if (it == m_cache.end())
+    {
+        return;
+    }
+    m_bytesInUse -= it->second.bytes;
+    m_lru.erase(it->second.lruIt);
+    m_cache.erase(it);
+}
+
 void ImageGpuResourceCache::Clear()
 {
     std::lock_guard<std::mutex> lock(m_mutex);
     ClearUnlocked();
+}
+
+void ImageGpuResourceCache::InvalidatePath(const std::wstring& path)
+{
+    std::lock_guard<std::mutex> lock(m_mutex);
+    for (auto it = m_cache.begin(); it != m_cache.end();)
+    {
+        if (it->first.path == path)
+        {
+            m_bytesInUse -= it->second.bytes;
+            m_lru.erase(it->second.lruIt);
+            it = m_cache.erase(it);
+        }
+        else
+        {
+            ++it;
+        }
+    }
+}
+
+size_t ImageGpuResourceCache::EntryCount() const
+{
+    std::lock_guard<std::mutex> lock(m_mutex);
+    return m_cache.size();
 }
 
 bool ImageGpuResourceCache::TryGet(
@@ -77,6 +113,7 @@ bool ImageGpuResourceCache::TryGet(
     ImageAlphaInfo& outAlpha,
     uint32_t& outSourceMipLevels,
     uint32_t& outSourceMipIndex,
+    const ImageSourceIdentity& identity,
     uint64_t deviceGeneration)
 {
     std::lock_guard<std::mutex> lock(m_mutex);
@@ -86,6 +123,12 @@ bool ImageGpuResourceCache::TryGet(
     auto it = m_cache.find(key);
     if (it == m_cache.end() || !it->second.srv)
     {
+        return false;
+    }
+    if (it->second.identity != identity)
+    {
+        // The file (or its host archive) changed since this was decoded.
+        EraseUnlocked(key);
         return false;
     }
 
@@ -113,9 +156,10 @@ void ImageGpuResourceCache::Put(
     const ImageAlphaInfo& alpha,
     uint32_t sourceMipLevels,
     uint32_t sourceMipIndex,
+    const ImageSourceIdentity& identity,
     uint64_t deviceGeneration)
 {
-    if (!srv)
+    if (!srv || !identity.known)
     {
         return;
     }
@@ -124,12 +168,7 @@ void ImageGpuResourceCache::Put(
     EnsureDeviceGenerationUnlocked(deviceGeneration);
 
     const Key key { path, mipLevel };
-    if (auto it = m_cache.find(key); it != m_cache.end())
-    {
-        m_bytesInUse -= it->second.bytes;
-        m_lru.erase(it->second.lruIt);
-        m_cache.erase(it);
-    }
+    EraseUnlocked(key);
 
     m_lru.push_front(key);
     Entry entry {};
@@ -140,6 +179,7 @@ void ImageGpuResourceCache::Put(
     entry.alpha = alpha;
     entry.sourceMipLevels = (std::max)(1u, sourceMipLevels);
     entry.sourceMipIndex = sourceMipIndex;
+    entry.identity = identity;
     entry.bytes = EstimateBytes(w, h, format);
     entry.lruIt = m_lru.begin();
     m_bytesInUse += entry.bytes;
