@@ -1,0 +1,106 @@
+# Windows CI: recursive checkout, Debug and MinSizeRel builds, first-party
+# tests. Vendored dependency test suites stay off (BUILD_TESTING is forced OFF
+# by the project). Local equivalents are listed in AGENTS.md.
+name: CI
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Build and test (${{ matrix.config }})
+    runs-on: windows-2025
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        config: [Debug, MinSizeRel]
+    steps:
+      - name: Check out (recursive submodules)
+        uses: actions/checkout@v5
+        with:
+          submodules: recursive
+
+      # No -G: CMake selects the newest Visual Studio installed on the runner.
+      - name: Configure
+        run: >
+          cmake -S . -B build -A x64
+          -DFICTURE2_BUILD_TESTS=ON
+          -DIMAGECORE_BUILD_TESTS=ON
+          -DFD2D_BUILD_TESTS=ON
+          -DFLOAR_BUILD_TESTS=ON
+
+      - name: Build
+        run: cmake --build build --config ${{ matrix.config }} --parallel
+
+      - name: Test
+        run: ctest --test-dir build -C ${{ matrix.config }} --output-on-failure --no-tests=error
+
+  floar-standalone:
+    name: Floar standalone (${{ matrix.config }})
+    runs-on: windows-2025
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        config: [Debug, MinSizeRel]
+    steps:
+      - name: Check out (recursive submodules)
+        uses: actions/checkout@v5
+        with:
+          submodules: recursive
+
+      - name: Configure
+        run: cmake -S Floar -B build-floar -A x64 -DFLOAR_BUILD_TESTS=ON
+
+      - name: Build
+        run: cmake --build build-floar --config ${{ matrix.config }} --parallel
+
+      - name: Test
+        run: ctest --test-dir build-floar -C ${{ matrix.config }} --output-on-failure --no-tests=error
+
+  submodule-pins:
+    name: Submodule pins on default branches
+    runs-on: windows-2025
+    timeout-minutes: 10
+    steps:
+      # Full history (also applied to submodules) for the ancestry check.
+      - name: Check out (submodules, full history)
+        uses: actions/checkout@v5
+        with:
+          submodules: true
+          fetch-depth: 0
+
+      # Checkout already fails when a pinned commit cannot be fetched. This also
+      # fails when a first-party pin is not reachable from that repository's
+      # default branch (for example a PR branch commit before its squash merge).
+      - name: Verify first-party pins are merged
+        shell: pwsh
+        run: |
+          $failed = $false
+          foreach ($path in 'FD2D', 'ImageCore', 'Floar', 'ThumbnailProvider') {
+              $pin = git -C $path rev-parse HEAD
+              $head = git -C $path ls-remote --symref origin HEAD | Select-String '^ref: refs/heads/(\S+)'
+              $branch = $head.Matches[0].Groups[1].Value
+              git -C $path fetch --quiet --no-tags origin "+refs/heads/${branch}:refs/remotes/origin/${branch}"
+              if ($LASTEXITCODE -ne 0) { Write-Error "${path}: cannot fetch origin/$branch"; $failed = $true; continue }
+              git -C $path merge-base --is-ancestor $pin "origin/$branch"
+              if ($LASTEXITCODE -eq 0) {
+                  Write-Host "${path}: $pin is on origin/$branch"
+              } else {
+                  Write-Host "::error::${path}: pinned commit $pin is not on origin/$branch"
+                  $failed = $true
+              }
+          }
+          if ($failed) { exit 1 }
+          exit 0

@@ -76,9 +76,19 @@
   blocking. New logic that can be tested without a window (scheduler, binding,
   IPC queue, caches, path handling) should come with tests once the test option
   exists.
-- There is no CI yet. Until a CI workflow lands, the local Debug and MinSizeRel
-  builds above are the required checks, and the reviewer re-runs them. After
-  CI lands, its required checks replace this rule.
+- CI: `.github/workflows/ci.yml` runs on every pull request and push to
+  `master` on a Windows runner (CMake picks the newest Visual Studio there):
+  | CI job | Local equivalent |
+  |---|---|
+  | `Build and test (Debug)` / `(MinSizeRel)` | the four commands above, with that configuration |
+  | `Floar standalone (Debug)` / `(MinSizeRel)` | `cmake -S Floar -B build-floar -A x64 -DFLOAR_BUILD_TESTS=ON`, `cmake --build build-floar --config <cfg>`, `ctest --test-dir build-floar -C <cfg> --output-on-failure` |
+  | `Submodule pins on default branches` | for each first-party submodule, `git -C <sm> merge-base --is-ancestor HEAD origin/<default branch>` after a fetch |
+
+  The pin job is expected to fail on a FICture2 PR that still pins a submodule
+  PR branch commit; it turns green after the re-pin in review step 6. Until
+  branch protection requires these checks (once they are stable), the local
+  Debug and MinSizeRel builds above stay required and the reviewer re-runs
+  them; after that, the required CI checks replace this rule.
 - GUI behaviour (rendering, input, device loss, drag & drop, IPC between
   instances, file associations) needs `needs-manual-test` with concrete steps.
 
@@ -114,8 +124,9 @@
    context (a reviewer without the implementation conversation, e.g. a separate
    agent given only the diff and the issue), checking the diff against the
    issue's acceptance criteria. Include submodule diffs referenced by pin bumps.
-2. Re-run the required checks (local builds now, CI once it exists); a failing
-   build or test is a review failure.
+2. Re-run the required checks (local builds, plus the PR's CI run); a failing
+   build, test, or CI job is a review failure (except the pin job before the
+   re-pin in step 6).
 3. Check the branch is up to date with `master` and merges cleanly, and that
    every bumped submodule commit exists on that submodule's remote.
 4. **Problems found:** leave review comments on the PR (inline where possible),
@@ -151,8 +162,8 @@ the latest `master` commit. Never start a release without this command.
 
 1. **Preflight:** local `master` equals `origin/master`, the working tree is
    clean, every submodule is at its pinned commit and that commit is pushed, no
-   implementation PR is half-merged, and the Debug/MinSizeRel builds (or CI,
-   once it exists) are green on that commit. Otherwise stop and report.
+   implementation PR is half-merged, and the Debug/MinSizeRel builds and the CI
+   run are green on that commit. Otherwise stop and report.
 2. **Version:** CMake derives `MAJOR.MINOR.<commit count>.<build>` from
    `FICTURE2_VERSION_MAJOR/MINOR` in `CMakeLists.txt` and
    `git rev-list --count HEAD`; tags look like `v1.7.142.0`. A MAJOR/MINOR bump
