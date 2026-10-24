@@ -236,6 +236,13 @@ set_cache_bool(BUILD_DX12 OFF "Disable unused DirectXTex D3D12 helpers")
 if(FICTURE2_USE_DIRECTXTEX_OPENMP)
     set_cache_bool(BC_USE_OPENMP ON "DirectXTex OpenMP support")
 endif()
+# First-party test options. Testing must be enabled at the top level before the
+# subprojects that register tests are added; vendored suites stay off through
+# BUILD_TESTING above.
+if(FICTURE2_BUILD_TESTS OR IMAGECORE_BUILD_TESTS)
+    enable_testing()
+endif()
+
 add_subdirectory(external/DirectXTex)
 
 # Floar owns VirtualPath/VFS/ArchiveReader and their zlib/xz/libarchive deps.
@@ -376,7 +383,6 @@ if(MSVC)
 endif()
 
 if(FICTURE2_BUILD_TESTS)
-    enable_testing()
     add_subdirectory(tests)
 endif()
 
