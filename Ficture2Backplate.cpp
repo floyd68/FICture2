@@ -699,6 +699,7 @@ namespace
             return true;
         }
 
+        // Name the screenshot after the image actually on screen.
         const std::wstring displayed = browserOps->BrowserGetDisplayedFilePath();
         std::filesystem::path imagePath = displayed.empty()
             ? std::filesystem::path()
@@ -1298,7 +1299,7 @@ void Ficture2Backplate::SynchronizeViewTransform(
             continue;
         }
 
-        const std::wstring targetNameLower = target->BrowserGetActiveFileNameLower();
+        const std::wstring targetNameLower = target->BrowserGetRequestedFileNameLower();
         if (!targetNameLower.empty() && targetNameLower == fileNameLower)
         {
             target->BrowserApplyViewTransformForSync(viewTransform);
@@ -1453,7 +1454,7 @@ bool Ficture2Backplate::TryStartCompareWithFileNameMatch(const std::wstring& inc
             continue;
         }
 
-        if (browserOps->BrowserGetActiveFileNameLower() != incomingName)
+        if (browserOps->BrowserGetRequestedFileNameLower() != incomingName)
         {
             continue;
         }
@@ -1481,30 +1482,17 @@ void Ficture2Backplate::RefreshIpcOpenSnapshot()
         return;
     }
 
-    std::vector<std::wstring> names;
+    // Requested paths: a pane that just switched images must match the new
+    // name immediately, not the previous image that is still on screen.
+    std::vector<std::wstring> requested;
     for (auto* browser : m_eventBus->ImageBrowsersSnapshot())
     {
-        auto* browserOps = AsImageBrowserOps(browser);
-        if (browserOps == nullptr)
+        if (auto* browserOps = AsImageBrowserOps(browser))
         {
-            continue;
-        }
-
-        const std::wstring path = browserOps->BrowserGetDisplayedFilePath();
-        std::wstring name = browserOps->BrowserGetActiveFileNameLower();
-        if (name.empty())
-        {
-            name = IpcOpenQueue::FileNameLower(path);
-        }
-        if (!name.empty())
-        {
-            names.push_back(std::move(name));
+            requested.push_back(browserOps->BrowserGetRequestedFilePath());
         }
     }
-
-    std::lock_guard<std::mutex> lock(m_ipcQueue->mutex);
-    m_ipcQueue->loadedCount = names.size();
-    m_ipcQueue->openNamesLower = std::move(names);
+    m_ipcQueue->PublishOpenNames(requested);
 }
 
 void Ficture2Backplate::DrainIpcOpenQueue()
@@ -1539,7 +1527,7 @@ void Ficture2Backplate::DrainIpcOpenQueue()
         for (auto* browser : browsers)
         {
             auto* ops = AsImageBrowserOps(browser);
-            if (ops != nullptr && !ops->BrowserGetDisplayedFilePath().empty())
+            if (ops != nullptr && !ops->BrowserGetRequestedFilePath().empty())
             {
                 anyOpen = true;
                 break;
@@ -1914,7 +1902,7 @@ std::wstring Ficture2Backplate::GetFocusedSelectedImageFileName() const
         auto* browserOps = AsImageBrowserOps(browser);
         if (browserOps != nullptr && browserOps->BrowserHasFocusForTitle())
         {
-            return browserOps->BrowserSelectedImageFileNameForTitle();
+            return browserOps->BrowserRequestedImageFileNameForTitle();
         }
     }
 
@@ -1923,7 +1911,7 @@ std::wstring Ficture2Backplate::GetFocusedSelectedImageFileName() const
         auto* browserOps = AsImageBrowserOps(browser);
         if (browserOps != nullptr)
         {
-            return browserOps->BrowserSelectedImageFileNameForTitle();
+            return browserOps->BrowserRequestedImageFileNameForTitle();
         }
     }
 
@@ -1963,8 +1951,10 @@ void Ficture2Backplate::SaveImageBrowserSession(const std::wstring& iniFile)
             continue;
         }
 
+        // The requested image: what the user selected, even if it has not
+        // finished loading (restore drops it if it no longer exists).
         payload.viewers.push_back({
-            ops->BrowserGetDisplayedFilePath(),
+            ops->BrowserGetRequestedFilePath(),
             ops->BrowserGetCurrentFolderPath(),
         });
     }

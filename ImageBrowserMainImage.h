@@ -20,6 +20,9 @@ class ImageBrowserMainImage : public FD2D::Wnd
 public:
     using ClickHandler = std::function<void()>;
     using ViewChangedHandler = std::function<void(const ImageViewTransform&)>;
+    // Called on the UI thread whenever the presented image path changes: the
+    // path of a newly presented image, or "" when the content is cleared/lost.
+    using PresentedPathHandler = std::function<void(const std::wstring&)>;
 
     ImageBrowserMainImage();
     explicit ImageBrowserMainImage(const std::wstring& name);
@@ -51,6 +54,7 @@ public:
     ImageViewTransform GetViewTransform() const;
     void SetViewTransform(const ImageViewTransform& vt, bool notify = true);
     void SetOnViewChanged(ViewChangedHandler handler);
+    void SetOnPresentedPathChanged(PresentedPathHandler handler);
 
     void RotateCW();
     void RotateCCW();
@@ -152,6 +156,10 @@ private:
     float m_pointerZoomMouseY { 0.0f };
 
     ViewChangedHandler m_onViewChanged {};
+    PresentedPathHandler m_onPresentedPathChanged {};
+
+    // Single place where the presented path changes; notifies the owner.
+    void SetLoadedFilePath(const std::wstring& path);
     bool m_suppressViewNotify { false };
     int m_rotationQuarters { 0 };
 };

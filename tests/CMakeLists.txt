@@ -6,6 +6,7 @@ add_executable(FICture2Tests
     TestMain.cpp
     AppLogTests.cpp
     ImageAsyncBindingTests.cpp
+    ImageBrowserPathStateTests.cpp
     IpcOpenQueueTests.cpp
     ${PROJECT_SOURCE_DIR}/AppLog.cpp
     ${PROJECT_SOURCE_DIR}/ImageAsyncBinding.cpp
@@ -44,6 +45,7 @@ endif()
 
 add_test(NAME FICture2.IpcOpenQueue COMMAND FICture2Tests IpcOpenQueue_)
 add_test(NAME FICture2.ImageAsyncBinding COMMAND FICture2Tests ImageAsyncBinding_)
+add_test(NAME FICture2.PathState COMMAND FICture2Tests PathState_)
 # AppLog::Init runs once per process, so each Init scenario gets its own entry.
 add_test(NAME FICture2.AppLogText COMMAND FICture2Tests AppLogText_)
 add_test(NAME FICture2.AppLogLazy COMMAND FICture2Tests AppLogLazy_)
