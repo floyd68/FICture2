@@ -19,6 +19,7 @@ FICture2 is available on NexusMods: [https://www.nexusmods.com/fallout4/mods/100
 
 ## What's New in v1.7
 
+- **Fixed:** A redraw-signal race that could leave decoded images waiting for another repaint
 - **Fixed:** Thumbnails now load when only one decode worker is available, including the default configuration on two-hardware-thread systems
 - **New:** DDS mip inspection — **Ctrl + [** / **Ctrl + ]** step mip levels; right-click **Mip Level** picks a level. Current mip and source dimensions show in the info bar
 - **New:** Channel isolation — **R** / **G** / **B** / **A** show one channel as grayscale; **N** restores RGBA (D3D path)
