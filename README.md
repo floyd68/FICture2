@@ -19,7 +19,7 @@ FICture2 is available on NexusMods: [https://www.nexusmods.com/fallout4/mods/100
 
 ## What's New in v1.7
 
-- **Fixed:** ZIP, 7z and RAR archives whose path contains characters outside the system code page can be opened, and archive logging can no longer break opening or extraction
+- **Fixed:** ZIP, 7z and RAR archives whose path or entry names contain characters outside the system code page can be opened and extracted, and archive logging can no longer break opening or extraction
 - **Fixed:** Rotated D2D images preserve their parent's placement and scaling
 - **Fixed:** A crash when an image whose path contains characters outside the system code page (for example emoji, or Japanese or Thai on a Korean or English system) failed to decode
 - **Fixed:** An intermittent hang on exit (and a way for thumbnails to stall) caused by decode threads missing their shutdown or cache-space wakeup
