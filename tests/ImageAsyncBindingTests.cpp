@@ -7,12 +7,15 @@
 
 #include <windows.h>
 
+#include <algorithm>
+#include <atomic>
 #include <chrono>
 #include <cstdint>
 #include <filesystem>
 #include <fstream>
 #include <functional>
 #include <memory>
+#include <mutex>
 #include <string>
 #include <thread>
 #include <vector>
@@ -43,6 +46,20 @@ namespace
         return predicate();
     }
 
+    ImageCore::DecodedImage MakeBgraImage(uint32_t width, uint32_t height)
+    {
+        ImageCore::DecodedImage image {};
+        image.width = width;
+        image.height = height;
+        image.rowPitchBytes = width * 4u;
+        image.dxgiFormat = DXGI_FORMAT_B8G8R8A8_UNORM;
+        image.blocks = std::make_shared<std::vector<uint8_t>>(
+            static_cast<size_t>(width) * height * 4u, static_cast<uint8_t>(0x80));
+        image.blockBytes = static_cast<uint32_t>(image.blocks->size());
+        image.sourceMipLevels = 1;
+        return image;
+    }
+
     // ---------------------------------------------------------------------
     // Fake decode service: records requests/cancels, delivers on demand.
     // ---------------------------------------------------------------------
@@ -57,28 +74,62 @@ namespace
             ImageCore::DecodedImageLoadCallback callback {};
         };
 
+        // Next RequestDecoded returns 0 without keeping the callback (ImageCore
+        // rejecting a request, e.g. after shutdown).
+        bool rejectNext = false;
+        // Next RequestDecoded completes successfully before it returns (a worker
+        // finishing before the binding stores the handle).
+        bool completeBeforeReturn = false;
+
         ImageCore::ImageHandle RequestDecoded(
             const ImageCore::ImageRequest& request,
             ImageCore::DecodedImageLoadCallback callback) override
         {
-            const ImageCore::ImageHandle handle = ++m_nextHandle;
-            requests.push_back({ handle, request, std::move(callback) });
+            ImageCore::DecodedImageLoadCallback immediate;
+            ImageCore::ImageHandle handle = 0;
+            {
+                std::lock_guard<std::mutex> lock(m_mutex);
+                if (rejectNext)
+                {
+                    rejectNext = false;
+                    return 0;
+                }
+                handle = ++m_nextHandle;
+                requests.push_back({ handle, request, callback });
+                if (completeBeforeReturn)
+                {
+                    completeBeforeReturn = false;
+                    immediate = callback;
+                }
+            }
+            if (immediate)
+            {
+                immediate(S_OK, MakeBgraImage(2, 2));
+            }
             return handle;
         }
 
         void Cancel(ImageCore::ImageHandle handle) override
         {
+            std::lock_guard<std::mutex> lock(m_mutex);
             cancels.push_back(handle);
         }
 
         // Delivers the completion of request `index` (as a worker thread would).
+        // Safe to call from any thread.
         void Complete(size_t index, HRESULT hr, ImageCore::DecodedImage image = {})
         {
-            requests.at(index).callback(hr, std::move(image));
+            ImageCore::DecodedImageLoadCallback callback;
+            {
+                std::lock_guard<std::mutex> lock(m_mutex);
+                callback = requests.at(index).callback;
+            }
+            callback(hr, std::move(image));
         }
 
         bool WasCanceled(ImageCore::ImageHandle handle) const
         {
+            std::lock_guard<std::mutex> lock(m_mutex);
             for (const auto canceled : cancels)
             {
                 if (canceled == handle)
@@ -89,10 +140,17 @@ namespace
             return false;
         }
 
+        size_t RequestCount() const
+        {
+            std::lock_guard<std::mutex> lock(m_mutex);
+            return requests.size();
+        }
+
         std::vector<Request> requests;
         std::vector<ImageCore::ImageHandle> cancels;
 
     private:
+        mutable std::mutex m_mutex;
         ImageCore::ImageHandle m_nextHandle { 0 };
     };
 
@@ -110,20 +168,6 @@ namespace
             ImageAsyncBinding::SetDecodeServiceForTesting(nullptr);
         }
     };
-
-    ImageCore::DecodedImage MakeBgraImage(uint32_t width, uint32_t height)
-    {
-        ImageCore::DecodedImage image {};
-        image.width = width;
-        image.height = height;
-        image.rowPitchBytes = width * 4u;
-        image.dxgiFormat = DXGI_FORMAT_B8G8R8A8_UNORM;
-        image.blocks = std::make_shared<std::vector<uint8_t>>(
-            static_cast<size_t>(width) * height * 4u, static_cast<uint8_t>(0x80));
-        image.blockBytes = static_cast<uint32_t>(image.blocks->size());
-        image.sourceMipLevels = 1;
-        return image;
-    }
 
     const std::wstring& FakePathA()
     {
@@ -172,6 +216,7 @@ namespace
     {
         std::filesystem::path dir;
         std::wstring smallBmp;   // 4 x 2
+        std::wstring otherBmp;   // 6 x 3
         std::wstring missingBmp;
 
         Fixture()
@@ -183,8 +228,10 @@ namespace
             std::filesystem::create_directories(dir);
 
             WriteBmp(dir / L"small.bmp", 4, 2);
+            WriteBmp(dir / L"other.bmp", 6, 3);
 
             smallBmp = CommonUtil::NormalizePath((dir / L"small.bmp").wstring());
+            otherBmp = CommonUtil::NormalizePath((dir / L"other.bmp").wstring());
             missingBmp = CommonUtil::NormalizePath((dir / L"missing.bmp").wstring());
 
             ImageCore::RegisterBuiltInDecoders();
@@ -417,6 +464,257 @@ FIC2_TEST(ImageAsyncBinding_FailureBookkeeping)
     FIC2_CHECK(!binding.IsFailedFor(FakePathA()));
 }
 
+FIC2_TEST(ImageAsyncBinding_PhasesFollowRequestLifecycle)
+{
+    using Phase = ImageAsyncBinding::Phase;
+    ScopedFakeDecodeService service;
+    ImageAsyncBinding binding;
+    FIC2_CHECK(binding.CurrentPhase() == Phase::Idle);
+    FIC2_CHECK(!binding.IsLoading());
+
+    Load(binding, FakePathA());
+    FIC2_CHECK(binding.CurrentPhase() == Phase::Loading);
+    FIC2_CHECK(binding.IsLoading());
+
+    service.fake.Complete(0, S_OK, MakeBgraImage(4, 2));
+    FIC2_CHECK(binding.CurrentPhase() == Phase::Ready);
+    FIC2_CHECK(binding.IsLoading());  // staged, not yet taken
+
+    FIC2_CHECK(binding.TakePending().blocks != nullptr);
+    FIC2_CHECK(binding.CurrentPhase() == Phase::Idle);
+    FIC2_CHECK(!binding.IsLoading());
+    FIC2_CHECK(binding.TakePending().blocks == nullptr);
+
+    Load(binding, FakePathB());
+    service.fake.Complete(1, E_FAIL);
+    FIC2_CHECK(binding.CurrentPhase() == Phase::Failed);
+    FIC2_CHECK(binding.IsFailedFor(FakePathB()));
+    FIC2_CHECK(!binding.IsLoading());
+
+    // Cancel keeps a failure (and its memo); it supersedes Loading and Ready.
+    binding.Cancel();
+    FIC2_CHECK(binding.CurrentPhase() == Phase::Failed);
+    FIC2_CHECK(binding.IsFailedFor(FakePathB()));
+
+    Load(binding, FakePathA());
+    binding.Cancel();
+    FIC2_CHECK(binding.CurrentPhase() == Phase::Superseded);
+    FIC2_CHECK(service.fake.WasCanceled(service.fake.requests[2].handle));
+
+    Load(binding, FakePathA());
+    service.fake.Complete(3, S_OK, MakeBgraImage(4, 2));
+    binding.Cancel();
+    FIC2_CHECK(binding.CurrentPhase() == Phase::Superseded);
+    FIC2_CHECK(binding.TakePending().blocks == nullptr);
+}
+
+FIC2_TEST(ImageAsyncBinding_RejectedRequestFailsInsteadOfLoadingForever)
+{
+    // ImageCore returns handle 0 (for example after shutdown) and never calls
+    // back; the binding must not stay Loading.
+    ScopedFakeDecodeService service;
+    ImageAsyncBinding binding;
+
+    service.fake.rejectNext = true;
+    Load(binding, FakePathA());
+    FIC2_CHECK(binding.CurrentPhase() == ImageAsyncBinding::Phase::Failed);
+    FIC2_CHECK(!binding.IsLoading());
+    FIC2_CHECK(binding.IsFailedFor(FakePathA()));
+    FIC2_CHECK(binding.ClearFailureIfMatches(FakePathA(), true /*requireFailedHr*/));
+
+    // A later accepted request proceeds normally.
+    Load(binding, FakePathA());
+    FIC2_REQUIRE(service.fake.RequestCount() == 1);
+    service.fake.Complete(0, S_OK, MakeBgraImage(4, 2));
+    FIC2_CHECK(binding.HasPendingCpuBgra8For(FakePathA()));
+}
+
+FIC2_TEST(ImageAsyncBinding_CompletionBeforeHandleStoredIsKept)
+{
+    // The worker finishes before RequestDecoded returns. The result is staged,
+    // and the already-finished handle is neither stored nor canceled later.
+    ScopedFakeDecodeService service;
+    ImageAsyncBinding binding;
+
+    service.fake.completeBeforeReturn = true;
+    Load(binding, FakePathA());
+    FIC2_REQUIRE(service.fake.RequestCount() == 1);
+    FIC2_CHECK(binding.CurrentPhase() == ImageAsyncBinding::Phase::Ready);
+    FIC2_CHECK(binding.HasPendingCpuBgra8For(FakePathA()));
+
+    binding.Cancel();
+    Load(binding, FakePathB());
+    FIC2_CHECK(!service.fake.WasCanceled(service.fake.requests[0].handle));
+}
+
+FIC2_TEST(ImageAsyncBinding_LateCallbacksAfterCancelChangeNothing)
+{
+    // ImageCore may deliver a callback after Cancel returned. Neither a late
+    // success nor a late failure may touch the superseded or a newer request.
+    using Phase = ImageAsyncBinding::Phase;
+    ScopedFakeDecodeService service;
+    ImageAsyncBinding binding;
+
+    Load(binding, FakePathA());
+    binding.Cancel();
+    service.fake.Complete(0, S_OK, MakeBgraImage(4, 2));
+    service.fake.Complete(0, E_FAIL);
+    FIC2_CHECK(binding.CurrentPhase() == Phase::Superseded);
+    FIC2_CHECK(!binding.IsFailedFor(FakePathA()));
+    FIC2_CHECK(binding.TakePending().blocks == nullptr);
+
+    Load(binding, FakePathB());
+    service.fake.Complete(0, E_FAIL);
+    service.fake.Complete(0, S_OK, MakeBgraImage(4, 2));
+    FIC2_CHECK(binding.CurrentPhase() == Phase::Loading);
+    FIC2_CHECK(!binding.IsFailedFor(FakePathA()));
+
+    service.fake.Complete(1, S_OK, MakeBgraImage(8, 6));
+    FIC2_CHECK(binding.HasPendingCpuBgra8For(FakePathB()));
+    // A duplicate delivery of the current request after it settled is ignored.
+    service.fake.Complete(1, E_FAIL);
+    FIC2_CHECK(binding.CurrentPhase() == Phase::Ready);
+    FIC2_CHECK(!binding.IsFailedFor(FakePathB()));
+}
+
+FIC2_TEST(ImageAsyncBinding_MarkSettledSupersedesInFlightRequest)
+{
+    // The control showed cached content instead; the in-flight decode is
+    // canceled and its result must not be staged later.
+    using Phase = ImageAsyncBinding::Phase;
+    ScopedFakeDecodeService service;
+    ImageAsyncBinding binding;
+
+    Load(binding, FakePathA());
+    binding.MarkSettled();
+    FIC2_CHECK(binding.CurrentPhase() == Phase::Superseded);
+    FIC2_CHECK(!binding.IsLoading());
+    FIC2_CHECK(service.fake.WasCanceled(service.fake.requests[0].handle));
+    service.fake.Complete(0, S_OK, MakeBgraImage(4, 2));
+    FIC2_CHECK(binding.TakePending().blocks == nullptr);
+
+    // Settling a failure or an idle binding changes nothing.
+    Load(binding, FakePathB());
+    service.fake.Complete(1, E_FAIL);
+    binding.MarkSettled();
+    FIC2_CHECK(binding.CurrentPhase() == Phase::Failed);
+    FIC2_CHECK(binding.IsFailedFor(FakePathB()));
+}
+
+FIC2_TEST(ImageAsyncBinding_StaleFailureRacingNewRequestKeepsNewer)
+{
+    // Regression: a failed completion used to clear `loading` and the in-flight
+    // generation after releasing the mutex, so a request installed in between
+    // was left with no loading state and its own completion dropped. Here the
+    // old request fails on another thread exactly while the newer one starts.
+    ScopedFakeDecodeService service;
+    ImageAsyncBinding binding;
+
+    constexpr int kRounds = 5000;
+    int lost = 0;
+    for (int round = 0; round < kRounds; ++round)
+    {
+        const std::wstring& older = (round % 2 == 0) ? FakePathA() : FakePathB();
+        const std::wstring& newer = (round % 2 == 0) ? FakePathB() : FakePathA();
+        const size_t oldIndex = service.fake.RequestCount();
+        Load(binding, older);
+
+        // Both sides spin until released together, so the old failure and the
+        // new request overlap instead of running one after the other.
+        std::atomic<bool> ready { false };
+        std::atomic<bool> go { false };
+        std::thread worker([&]()
+        {
+            ready.store(true);
+            while (!go.load())
+            {
+            }
+            service.fake.Complete(oldIndex, E_FAIL);
+        });
+        while (!ready.load())
+        {
+        }
+        go.store(true);
+        Load(binding, newer);
+        worker.join();
+
+        FIC2_REQUIRE(service.fake.RequestCount() == oldIndex + 2);
+        if (!binding.IsLoading())
+        {
+            ++lost;
+        }
+        service.fake.Complete(oldIndex + 1, S_OK, MakeBgraImage(8, 6));
+        if (!binding.HasPendingCpuBgra8For(newer))
+        {
+            ++lost;
+        }
+        FIC2_CHECK(!binding.IsFailedFor(newer));
+        (void)binding.TakePending();
+        binding.ClearFailure();
+    }
+    FIC2_CHECK(lost == 0);
+}
+
+FIC2_TEST(ImageAsyncBinding_SelectCancelReselectStressKeepsLatest)
+{
+    // Rapid select / cancel / reselect with completions arriving on another
+    // thread in arbitrary order; the latest request's state and result survive.
+    ScopedFakeDecodeService service;
+    ImageAsyncBinding binding;
+
+    std::atomic<bool> stop { false };
+    std::atomic<size_t> delivered { 0 };
+    std::thread worker([&]()
+    {
+        size_t next = 0;
+        while (!stop.load())
+        {
+            const size_t count = service.fake.RequestCount();
+            if (next < count)
+            {
+                // Mix successes and failures for every superseded request.
+                service.fake.Complete(next, (next % 3 == 0) ? E_FAIL : S_OK, MakeBgraImage(4, 2));
+                ++next;
+                delivered.store(next);
+            }
+        }
+    });
+
+    constexpr int kRounds = 3000;
+    for (int round = 0; round < kRounds; ++round)
+    {
+        Load(binding, (round % 2 == 0) ? FakePathA() : FakePathB());
+        if (round % 5 == 0)
+        {
+            binding.Cancel();
+        }
+        if (round % 7 == 0)
+        {
+            (void)binding.TakePending();
+        }
+    }
+    stop.store(true);
+    worker.join();
+
+    // Final request, completed only after every older completion was delivered.
+    binding.ClearFailure();
+    Load(binding, FakePathB());
+    const size_t last = service.fake.RequestCount() - 1;
+    for (size_t i = delivered.load(); i < last; ++i)
+    {
+        service.fake.Complete(i, E_FAIL);
+    }
+    FIC2_CHECK(binding.CurrentPhase() == ImageAsyncBinding::Phase::Loading);
+    FIC2_CHECK(!binding.IsFailedFor(FakePathB()));
+    service.fake.Complete(last, S_OK, MakeBgraImage(8, 6));
+    FIC2_CHECK(binding.HasPendingCpuBgra8For(FakePathB()));
+
+    // Every superseded handle was canceled at most once.
+    std::vector<ImageCore::ImageHandle> cancels = service.fake.cancels;
+    std::sort(cancels.begin(), cancels.end());
+    FIC2_CHECK(std::adjacent_find(cancels.begin(), cancels.end()) == cancels.end());
+}
+
 // -------------------------------------------------------------------------
 // End-to-end with the real ImageCore loader
 // -------------------------------------------------------------------------
@@ -468,4 +766,37 @@ FIC2_TEST(ImageAsyncBinding_RealLoaderSuccessClearsPreviousFailure)
     // The failure is cleared under the same lock that stages the payload.
     FIC2_REQUIRE(WaitUntil([&]() { return binding.HasPendingCpuBgra8For(files.smallBmp); }));
     FIC2_CHECK(!binding.IsFailedFor(files.smallBmp));
+}
+
+FIC2_TEST(ImageAsyncBinding_RealLoaderRapidReselectKeepsLatestAndDrains)
+{
+    // Rapid navigation against the real loader: many superseded requests and
+    // cancels, then the latest result must arrive and ImageCore must hold no
+    // leftover cancellation state.
+    const auto& files = Files();
+    ImageAsyncBinding binding;
+
+    for (int round = 0; round < 200; ++round)
+    {
+        Load(binding, (round % 2 == 0) ? files.otherBmp : files.smallBmp);
+        if (round % 4 == 0)
+        {
+            binding.Cancel();
+        }
+        if (round % 9 == 0)
+        {
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        }
+    }
+    Load(binding, files.smallBmp);
+
+    FIC2_REQUIRE(WaitUntil([&]() { return binding.HasPendingCpuBgra8For(files.smallBmp); }));
+    bool applied = false;
+    const auto payload = Apply(binding, applied);
+    FIC2_CHECK(applied);
+    FIC2_CHECK(payload.sourcePath == files.smallBmp);
+    FIC2_CHECK(payload.width == 4);
+    FIC2_CHECK(payload.height == 2);
+    FIC2_CHECK(binding.CurrentPhase() == ImageAsyncBinding::Phase::Idle);
+    FIC2_CHECK(WaitUntil([&]() { return ImageCore::ImageLoader::Instance().LiveRequestCount() == 0; }));
 }

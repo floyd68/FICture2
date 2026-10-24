@@ -8,9 +8,23 @@
 //   - Using FD2D::AsyncRedrawToken instead of a raw Backplate*
 //
 // Threading:
-//   - RequestLoad / Cancel / TakePending / PollAndApply run on the UI thread
+//   - RequestLoad / Cancel / TakePending / PollAndApply / MarkSettled run on the UI thread
 //   - Decode completion runs on a worker thread and only stages payload / failure
-//   - Stale completions are dropped via generation + path gating
+//   - Every transition (generation, phase, path, handle, payload, failure) happens
+//     under ImageAsyncBindingState::mutex as one logical change; a completion is
+//     applied only while its generation is current and the phase is Loading.
+//
+// States (ImageAsyncBindingState::Phase):
+//   Idle       - no request outstanding (initial, or the staged payload was taken)
+//   Loading    - the current generation's decode is in flight
+//   Ready      - the current generation's payload is staged for TakePending
+//   Failed     - the current generation's decode failed (or was rejected)
+//   Superseded - the request was canceled or abandoned before its result was used
+// Presentation states such as "displayed" belong to the owning control.
+//
+// ImageCore contract: a decode callback can arrive after Cancel returns (and
+// concurrently with a newer request). Such callbacks carry an old generation
+// and are dropped without touching the newer request's state.
 
 #include "ImageCore/ImageRequest.h"
 #include "ImageCore/ImageLoader.h"
@@ -57,7 +71,7 @@ public:
     void Register(const std::shared_ptr<struct ImageAsyncBindingState>& state);
     void Unregister(const struct ImageAsyncBindingState* state);
 
-    // Bump generations / cancel handles / clear pending / stop loading.
+    // Supersede every live binding (Cancel on each: generation bump, handle cancel, payload drop).
     void InvalidateAll();
 
     // Alias for InvalidateAll — call before ImageLoader::Shutdown.
@@ -72,13 +86,21 @@ private:
 
 struct ImageAsyncBindingState
 {
-    std::atomic<uint64_t> generation { 0 };
-    std::atomic<uint64_t> inflightGeneration { 0 };
-    std::atomic<bool> loading { false };
+    enum class Phase
+    {
+        Idle,
+        Loading,
+        Ready,
+        Failed,
+        Superseded,
+    };
 
+    // All fields are guarded by `mutex`.
     mutable std::mutex mutex;
-    ImageCore::ImageHandle handle { 0 };
-    std::wstring inflightPath {};
+    Phase phase { Phase::Idle };
+    uint64_t generation { 0 };          // bumped by every request and invalidation
+    ImageCore::ImageHandle handle { 0 }; // in-flight handle of `generation`, 0 when none
+    std::wstring requestPath {};         // normalized path of `generation`'s request
     std::shared_ptr<FD2D::AsyncRedrawToken> redrawToken {};
 
     struct Payload
@@ -96,7 +118,10 @@ struct ImageAsyncBindingState
         std::wstring sourcePath {};
     };
 
-    Payload pending {};
+    Payload pending {};                  // staged while phase == Ready
+    // Failure memo used by the owning control to avoid retry loops; set by a
+    // failed decode or RecordFailure, cleared by a successful decode or the
+    // Clear* calls. It outlives the phase that produced it.
     std::wstring failedPath {};
     HRESULT failedHr { S_OK };
 };
@@ -105,6 +130,7 @@ class ImageAsyncBinding
 {
 public:
     using Payload = ImageAsyncBindingState::Payload;
+    using Phase = ImageAsyncBindingState::Phase;
     using ApplyCallback = std::function<void(Payload&&)>;
 
     ImageAsyncBinding();
@@ -115,23 +141,35 @@ public:
 
     void SetRedrawToken(std::shared_ptr<FD2D::AsyncRedrawToken> token);
 
-    // Cancels any prior in-flight load, then dispatches a new decode.
+    // Supersedes any prior request (canceling its handle), then dispatches a new
+    // decode: phase Loading. A request ImageCore rejects (handle 0, for example
+    // after shutdown) ends in Failed with E_ABORT recorded for the path.
     void RequestLoad(const ImageCore::ImageRequest& request, const std::wstring& normalizedPath);
 
-    // Bump generation, cancel handle, clear pending, set loading false.
+    // Invalidates the current request: Loading/Ready -> Superseded (in-flight
+    // handle canceled, staged payload dropped). The failure memo is kept.
     void Cancel();
 
+    // Drops a staged payload: Ready -> Superseded.
     void ClearPending();
 
+    // True while a request is in flight or its payload is staged but not yet
+    // taken (Loading or Ready).
     bool IsLoading() const;
-    void SetLoading(bool loading);
+
+    // The owning control is done with the current request (it displayed the
+    // result, showed cached content, or will issue a new request). A request
+    // still in flight or staged is superseded; Failed and Idle are unchanged.
+    void MarkSettled();
+
+    Phase CurrentPhase() const;
 
     bool IsFailedFor(const std::wstring& path) const;
     bool ClearFailureIfMatches(const std::wstring& path, bool requireFailedHr = false);
     void ClearFailure();
     void RecordFailure(const std::wstring& path, HRESULT hr);
 
-    // UI thread only.
+    // UI thread only. Takes the staged payload (Ready -> Idle); empty otherwise.
     Payload TakePending();
 
     // UI thread only. Returns true when a non-empty payload was applied.
@@ -157,11 +195,15 @@ public:
 private:
     friend class ImageAsyncBindingRegistry;
 
+    // Moves a Loading or Ready request to Superseded (dropping any staged
+    // payload) and returns the in-flight handle to cancel, 0 if none. Requires
+    // state.mutex; the caller cancels the handle after unlocking.
+    static ImageCore::ImageHandle Supersede_NoLock(ImageAsyncBindingState& state);
+
     static void InvalidateState(const std::shared_ptr<ImageAsyncBindingState>& state);
     static void OnDecodeComplete(
         const std::shared_ptr<ImageAsyncBindingState>& state,
         uint64_t gen,
-        const std::wstring& requestedPath,
         HRESULT hr,
         ImageCore::DecodedImage image);
 

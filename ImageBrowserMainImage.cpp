@@ -618,7 +618,7 @@ bool ImageBrowserMainImage::SelectMip(uint32_t mipLevel)
             m_gpuPresentation = true;
             m_needsCpuReupload = false;
             m_selectingMip = false;
-            m_binding.SetLoading(false);
+            m_binding.MarkSettled();
             ClampPanToVisible();
             SyncTextureDrawState();
             Invalidate();
@@ -630,7 +630,7 @@ bool ImageBrowserMainImage::SelectMip(uint32_t mipLevel)
         }
     }
 
-    m_binding.SetLoading(false);
+    m_binding.MarkSettled();
     RequestImageLoad();
     Invalidate();
     return true;
@@ -686,7 +686,7 @@ HRESULT ImageBrowserMainImage::SetSourceFile(const std::wstring& filePath)
         }
     }
 
-    // Cancel + SetLoading(false) + ClearPending + ResetInflightToken
+    // Supersede the in-flight request (cancel its handle, drop any staged payload).
     m_binding.Cancel();
 
     m_loadedW = 0;
@@ -742,7 +742,7 @@ HRESULT ImageBrowserMainImage::SetSourceFile(const std::wstring& filePath)
             m_sourceWidth = cw;
             m_sourceHeight = ch;
             m_gpuPresentation = true;
-            m_binding.SetLoading(false);
+            m_binding.MarkSettled();
             m_request.source = normalized;
             m_request.mipLevel = 0;
             SyncTextureDrawState();
@@ -754,7 +754,7 @@ HRESULT ImageBrowserMainImage::SetSourceFile(const std::wstring& filePath)
     m_filePath = normalized;
     m_binding.ClearFailure();
     m_forceCpuDecode.store(false);
-    m_binding.SetLoading(false);
+    m_binding.MarkSettled();
     m_request.source = normalized;
     m_request.mipLevel = 0;
 
@@ -1041,7 +1041,7 @@ void ImageBrowserMainImage::ApplyPendingPayload(ID2D1RenderTarget* target)
             if (!applied)
             {
                 m_forceCpuDecode.store(true);
-                m_binding.SetLoading(false);
+                m_binding.MarkSettled();
                 RequestImageLoad();
                 usedGpu = true;
             }
@@ -1049,7 +1049,7 @@ void ImageBrowserMainImage::ApplyPendingPayload(ID2D1RenderTarget* target)
         else
         {
             m_forceCpuDecode.store(true);
-            m_binding.SetLoading(false);
+            m_binding.MarkSettled();
             RequestImageLoad();
             usedGpu = true;
         }
@@ -1164,13 +1164,13 @@ void ImageBrowserMainImage::ApplyPendingPayload(ID2D1RenderTarget* target)
         {
             LogImageHr(L"D2D CreateBitmap", pending.sourcePath, hrBmp);
             m_binding.RecordFailure(pending.sourcePath, hrBmp);
-            m_binding.SetLoading(false);
+            m_binding.MarkSettled();
         }
     }
 
     if (applied)
     {
-        m_binding.SetLoading(false);
+        m_binding.MarkSettled();
     }
 }
 
@@ -1234,7 +1234,7 @@ void ImageBrowserMainImage::OnRender(ID2D1RenderTarget* target)
                 m_selectingMip = false;
                 m_request.mipLevel = m_sourceMipIndex;
                 m_binding.ClearFailure();
-                m_binding.SetLoading(false);
+                m_binding.MarkSettled();
             }
             else if (m_spinner)
             {

@@ -120,7 +120,7 @@ HRESULT ImageBrowserThumbImage::SetSourceFile(const std::wstring& filePath)
 
     m_filePath = normalized;
     m_binding.ClearFailure();
-    m_binding.SetLoading(false);
+    m_binding.MarkSettled();
     m_request.source = m_filePath;
     m_cpuPayload = {};
     m_needsCpuReupload = false;
@@ -273,12 +273,12 @@ void ImageBrowserThumbImage::ApplyPendingPayload(ID2D1RenderTarget* target)
         m_loadedFilePath = pending.sourcePath;
         m_cpuPayload = pending;
         m_needsCpuReupload = false;
-        m_binding.SetLoading(false);
+        m_binding.MarkSettled();
     }
     else
     {
         m_binding.RecordFailure(pending.sourcePath, hrBmp);
-        m_binding.SetLoading(false);
+        m_binding.MarkSettled();
     }
 }
 
