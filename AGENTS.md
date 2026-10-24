@@ -56,7 +56,7 @@
   C++20, CMake >= 3.21. Shipped builds use `MinSizeRel`.
 - Local verification for every PR:
   ```
-  cmake -S . -B build -G "Visual Studio 18 2026" -A x64 -DFICTURE2_BUILD_TESTS=ON
+  cmake -S . -B build -G "Visual Studio 18 2026" -A x64 -DFICTURE2_BUILD_TESTS=ON -DIMAGECORE_BUILD_TESTS=ON
   cmake --build build --config Debug
   cmake --build build --config MinSizeRel
   ctest --test-dir build -C Debug --output-on-failure
