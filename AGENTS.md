@@ -42,9 +42,13 @@
 - Never leave FICture2 pinned to a submodule commit that is not pushed to the
   submodule's remote.
 - Put tests for submodule code in the submodule repository.
-- Issues for submodule code live in the submodule repository. Close them from
-  that repository's PR with `Fixes #N`; in the consuming FICture2 PR, reference
-  them as `floyd68/<repo>#N` and list the pinned commit.
+- Issues for submodule code live in the submodule repository. A submodule
+  issue is complete only when FICture2 pins the pushed commit: the submodule PR
+  references it with `Refs #N`, and the FICture2 PR that pins the commit closes
+  it with `Fixes floyd68/<repo>#N` and lists the pinned commit. Each submodule
+  issue names its consumer (a FICture2 issue or a standalone pin-update PR) in
+  its "FICture2 integration" section. A standalone pin-update PR is allowed
+  without a FICture2 issue; it closes the submodule issue it consumes.
 
 ## Building and verification
 
@@ -89,8 +93,10 @@
    Follow the issue's acceptance criteria; user-visible changes update README
    (the current `What's New` section and the relevant feature/hotkey/INI
    sections) in the same PR.
-5. Open a PR whose body contains `Fixes #N`, a summary, verification results
-   (commands and outcomes), submodule commits and pin changes if any, and any
+5. Open a PR whose body contains `Fixes #N` (`Refs #N` for a submodule PR;
+   `Fixes floyd68/<repo>#N` in the FICture2 PR that pins it), a summary,
+   verification results (commands and outcomes), submodule commits and pin
+   changes if any, and any
    remaining risks. Add `needs-manual-test` with concrete manual steps when the
    change cannot be verified without running the app.
 6. Record progress / verification on the issue. Do not merge your own PR in
@@ -110,8 +116,9 @@
    add `changes-requested`, keep the PR open. Problems outside the PR's scope go
    into a new issue (or the relevant existing issue) instead.
 5. **No problems:** add `approved`, squash-merge (never with `--admin`), delete
-   the branch, confirm the issue closed via `Fixes #N`, and tick the item in
-   the tracking issue. The reviewer is authorized to merge every PR that passes
+   the branch, confirm the issue closed via `Fixes #N` (for submodule issues,
+   when the pinning FICture2 PR merges), and tick the item in the tracking
+   issue. The reviewer is authorized to merge every PR that passes
    review, except a `needs-manual-test` PR, which waits until the manual test
    is reported done.
 6. GitHub does not allow approving or requesting changes on a PR authored by
