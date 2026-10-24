@@ -690,6 +690,18 @@ bool ImageBrowserMainImage::SelectMip(uint32_t mipLevel)
     {
         return false;
     }
+
+    // Validate against the file as it is now, not the content already shown:
+    // if it (or its host archive) was replaced, every cached mip is stale.
+    const ImageSourceIdentity current = ImageSourceIdentity::ForPath(m_filePath);
+    if (m_presentationKind != PresentationKind::None && current != m_presentationIdentity)
+    {
+        ReloadSource();
+        m_request.mipLevel = mipLevel;
+        m_selectingMip = true;
+        return true;
+    }
+
     if (mipLevel == m_sourceMipIndex && HasDisplayedContentForCurrentPath())
     {
         return true;
@@ -720,7 +732,7 @@ bool ImageBrowserMainImage::SelectMip(uint32_t mipLevel)
                 cachedAlpha,
                 cachedMipLevels,
                 cachedMipIndex,
-                m_presentationIdentity,
+                current,
                 DeviceGeneration()))
         {
             if (m_texture)
@@ -728,7 +740,7 @@ bool ImageBrowserMainImage::SelectMip(uint32_t mipLevel)
                 m_texture->SetShaderResource(cachedSrv);
             }
             ApplyPresentation(PresentationKind::ShaderResource, m_filePath, cw, ch, cachedFormat,
-                cachedAlpha, cachedMipLevels, cachedMipIndex, m_presentationIdentity);
+                cachedAlpha, cachedMipLevels, cachedMipIndex, current);
             m_binding.MarkSettled();
             ClampPanToVisible();
             Invalidate();
@@ -1264,11 +1276,21 @@ void ImageBrowserMainImage::OnGraphicsInvalidated(
         break;
 
     case PresentationRecovery::Reload:
-        // GPU-only content was lost; decode again. The view transform is kept.
+    {
+        // GPU-only content was lost; decode the same source again at the
+        // requested mip. The view transform is kept, and so is the full-source
+        // metadata (size, mip count), which only a mip-0 decode would supply.
+        const uint32_t sourceWidth = m_sourceWidth;
+        const uint32_t sourceHeight = m_sourceHeight;
+        const uint32_t sourceMipLevels = m_sourceMipLevels;
         SetLoadedFilePath({});
         ResetPresentation();
+        m_sourceWidth = sourceWidth;
+        m_sourceHeight = sourceHeight;
+        m_sourceMipLevels = sourceMipLevels;
         Invalidate();
         break;
+    }
     }
 
     Wnd::OnGraphicsInvalidated(reason, generation);
