@@ -459,6 +459,24 @@ void ImageBrowserMainImage::SetOnViewChanged(ViewChangedHandler handler)
     m_onViewChanged = std::move(handler);
 }
 
+void ImageBrowserMainImage::SetOnPresentedPathChanged(PresentedPathHandler handler)
+{
+    m_onPresentedPathChanged = std::move(handler);
+}
+
+void ImageBrowserMainImage::SetLoadedFilePath(const std::wstring& path)
+{
+    if (path == m_loadedFilePath)
+    {
+        return;
+    }
+    m_loadedFilePath = path;
+    if (m_onPresentedPathChanged)
+    {
+        m_onPresentedPathChanged(m_loadedFilePath);
+    }
+}
+
 void ImageBrowserMainImage::RotateCW()
 {
     auto vt = GetViewTransform();
@@ -603,7 +621,7 @@ bool ImageBrowserMainImage::SelectMip(uint32_t mipLevel)
             {
                 m_texture->SetShaderResource(cachedSrv);
             }
-            m_loadedFilePath = m_filePath;
+            SetLoadedFilePath(m_filePath);
             m_loadedW = cw;
             m_loadedH = ch;
             m_loadedFormat = cachedFormat;
@@ -731,7 +749,7 @@ HRESULT ImageBrowserMainImage::SetSourceFile(const std::wstring& filePath)
             {
                 m_texture->SetShaderResource(cachedSrv);
             }
-            m_loadedFilePath = normalized;
+            SetLoadedFilePath(normalized);
             m_filePath = normalized;
             m_loadedW = cw;
             m_loadedH = ch;
@@ -769,7 +787,7 @@ void ImageBrowserMainImage::ClearSource()
     m_binding.ClearFailure();
 
     m_filePath.clear();
-    m_loadedFilePath.clear();
+    SetLoadedFilePath({});
     m_loadedW = 0;
     m_loadedH = 0;
     m_loadedFormat = DXGI_FORMAT_UNKNOWN;
@@ -914,7 +932,7 @@ void ImageBrowserMainImage::TryReuploadCpuPayload(ID2D1RenderTarget* target)
     if (SUCCEEDED(hrBmp) && d2dBitmap)
     {
         m_texture->SetBitmap(d2dBitmap);
-        m_loadedFilePath = m_cpuPayload.sourcePath;
+        SetLoadedFilePath(m_cpuPayload.sourcePath);
         m_loadedW = m_cpuPayload.width;
         m_loadedH = m_cpuPayload.height;
         m_loadedFormat = m_cpuPayload.format;
@@ -934,7 +952,7 @@ void ImageBrowserMainImage::TryReuploadCpuPayload(ID2D1RenderTarget* target)
     {
         LogImageHr(L"D2D CreateBitmap (reupload)", m_cpuPayload.sourcePath, hrBmp);
         m_needsCpuReupload = false;
-        m_loadedFilePath.clear();
+        SetLoadedFilePath({});
     }
 }
 
@@ -995,7 +1013,7 @@ void ImageBrowserMainImage::ApplyPendingPayload(ID2D1RenderTarget* target)
                     {
                         m_texture->SetShaderResource(srv);
                     }
-                    m_loadedFilePath = pending.sourcePath;
+                    SetLoadedFilePath(pending.sourcePath);
                     m_loadedW = pending.width;
                     m_loadedH = pending.height;
                     m_loadedFormat = pending.format;
@@ -1089,7 +1107,7 @@ void ImageBrowserMainImage::ApplyPendingPayload(ID2D1RenderTarget* target)
                 {
                     m_texture->SetShaderResource(srv);
                 }
-                m_loadedFilePath = pending.sourcePath;
+                SetLoadedFilePath(pending.sourcePath);
                 m_loadedW = pending.width;
                 m_loadedH = pending.height;
                 m_loadedFormat = pending.format;
@@ -1141,7 +1159,7 @@ void ImageBrowserMainImage::ApplyPendingPayload(ID2D1RenderTarget* target)
             {
                 m_texture->SetBitmap(d2dBitmap);
             }
-            m_loadedFilePath = pending.sourcePath;
+            SetLoadedFilePath(pending.sourcePath);
             m_loadedW = pending.width;
             m_loadedH = pending.height;
             m_loadedFormat = pending.format;
@@ -1199,7 +1217,7 @@ void ImageBrowserMainImage::OnGraphicsInvalidated(
         else if (!m_filePath.empty())
         {
             // GPU-only content was lost; force a reload. Keep view transform.
-            m_loadedFilePath.clear();
+            SetLoadedFilePath({});
             m_loadedW = 0;
             m_loadedH = 0;
             m_loadedFormat = DXGI_FORMAT_UNKNOWN;

@@ -102,6 +102,27 @@ struct IpcOpenQueue
         loadedCount = openNamesLower.size();
     }
 
+    // Replaces the open-name snapshot with one entry per pane that has a
+    // requested image (UI thread, at request and presentation boundaries).
+    // Requested - not displayed - paths are used, so a pane that just switched
+    // images matches the new name immediately, not the image still on screen.
+    void PublishOpenNames(const std::vector<std::wstring>& requestedPaths)
+    {
+        std::vector<std::wstring> names;
+        for (const std::wstring& path : requestedPaths)
+        {
+            std::wstring name = FileNameLower(path);
+            if (!name.empty())
+            {
+                names.push_back(std::move(name));
+            }
+        }
+
+        std::lock_guard<std::mutex> lock(mutex);
+        loadedCount = names.size();
+        openNamesLower = std::move(names);
+    }
+
     void MarkUiReady()
     {
         std::lock_guard<std::mutex> lock(mutex);

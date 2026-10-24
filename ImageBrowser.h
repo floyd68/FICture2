@@ -23,7 +23,8 @@ public:
 
     virtual void BrowserForceApplySyncedThumbStripHeight() = 0;
     virtual void BrowserSelectFileNameForSync(const std::wstring& fileNameLower) = 0;
-    virtual std::wstring BrowserGetActiveFileNameLower() const = 0;
+    // Lower-case file name of the requested image (ImageBrowserPathState).
+    virtual std::wstring BrowserGetRequestedFileNameLower() const = 0;
     virtual void BrowserApplyViewTransformForSync(const ImageViewTransform& vt) = 0;
     virtual void BrowserApplyShowNavItemsForSync(bool showNavItems) = 0;
     virtual void BrowserApplyBackgroundColorForSync(const D2D1_COLOR_F& color) = 0;
@@ -84,6 +85,8 @@ public:
 
     virtual ~IImageBrowserQuery() = default;
 
+    // Path semantics are documented in ImageBrowserPathState.h.
+    virtual std::wstring BrowserGetRequestedFilePath() const = 0;
     virtual std::wstring BrowserGetDisplayedFilePath() const = 0;
     virtual std::wstring BrowserGetCurrentFolderPath() const = 0;
     virtual bool BrowserTryGetMainImageClientRect(D2D1_RECT_F& outRect) const = 0;
@@ -92,7 +95,7 @@ public:
     virtual ContextMenuSnapshot BrowserContextMenuSnapshotAtPoint(const POINT& ptClient) const = 0;
     virtual std::wstring BrowserGetExplorerTargetPathAtPoint(const POINT& ptClient) const = 0;
     virtual bool BrowserHasFocusForTitle() const = 0;
-    virtual std::wstring BrowserSelectedImageFileNameForTitle() const = 0;
+    virtual std::wstring BrowserRequestedImageFileNameForTitle() const = 0;
 };
 
 class IImageBrowserOps : public IImageBrowserSync, public IImageBrowserCommands, public IImageBrowserQuery

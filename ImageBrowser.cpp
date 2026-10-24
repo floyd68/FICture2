@@ -15,6 +15,7 @@
 #include "ImageBrowserThumbTypes.h"
 #include "ImageBrowserThumbStripController.h"
 #include "ImageBrowserInfoPresenter.h"
+#include "ImageBrowserPathState.h"
 #include "ImageBrowserKeyboardController.h"
 #include "ImageBrowserThumbLayoutCoordinator.h"
 #include "ImageBrowserAssets.h"
@@ -848,7 +849,7 @@ namespace
             const std::wstring currentPath = ActiveMainPath();
             if (currentPath.empty())
             {
-                FIC2_LOG_WARN("[IPC] UI: TryStartCompareWithFileNameMatch — current browser has no file open (m_mainPath empty).");
+                FIC2_LOG_WARN("[IPC] UI: TryStartCompareWithFileNameMatch — current browser has no requested image.");
                 return false;
             }
 
@@ -887,9 +888,14 @@ namespace
             return true;
         }
 
+        std::wstring GetRequestedFilePath() const
+        {
+            return m_paths.requested;
+        }
+
         std::wstring GetDisplayedFilePath() const
         {
-            return ActiveMainPath();
+            return m_paths.displayed;
         }
 
         std::wstring GetCurrentFolderPath() const
@@ -1198,6 +1204,11 @@ namespace
             OpenAdditionalFilesSideBySideAfterName(filePaths, afterName);
         }
 
+        std::wstring BrowserGetRequestedFilePath() const override
+        {
+            return GetRequestedFilePath();
+        }
+
         std::wstring BrowserGetDisplayedFilePath() const override
         {
             return GetDisplayedFilePath();
@@ -1252,7 +1263,7 @@ namespace
             OnSyncedFileNameSelected(fileNameLower);
         }
 
-        std::wstring BrowserGetActiveFileNameLower() const override
+        std::wstring BrowserGetRequestedFileNameLower() const override
         {
             return ActiveMainFileNameLower();
         }
@@ -1515,9 +1526,9 @@ namespace
             return HasFocus();
         }
 
-        std::wstring BrowserSelectedImageFileNameForTitle() const override
+        std::wstring BrowserRequestedImageFileNameForTitle() const override
         {
-            return SelectedImageFileNameForTitle();
+            return RequestedImageFileNameForTitle();
         }
 
         void BuildUi()
@@ -1728,44 +1739,66 @@ namespace
                 });
 
             m_mainImage = m_mainPane->MainImage();
+            if (m_mainImage)
+            {
+                m_mainImage->SetOnPresentedPathChanged([this](const std::wstring& path)
+                {
+                    OnMainImagePresentedPathChanged(path);
+                });
+            }
 
                     if (!m_initialFile.empty())
                     {
-                m_mainPath = m_initialFile;
+                m_paths.SelectImage(m_initialFile);
+                // Adopt anything the main image presented before the callback
+                // was installed (normally nothing yet at this point).
+                if (m_mainImage)
+                {
+                    const std::wstring presented = m_mainImage->GetLoadedInfo().sourcePath;
+                    if (!presented.empty())
+                    {
+                        m_paths.OnPresented(presented);
+                    }
+                }
                 NotifyIpcOpenSnapshotChanged();
             }
 
         }
 
+        // Requested image of the main pane (see ImageBrowserPathState.h).
         std::wstring ActiveMainPath() const
         {
-            return m_mainPath;
+            return m_paths.requested;
+        }
+
+        // Main-image presentation boundary: the displayed path follows only the
+        // current request, and the IPC snapshot is refreshed.
+        void OnMainImagePresentedPathChanged(const std::wstring& path)
+        {
+            if (path.empty())
+            {
+                m_paths.OnPresentationCleared();
+            }
+            else if (!m_paths.OnPresented(path))
+            {
+                FIC2_LOG_WARN("[PathState] Ignoring presentation of a path that is not the current request: {}",
+                    AppLog::ToUtf8(path));
+            }
+            NotifyIpcOpenSnapshotChanged();
         }
 
     public:
-        std::wstring SelectedImageFileNameForTitle() const
+        std::wstring RequestedImageFileNameForTitle() const
         {
-            if (m_selectedIndex < m_items.size() && m_items[m_selectedIndex].kind == ThumbItemKind::Image)
-            {
-                return m_items[m_selectedIndex].path.filename().wstring();
-            }
-            return L"";
+            return m_paths.RequestedFileName();
         }
 
     private:
+        // Requested image name, not the image still on screen: after a new
+        // selection, sync and IPC matching must use the new name immediately.
         std::wstring ActiveMainFileNameLower() const
         {
-            std::wstring p = ActiveMainPath();
-            auto main = ActiveMainImage();
-            if (main)
-            {
-                const auto li = main->GetLoadedInfo();
-                if (!li.sourcePath.empty())
-                {
-                    p = li.sourcePath;
-                }
-            }
-            return CommonUtil::ToLower(std::filesystem::path(p).filename().wstring());
+            return m_paths.RequestedFileNameLower();
         }
 
         void RefreshInfoPanel()
@@ -1840,8 +1873,12 @@ namespace
             mainImage->SetInteractionEnabled(true);
             mainImage->SetLoadingSpinnerEnabled(true);
             const std::wstring p = m_items[index].path.wstring();
-            mainImage->SetSourceFile(p);
-            m_mainPath = p;
+            // The request is recorded before the load starts: a GPU cache hit
+            // presents synchronously inside SetSourceFile and must match it.
+            m_paths.RequestImage(p, [&]()
+            {
+                mainImage->SetSourceFile(p);
+            });
             RecentFiles::Add(FICture2App::GetIniFilePath(), p);
             NotifyIpcOpenSnapshotChanged();
             mainImage->Invalidate();
@@ -1893,11 +1930,11 @@ namespace
 
                 if (selectedItem.kind == ThumbItemKind::Up && !m_currentFolder.empty())
                 {
-                    m_mainPath = m_currentFolder.GetDisplayPath();
+                    m_paths.SelectNonImage(m_currentFolder.GetDisplayPath());
                 }
                 else
                 {
-                    m_mainPath = selectedItem.path.GetDisplayPath();
+                    m_paths.SelectNonImage(selectedItem.path.GetDisplayPath());
                 }
                 NotifyIpcOpenSnapshotChanged();
 
@@ -2307,7 +2344,7 @@ namespace
                         m_mainImage->ClearSource();
                         m_mainImage->SetInteractionEnabled(false);
                     }
-                    m_mainPath.clear();
+                    m_paths.ClearSelection();
                     NotifyIpcOpenSnapshotChanged();
                     RefreshInfoPanel();
                 }
@@ -2825,7 +2862,8 @@ namespace
         std::shared_ptr<FD2D::SplitPanel> m_rootSplit {};
         std::shared_ptr<ImageBrowserMainPane> m_mainPane {};
         std::shared_ptr<ImageBrowserMainImage> m_mainImage {};
-        std::wstring m_mainPath {};
+        // Selected / requested / displayed paths (single owner; see ImageBrowserPathState.h).
+        ImageBrowserPathState m_paths {};
 
         std::shared_ptr<FD2D::Wnd> m_selectedFocus {};
         ImageBrowserThumbStripController m_thumbStripController {};
