@@ -1750,6 +1750,16 @@ namespace
                     if (!m_initialFile.empty())
                     {
                 m_paths.SelectImage(m_initialFile);
+                // Adopt anything the main image presented before the callback
+                // was installed (normally nothing yet at this point).
+                if (m_mainImage)
+                {
+                    const std::wstring presented = m_mainImage->GetLoadedInfo().sourcePath;
+                    if (!presented.empty())
+                    {
+                        m_paths.OnPresented(presented);
+                    }
+                }
                 NotifyIpcOpenSnapshotChanged();
             }
 
@@ -1863,8 +1873,12 @@ namespace
             mainImage->SetInteractionEnabled(true);
             mainImage->SetLoadingSpinnerEnabled(true);
             const std::wstring p = m_items[index].path.wstring();
-            mainImage->SetSourceFile(p);
-            m_paths.SelectImage(p);
+            // The request is recorded before the load starts: a GPU cache hit
+            // presents synchronously inside SetSourceFile and must match it.
+            m_paths.RequestImage(p, [&]()
+            {
+                mainImage->SetSourceFile(p);
+            });
             RecentFiles::Add(FICture2App::GetIniFilePath(), p);
             NotifyIpcOpenSnapshotChanged();
             mainImage->Invalidate();

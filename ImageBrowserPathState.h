@@ -38,6 +38,17 @@ struct ImageBrowserPathState
         requested = path;
     }
 
+    // Records `path` as the requested image, then runs `startLoad`. The order
+    // matters: the load may present synchronously (a GPU cache hit reports
+    // OnPresented from inside startLoad), and that presentation must match the
+    // new request rather than be rejected against the previous one.
+    template <typename StartLoad>
+    void RequestImage(const std::wstring& path, StartLoad&& startLoad)
+    {
+        SelectImage(path);
+        startLoad();
+    }
+
     // A folder or "up" item was selected: there is no requested image. The main
     // image is cleared separately (OnPresentationCleared).
     void SelectNonImage(const std::wstring& displayPath)

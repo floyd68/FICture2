@@ -24,6 +24,59 @@ namespace
         return CommonUtil::NormalizePath(path);
     }
 
+    // Mirrors ImageBrowserMainImage's presentation reporting: SetLoadedFilePath
+    // notifies only when the presented path changes, and a GPU cache hit
+    // presents synchronously inside SetSourceFile.
+    struct FakeMainImage
+    {
+        ImageBrowserPathState& paths;
+        std::vector<std::wstring> cached {};
+        std::wstring requested {};
+        std::wstring loaded {};
+
+        void SetLoadedFilePath(const std::wstring& path)
+        {
+            if (path == loaded)
+            {
+                return;
+            }
+            loaded = path;
+            if (loaded.empty())
+            {
+                paths.OnPresentationCleared();
+            }
+            else
+            {
+                paths.OnPresented(loaded);
+            }
+        }
+
+        void SetSourceFile(const std::wstring& path)
+        {
+            requested = CommonUtil::NormalizePath(path);
+            for (const auto& c : cached)
+            {
+                if (c == requested)
+                {
+                    SetLoadedFilePath(requested);  // synchronous cache hit
+                }
+            }
+        }
+
+        // An asynchronous decode of the current source completes.
+        void CompleteLoad()
+        {
+            SetLoadedFilePath(requested);
+            cached.push_back(requested);
+        }
+    };
+
+    // ImageBrowserImpl::ApplyMainFromIndex
+    void SelectAndLoad(ImageBrowserPathState& paths, FakeMainImage& main, const std::wstring& path)
+    {
+        paths.RequestImage(path, [&]() { main.SetSourceFile(path); });
+    }
+
     // IPC snapshot from several panes, as Ficture2Backplate::RefreshIpcOpenSnapshot builds it.
     void Publish(IpcOpenQueue& queue, const std::vector<const ImageBrowserPathState*>& panes)
     {
@@ -115,6 +168,30 @@ FIC2_TEST(PathState_RapidSelectionKeepsOnlyLatestRequest)
     FIC2_CHECK(paths.displayed == AsPresented(sequence.front()));
     FIC2_CHECK(paths.OnPresented(AsPresented(sequence.back())));
     FIC2_CHECK(paths.displayed == AsPresented(sequence.back()));
+}
+
+FIC2_TEST(PathState_SynchronousCacheHitPresentationIsDisplayed)
+{
+    // Load A, load B, then reselect A from the GPU cache: A is presented inside
+    // SetSourceFile, before ApplyMainFromIndex returns. It must become the
+    // displayed path; the main image does not report the same path again, so a
+    // rejected report would leave B "displayed" for good.
+    ImageBrowserPathState paths;
+    FakeMainImage main { paths };
+
+    SelectAndLoad(paths, main, kA);
+    FIC2_CHECK(paths.displayed.empty());
+    main.CompleteLoad();
+    FIC2_CHECK(paths.displayed == AsPresented(kA));
+
+    SelectAndLoad(paths, main, kB);
+    main.CompleteLoad();
+    FIC2_CHECK(paths.displayed == AsPresented(kB));
+
+    SelectAndLoad(paths, main, kA);  // cache hit: presents synchronously
+    FIC2_CHECK(main.loaded == AsPresented(kA));
+    FIC2_CHECK(paths.requested == kA);
+    FIC2_CHECK(paths.displayed == AsPresented(kA));
 }
 
 FIC2_TEST(PathState_IpcSnapshotFollowsRequestedNotDisplayed)
