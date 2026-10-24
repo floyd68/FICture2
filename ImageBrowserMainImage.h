@@ -38,7 +38,8 @@ public:
     // Same path: S_FALSE while it is already shown or loading - unless the file
     // (or its host archive) changed since it was decoded, which reloads it.
     HRESULT SetSourceFile(const std::wstring& filePath);
-    // Drops cached GPU content for the current file and decodes it again.
+    // Drops cached GPU content for the current file and decodes it again from
+    // mip 0 (the only decode that supplies the full-source size and mip count).
     void ReloadSource();
     void ClearSource();
 
@@ -157,6 +158,9 @@ private:
     ImageSourceIdentity m_presentationIdentity {};
     // Identity of the file when the current decode was requested.
     ImageSourceIdentity m_requestIdentity {};
+    // Mip to select once a reload of a replaced source has presented mip 0
+    // (0 = none).
+    uint32_t m_mipAfterReload { 0 };
     uint64_t m_lastSeenDeviceGeneration { 0 };
     int m_channelMode { 0 };
 

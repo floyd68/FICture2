@@ -319,6 +319,9 @@ void ImageBrowserMainImage::ReloadSource()
         return;
     }
 
+    // Everything is reset before Invalidate(), which may render synchronously
+    // and dispatch the reload request right away: that request must be mip 0.
+
     ImageGpuResourceCache::Instance().InvalidatePath(m_filePath);
     m_binding.Cancel();
     m_binding.ClearFailure();
@@ -693,14 +696,17 @@ bool ImageBrowserMainImage::SelectMip(uint32_t mipLevel)
 
     // Validate against the file as it is now, not the content already shown:
     // if it (or its host archive) was replaced, every cached mip is stale.
+    // Reload mip 0 first - only it supplies the new source size and mip count -
+    // and select the requested mip once that has been presented. The pending
+    // mip is recorded before ReloadSource(), whose Invalidate() may render.
     const ImageSourceIdentity current = ImageSourceIdentity::ForPath(m_filePath);
     if (m_presentationKind != PresentationKind::None && current != m_presentationIdentity)
     {
+        m_mipAfterReload = mipLevel;
         ReloadSource();
-        m_request.mipLevel = mipLevel;
-        m_selectingMip = true;
         return true;
     }
+    m_mipAfterReload = 0;
 
     if (mipLevel == m_sourceMipIndex && HasDisplayedContentForCurrentPath())
     {
@@ -817,6 +823,7 @@ HRESULT ImageBrowserMainImage::SetSourceFile(const std::wstring& filePath)
     // Supersede the in-flight request (cancel its handle, drop any staged payload).
     m_binding.Cancel();
 
+    m_mipAfterReload = 0;
     ResetPresentation();
     m_selectingMip = false;
     m_channelMode = 0;
@@ -883,6 +890,7 @@ void ImageBrowserMainImage::ClearSource()
 
     m_filePath.clear();
     SetLoadedFilePath({});
+    m_mipAfterReload = 0;
     ResetPresentation();
     m_selectingMip = false;
     m_channelMode = 0;
@@ -1228,6 +1236,18 @@ void ImageBrowserMainImage::ApplyPendingPayload(ID2D1RenderTarget* target)
     if (applied)
     {
         m_binding.MarkSettled();
+
+        // A replaced source was reloaded at mip 0 on behalf of a mip selection:
+        // now that its size and mip count are known, continue to that mip.
+        if (m_mipAfterReload != 0 && m_sourceMipIndex == 0)
+        {
+            const uint32_t mip = m_mipAfterReload;
+            m_mipAfterReload = 0;
+            if (mip < MipLevels())
+            {
+                (void)SelectMip(mip);
+            }
+        }
     }
 }
 

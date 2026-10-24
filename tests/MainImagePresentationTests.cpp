@@ -8,7 +8,9 @@
 #include "ImageSourceIdentity.h"
 
 #include <windows.h>
+#include <d2d1.h>
 #include <d3d11.h>
+#include <wincodec.h>
 #include <wrl/client.h>
 
 #include <filesystem>
@@ -49,6 +51,73 @@ namespace
 
     private:
         ImageCore::ImageHandle m_next { 0 };
+    };
+
+    // Records requests (with their mip) and completes them on demand.
+    class RecordingDecodeService : public IImageDecodeService
+    {
+    public:
+        struct Request
+        {
+            ImageCore::ImageRequest request {};
+            ImageCore::DecodedImageLoadCallback callback {};
+        };
+
+        ImageCore::ImageHandle RequestDecoded(const ImageCore::ImageRequest& request,
+            ImageCore::DecodedImageLoadCallback callback) override
+        {
+            requests.push_back({ request, std::move(callback) });
+            return static_cast<ImageCore::ImageHandle>(requests.size());
+        }
+        void Cancel(ImageCore::ImageHandle) override {}
+
+        // Completes the latest request with a BGRA image of the given mip.
+        void CompleteLatest(uint32_t size, uint32_t mipLevels, uint32_t mipIndex)
+        {
+            ImageCore::DecodedImage image {};
+            image.width = size;
+            image.height = size;
+            image.rowPitchBytes = size * 4u;
+            image.dxgiFormat = DXGI_FORMAT_B8G8R8A8_UNORM;
+            image.blocks = std::make_shared<std::vector<uint8_t>>(static_cast<size_t>(size) * size * 4u, uint8_t(0x80));
+            image.blockBytes = static_cast<uint32_t>(image.blocks->size());
+            image.sourceMipLevels = mipLevels;
+            image.sourceMipIndex = mipIndex;
+            requests.back().callback(S_OK, std::move(image));
+        }
+
+        std::vector<Request> requests;
+    };
+
+    // Windowless render target for OnRender (no D3D device: CPU payloads are
+    // presented as D2D bitmaps).
+    struct WicTarget
+    {
+        ComPtr<IWICImagingFactory> wic;
+        ComPtr<ID2D1Factory> d2d;
+        ComPtr<IWICBitmap> bitmap;
+        ComPtr<ID2D1RenderTarget> target;
+
+        bool Create()
+        {
+            if (FAILED(CoCreateInstance(CLSID_WICImagingFactory, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&wic))) ||
+                FAILED(D2D1CreateFactory(D2D1_FACTORY_TYPE_SINGLE_THREADED, d2d.GetAddressOf())) ||
+                FAILED(wic->CreateBitmap(64, 64, GUID_WICPixelFormat32bppPBGRA, WICBitmapCacheOnLoad, &bitmap)))
+            {
+                return false;
+            }
+            const D2D1_RENDER_TARGET_PROPERTIES props = D2D1::RenderTargetProperties(
+                D2D1_RENDER_TARGET_TYPE_SOFTWARE,
+                D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM, D2D1_ALPHA_MODE_PREMULTIPLIED), 96.0f, 96.0f);
+            return SUCCEEDED(d2d->CreateWicBitmapRenderTarget(bitmap.Get(), props, &target));
+        }
+
+        void Render(FD2D::Wnd& wnd)
+        {
+            target->BeginDraw();
+            wnd.OnRender(target.Get());
+            (void)target->EndDraw();
+        }
     };
 
     struct ScopedIdleDecodes
@@ -144,31 +213,60 @@ namespace
     };
 }
 
-FIC2_TEST(MainImage_MipSelectionRejectsCacheAfterSourceReplaced)
+FIC2_TEST(MainImage_MipSelectionAfterSourceReplacedReloadsMip0ThenRequestedMip)
 {
     FD2D::Backplate backplate(L"main-image-test");
     CachedMipFile cached;
     FIC2_REQUIRE(cached.Create(backplate.GetGraphicsGeneration().device));
+    // Decodes go to a recording service instead of the idle one.
+    RecordingDecodeService decodes;
+    ImageAsyncBinding::SetDecodeServiceForTesting(&decodes);
+    WicTarget canvas;
+    FIC2_REQUIRE(canvas.Create());
 
     auto main = std::make_shared<ImageBrowserMainImage>(L"main");
     FIC2_REQUIRE(backplate.AddWnd(main));
+    main->SetLayoutRect(D2D1::RectF(0.0f, 0.0f, 64.0f, 64.0f));
     FIC2_REQUIRE(SUCCEEDED(main->SetSourceFile(cached.file.wstring())));
-    FIC2_REQUIRE(main->GetLoadedInfo().width == 16);   // mip 0 from the cache
-    FIC2_REQUIRE(main->MipLevels() == 3);
-
-    // Cached mips work while the file is unchanged.
+    FIC2_REQUIRE(main->GetLoadedInfo().width == 16);   // old mip 0 from the cache
     FIC2_CHECK(main->SelectMip(2));
-    FIC2_CHECK(main->GetLoadedInfo().width == 4);
+    FIC2_CHECK(main->GetLoadedInfo().width == 4);      // cached mips work while unchanged
     FIC2_CHECK(main->SelectMip(0));
-    FIC2_CHECK(main->GetLoadedInfo().width == 16);
 
-    // The file is replaced while it stays selected; then another mip is chosen.
+    // The file is replaced (a new 32 px image with 4 mips) while it stays
+    // selected; then mip 1 is chosen.
     WriteBytes(cached.file, 512);
     FIC2_CHECK(main->SelectMip(1));
-    const ImageLoadedInfo info = main->GetLoadedInfo();
-    FIC2_CHECK(info.width != 8);              // not the stale cached mip 1
-    FIC2_CHECK(info.sourcePath.empty());      // reloading the new content
+    FIC2_CHECK(main->GetLoadedInfo().width != 8);      // not the stale cached mip 1
     FIC2_CHECK(ImageGpuResourceCache::Instance().EntryCount() == 0);
+
+    // The first decode after the replacement is mip 0 (it supplies the new size).
+    canvas.Render(*main);
+    FIC2_REQUIRE(decodes.requests.size() == 1);
+    FIC2_CHECK(decodes.requests.back().request.mipLevel == 0);
+    decodes.CompleteLatest(32, 4, 0);
+    canvas.Render(*main);
+    {
+        const ImageLoadedInfo info = main->GetLoadedInfo();
+        FIC2_CHECK(info.width == 32);
+        FIC2_CHECK(info.sourceWidth == 32);
+        FIC2_CHECK(main->MipLevels() == 4);
+    }
+
+    // Presenting mip 0 continues to the requested mip.
+    FIC2_REQUIRE(decodes.requests.size() == 2);
+    FIC2_CHECK(decodes.requests.back().request.mipLevel == 1);
+    decodes.CompleteLatest(16, 4, 1);
+    canvas.Render(*main);
+    const ImageLoadedInfo info = main->GetLoadedInfo();
+    FIC2_CHECK(info.width == 16);
+    FIC2_CHECK(info.sourceMipIndex == 1);
+    FIC2_CHECK(info.sourceWidth == 32);   // the new source's full size
+    FIC2_CHECK(info.sourceHeight == 32);
+    FIC2_CHECK(!info.sourcePath.empty());
+
+    main.reset();
+    ImageAsyncBinding::SetDecodeServiceForTesting(nullptr);
 }
 
 FIC2_TEST(MainImage_DeviceLossAtNonzeroMipKeepsSourceMetadata)
