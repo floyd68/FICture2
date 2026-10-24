@@ -43,11 +43,14 @@ endif()
 option(FICTURE2_USE_DIRECTXTEX_OPENMP "Enable OpenMP for DirectXTex" OFF)
 option(FICTURE2_ENABLE_LIBARCHIVE_COMMON_ARCHIVES "Enable ZIP/7z/RAR via libarchive (maps to FLOAR_ENABLE_COMMON_ARCHIVES)" ON)
 option(FICTURE2_ENABLE_PROFILING "Enable profiler-friendly compiler/linker flags" OFF)
+option(FICTURE2_BUILD_TESTS "Build FICture2 first-party unit tests (vendored dependency tests stay off)" OFF)
 
 # Floar owns zlib/xz/libarchive; map the legacy FICture2 option onto Floar's.
 set(FLOAR_ENABLE_COMMON_ARCHIVES ${FICTURE2_ENABLE_LIBARCHIVE_COMMON_ARCHIVES} CACHE BOOL
     "Enable ZIP/7z/RAR via libarchive" FORCE)
 
+# Keeps vendored dependency test suites (DirectXTex, zlib, xz, libarchive) off.
+# First-party tests are controlled separately by FICTURE2_BUILD_TESTS.
 set(BUILD_TESTING OFF CACHE BOOL "Disable tests by default" FORCE)
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -370,6 +373,11 @@ if(MSVC)
     # /utf-8: treat source files as UTF-8 (required by spdlog/fmt and prevents C4819 warnings
     # with MSVC on non-English Windows locales).
     target_compile_options(FICture2 PRIVATE /utf-8)
+endif()
+
+if(FICTURE2_BUILD_TESTS)
+    enable_testing()
+    add_subdirectory(tests)
 endif()
 
 # ---------------------------------------------------------------------------
