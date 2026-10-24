@@ -123,6 +123,18 @@ void ImageAsyncBindingRegistry::ShutdownPrepare()
     InvalidateAll();
 }
 
+ImageCore::ImageHandle ImageAsyncBinding::Supersede_NoLock(ImageAsyncBindingState& state)
+{
+    const ImageCore::ImageHandle handle = state.handle;
+    state.handle = 0;
+    if (state.phase == Phase::Loading || state.phase == Phase::Ready)
+    {
+        state.phase = Phase::Superseded;
+    }
+    state.pending = Payload {};
+    return handle;
+}
+
 void ImageAsyncBinding::InvalidateState(const std::shared_ptr<ImageAsyncBindingState>& state)
 {
     if (!state)
@@ -130,24 +142,18 @@ void ImageAsyncBinding::InvalidateState(const std::shared_ptr<ImageAsyncBindingS
         return;
     }
 
-    state->generation.fetch_add(1ULL);
-    state->inflightGeneration.store(0);
-
     ImageCore::ImageHandle handle = 0;
     {
         std::lock_guard<std::mutex> lock(state->mutex);
-        handle = state->handle;
-        state->handle = 0;
-        state->inflightPath.clear();
-        state->pending = Payload {};
+        ++state->generation;
+        handle = Supersede_NoLock(*state);
+        state->requestPath.clear();
     }
 
     if (handle != 0)
     {
         CancelDecode(handle);
     }
-
-    state->loading.store(false);
 }
 
 ImageAsyncBinding::ImageAsyncBinding()
@@ -172,15 +178,14 @@ void ImageAsyncBinding::RequestLoad(
     const ImageCore::ImageRequest& request,
     const std::wstring& normalizedPath)
 {
-    const uint64_t gen = m_state->generation.fetch_add(1ULL) + 1ULL;
-
+    uint64_t gen = 0;
     ImageCore::ImageHandle oldHandle = 0;
     {
         std::lock_guard<std::mutex> lock(m_state->mutex);
-        oldHandle = m_state->handle;
-        m_state->handle = 0;
-        m_state->pending = Payload {};
-        m_state->inflightPath = normalizedPath;
+        oldHandle = Supersede_NoLock(*m_state);
+        gen = ++m_state->generation;
+        m_state->phase = Phase::Loading;
+        m_state->requestPath = normalizedPath;
     }
 
     if (oldHandle != 0)
@@ -188,108 +193,97 @@ void ImageAsyncBinding::RequestLoad(
         CancelDecode(oldHandle);
     }
 
-    m_state->inflightGeneration.store(gen);
-    m_state->loading.store(true);
-
+    // The callback may run on a worker thread before RequestDecode returns,
+    // after a newer request, or after Cancel; the generation decides.
     auto state = m_state;
     const ImageCore::ImageHandle handle = RequestDecode(
         request,
-        [state, gen, normalizedPath](HRESULT hr, ImageCore::DecodedImage image)
+        [state, gen](HRESULT hr, ImageCore::DecodedImage image)
         {
-            // Worker thread — capture only shared_ptr<State> (+ path, gen).
-            if (gen != state->inflightGeneration.load())
-            {
-                return;
-            }
-
-            {
-                std::lock_guard<std::mutex> lock(state->mutex);
-                if (state->inflightPath != normalizedPath)
-                {
-                    return;
-                }
-            }
-
-            if (gen != state->inflightGeneration.load())
-            {
-                return;
-            }
-
-            OnDecodeComplete(state, gen, normalizedPath, hr, std::move(image));
+            OnDecodeComplete(state, gen, hr, std::move(image));
         });
 
+    bool cancelNewHandle = false;
+    bool rejected = false;
     {
         std::lock_guard<std::mutex> lock(m_state->mutex);
-        if (gen == m_state->inflightGeneration.load() && m_state->inflightPath == normalizedPath)
+        if (gen != m_state->generation)
         {
-            m_state->handle = handle;
+            // Superseded (or canceled) while dispatching.
+            cancelNewHandle = (handle != 0);
         }
-        else if (handle != 0)
+        else if (m_state->phase == Phase::Loading)
         {
-            // Cancelled / superseded before we could store the handle.
-            CancelDecode(handle);
+            if (handle != 0)
+            {
+                m_state->handle = handle;
+            }
+            else
+            {
+                // ImageCore rejected the request and will never call back.
+                m_state->phase = Phase::Failed;
+                m_state->failedPath = normalizedPath;
+                m_state->failedHr = E_ABORT;
+                rejected = true;
+            }
         }
+        // Otherwise the request already completed (Ready/Failed) before
+        // RequestDecode returned; its handle is finished and is not stored.
+    }
+
+    if (cancelNewHandle)
+    {
+        CancelDecode(handle);
+    }
+    if (rejected)
+    {
+        FIC2_LOG_WARN("[ImageAsyncBinding] Decode request rejected: {}", AppLog::ToUtf8(normalizedPath));
+        RequestRedrawFromState(m_state);
     }
 }
 
 void ImageAsyncBinding::OnDecodeComplete(
     const std::shared_ptr<ImageAsyncBindingState>& state,
     uint64_t gen,
-    const std::wstring& requestedPath,
     HRESULT hr,
     ImageCore::DecodedImage image)
 {
-    if (gen != state->inflightGeneration.load())
-    {
-        return;
-    }
-
     {
         std::lock_guard<std::mutex> lock(state->mutex);
-        if (state->inflightPath != requestedPath)
+        // Only the current generation's in-flight request may change state; a
+        // stale success or failure (superseded, canceled, or arriving after
+        // Cancel returned) is dropped here as one atomic decision.
+        if (gen != state->generation || state->phase != Phase::Loading)
         {
             return;
         }
+
         state->handle = 0;
-    }
+        const std::wstring normalizedSource = CommonUtil::NormalizePath(state->requestPath);
 
-    const std::wstring normalizedSource = CommonUtil::NormalizePath(requestedPath);
-
-    if (SUCCEEDED(hr) && image.blocks && !image.blocks->empty())
-    {
-        std::lock_guard<std::mutex> lock(state->mutex);
-        // Re-check under lock after staging decision.
-        if (gen != state->inflightGeneration.load() || state->inflightPath != requestedPath)
+        if (SUCCEEDED(hr) && image.blocks && !image.blocks->empty())
         {
-            return;
+            state->pending.blocks = std::move(image.blocks);
+            state->pending.width = image.width;
+            state->pending.height = image.height;
+            state->pending.rowPitch = image.rowPitchBytes;
+            state->pending.format = image.dxgiFormat;
+            state->pending.alphaEncoding = image.alphaEncoding;
+            state->pending.alphaUsageHint = image.alphaUsageHint;
+            state->pending.sourceWasBlockCompressed = image.sourceWasBlockCompressed;
+            state->pending.sourceMipLevels = (std::max)(1u, image.sourceMipLevels);
+            state->pending.sourceMipIndex = image.sourceMipIndex;
+            state->pending.sourcePath = normalizedSource;
+            state->failedPath.clear();
+            state->failedHr = S_OK;
+            state->phase = Phase::Ready;
         }
-        state->pending.blocks = std::move(image.blocks);
-        state->pending.width = image.width;
-        state->pending.height = image.height;
-        state->pending.rowPitch = image.rowPitchBytes;
-        state->pending.format = image.dxgiFormat;
-        state->pending.alphaEncoding = image.alphaEncoding;
-        state->pending.alphaUsageHint = image.alphaUsageHint;
-        state->pending.sourceWasBlockCompressed = image.sourceWasBlockCompressed;
-        state->pending.sourceMipLevels = (std::max)(1u, image.sourceMipLevels);
-        state->pending.sourceMipIndex = image.sourceMipIndex;
-        state->pending.sourcePath = normalizedSource;
-        state->failedPath.clear();
-        state->failedHr = S_OK;
-    }
-    else
-    {
+        else
         {
-            std::lock_guard<std::mutex> lock(state->mutex);
-            if (gen != state->inflightGeneration.load() || state->inflightPath != requestedPath)
-            {
-                return;
-            }
             state->failedPath = normalizedSource;
-            state->failedHr = hr;
+            state->failedHr = FAILED(hr) ? hr : E_FAIL;
+            state->phase = Phase::Failed;
         }
-        state->loading.store(false);
-        state->inflightGeneration.store(0);
     }
 
     RequestRedrawFromState(state);
@@ -303,17 +297,43 @@ void ImageAsyncBinding::Cancel()
 void ImageAsyncBinding::ClearPending()
 {
     std::lock_guard<std::mutex> lock(m_state->mutex);
-    m_state->pending = Payload {};
+    if (m_state->phase == Phase::Ready)
+    {
+        m_state->pending = Payload {};
+        m_state->phase = Phase::Superseded;
+    }
 }
 
 bool ImageAsyncBinding::IsLoading() const
 {
-    return m_state->loading.load();
+    std::lock_guard<std::mutex> lock(m_state->mutex);
+    return m_state->phase == Phase::Loading || m_state->phase == Phase::Ready;
 }
 
-void ImageAsyncBinding::SetLoading(bool loading)
+void ImageAsyncBinding::MarkSettled()
 {
-    m_state->loading.store(loading);
+    ImageCore::ImageHandle handle = 0;
+    {
+        std::lock_guard<std::mutex> lock(m_state->mutex);
+        if (m_state->phase != Phase::Loading && m_state->phase != Phase::Ready)
+        {
+            return;
+        }
+        // A completion of the abandoned request must not apply later.
+        ++m_state->generation;
+        handle = Supersede_NoLock(*m_state);
+    }
+
+    if (handle != 0)
+    {
+        CancelDecode(handle);
+    }
+}
+
+ImageAsyncBinding::Phase ImageAsyncBinding::CurrentPhase() const
+{
+    std::lock_guard<std::mutex> lock(m_state->mutex);
+    return m_state->phase;
 }
 
 bool ImageAsyncBinding::IsFailedFor(const std::wstring& path) const
@@ -353,8 +373,13 @@ void ImageAsyncBinding::RecordFailure(const std::wstring& path, HRESULT hr)
 ImageAsyncBinding::Payload ImageAsyncBinding::TakePending()
 {
     std::lock_guard<std::mutex> lock(m_state->mutex);
+    if (m_state->phase != Phase::Ready)
+    {
+        return Payload {};
+    }
     Payload out = std::move(m_state->pending);
     m_state->pending = Payload {};
+    m_state->phase = Phase::Idle;
     return out;
 }
 
@@ -372,15 +397,14 @@ bool ImageAsyncBinding::PollAndApply(const ApplyCallback& apply)
     }
 
     apply(std::move(pending));
-    m_state->loading.store(false);
-    m_state->inflightGeneration.store(0);
     return true;
 }
 
 bool ImageAsyncBinding::HasPendingCpuBgra8For(const std::wstring& path) const
 {
     std::lock_guard<std::mutex> lock(m_state->mutex);
-    return m_state->pending.blocks
+    return m_state->phase == Phase::Ready
+        && m_state->pending.blocks
         && IsCpuBgra8Format(m_state->pending.format)
         && m_state->pending.sourcePath == path;
 }
