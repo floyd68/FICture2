@@ -4,8 +4,10 @@
 add_executable(FICture2Tests
     TestHarness.h
     TestMain.cpp
+    AppLogTests.cpp
     ImageAsyncBindingTests.cpp
     IpcOpenQueueTests.cpp
+    ${PROJECT_SOURCE_DIR}/AppLog.cpp
     ${PROJECT_SOURCE_DIR}/ImageAsyncBinding.cpp
 )
 
@@ -19,6 +21,7 @@ target_include_directories(FICture2Tests PRIVATE
 
 target_compile_definitions(FICture2Tests PRIVATE
     FD2D_STATIC
+    SPDLOG_WCHAR_FILENAMES
     UNICODE
     _UNICODE
 )
@@ -41,3 +44,8 @@ endif()
 
 add_test(NAME FICture2.IpcOpenQueue COMMAND FICture2Tests IpcOpenQueue_)
 add_test(NAME FICture2.ImageAsyncBinding COMMAND FICture2Tests ImageAsyncBinding_)
+# AppLog::Init runs once per process, so each Init scenario gets its own entry.
+add_test(NAME FICture2.AppLogText COMMAND FICture2Tests AppLogText_)
+add_test(NAME FICture2.AppLogLazy COMMAND FICture2Tests AppLogLazy_)
+add_test(NAME FICture2.AppLogInitUnicode COMMAND FICture2Tests AppLogInitUnicode_)
+add_test(NAME FICture2.AppLogInitFailure COMMAND FICture2Tests AppLogInitFailure_)
