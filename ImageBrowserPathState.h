@@ -63,8 +63,10 @@ struct ImageBrowserPathState
         requested.clear();
     }
 
-    // The main image presented `path`. Only the current request can become the
-    // displayed path; anything else is a stale presentation and is rejected.
+    // The main image presented `path` (it reports normalized paths). Only the
+    // current request can become the displayed path; anything else is a stale
+    // presentation and is rejected. The request's own spelling is kept, so
+    // names derived from it (screenshots) keep the file's case.
     bool OnPresented(const std::wstring& path)
     {
         if (path.empty() || requested.empty() ||
@@ -72,7 +74,7 @@ struct ImageBrowserPathState
         {
             return false;
         }
-        displayed = path;
+        displayed = requested;
         return true;
     }
 

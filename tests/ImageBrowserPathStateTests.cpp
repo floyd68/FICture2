@@ -94,17 +94,17 @@ FIC2_TEST(PathState_NewSelectionIsRequestedWhilePreviousStaysDisplayed)
     ImageBrowserPathState paths;
     paths.SelectImage(kA);
     FIC2_CHECK(paths.OnPresented(AsPresented(kA)));
-    FIC2_CHECK(paths.displayed == AsPresented(kA));
+    FIC2_CHECK(paths.displayed == kA);
 
     paths.SelectImage(kB);
     FIC2_CHECK(paths.selected == kB);
     FIC2_CHECK(paths.requested == kB);
-    FIC2_CHECK(paths.displayed == AsPresented(kA));  // a stays on screen while b loads
+    FIC2_CHECK(paths.displayed == kA);  // a stays on screen while b loads
     FIC2_CHECK(paths.RequestedFileNameLower() == L"b.dds");
     FIC2_CHECK(paths.RequestedFileName() == L"b.dds");
 
     FIC2_CHECK(paths.OnPresented(AsPresented(kB)));
-    FIC2_CHECK(paths.displayed == AsPresented(kB));
+    FIC2_CHECK(paths.displayed == kB);
 }
 
 FIC2_TEST(PathState_StaleOrFailedLoadNeverBecomesDisplayed)
@@ -115,16 +115,18 @@ FIC2_TEST(PathState_StaleOrFailedLoadNeverBecomesDisplayed)
 
     // b fails: no presentation is reported, a remains displayed.
     paths.SelectImage(kB);
-    FIC2_CHECK(paths.displayed == AsPresented(kA));
+    FIC2_CHECK(paths.displayed == kA);
 
     // c is requested; a late presentation of the superseded b is rejected.
     paths.SelectImage(kC);
     FIC2_CHECK(!paths.OnPresented(AsPresented(kB)));
-    FIC2_CHECK(paths.displayed == AsPresented(kA));
+    FIC2_CHECK(paths.displayed == kA);
     FIC2_CHECK(!paths.OnPresented(L""));
 
-    // Case and separator differences between display and presented paths match.
+    // Case and separator differences between display and presented paths match,
+    // and the displayed path keeps the request's own spelling.
     FIC2_CHECK(paths.OnPresented(L"c:/PICS/C.DDS"));
+    FIC2_CHECK(paths.displayed == kC);
 }
 
 FIC2_TEST(PathState_NonImageSelectionHasNoRequestedImage)
@@ -165,9 +167,9 @@ FIC2_TEST(PathState_RapidSelectionKeepsOnlyLatestRequest)
         FIC2_CHECK(!paths.OnPresented(AsPresented(sequence[i - 1])));
         FIC2_CHECK(paths.requested == sequence[i]);
     }
-    FIC2_CHECK(paths.displayed == AsPresented(sequence.front()));
+    FIC2_CHECK(paths.displayed == sequence.front());
     FIC2_CHECK(paths.OnPresented(AsPresented(sequence.back())));
-    FIC2_CHECK(paths.displayed == AsPresented(sequence.back()));
+    FIC2_CHECK(paths.displayed == sequence.back());
 }
 
 FIC2_TEST(PathState_SynchronousCacheHitPresentationIsDisplayed)
@@ -182,16 +184,16 @@ FIC2_TEST(PathState_SynchronousCacheHitPresentationIsDisplayed)
     SelectAndLoad(paths, main, kA);
     FIC2_CHECK(paths.displayed.empty());
     main.CompleteLoad();
-    FIC2_CHECK(paths.displayed == AsPresented(kA));
+    FIC2_CHECK(paths.displayed == kA);
 
     SelectAndLoad(paths, main, kB);
     main.CompleteLoad();
-    FIC2_CHECK(paths.displayed == AsPresented(kB));
+    FIC2_CHECK(paths.displayed == kB);
 
     SelectAndLoad(paths, main, kA);  // cache hit: presents synchronously
     FIC2_CHECK(main.loaded == AsPresented(kA));
     FIC2_CHECK(paths.requested == kA);
-    FIC2_CHECK(paths.displayed == AsPresented(kA));
+    FIC2_CHECK(paths.displayed == kA);
 }
 
 FIC2_TEST(PathState_IpcSnapshotFollowsRequestedNotDisplayed)
