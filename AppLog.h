@@ -16,17 +16,34 @@
 // Debug builds:   file sink + OutputDebugString sink, DEBUG level.
 // Release builds: file sink only, INFO level (DEBUG/TRACE macros are no-ops).
 
+#include <filesystem>
 #include <string>
+#include <string_view>
 
 namespace AppLog
 {
     // Initialize spdlog: file sink (FICture2_<PID>.log in executableDir).
     // In Debug builds an OutputDebugString sink is added as well.
     // Safe to call multiple times; subsequent calls are no-ops.
+    // Never throws: if the logger cannot be created, logging stays disabled.
     void Init(const std::wstring& executableDir);
 
     // Flush and shut down the logger.
     void Shutdown();
+
+    // Non-throwing UTF-16 -> UTF-8 conversion for log arguments. Use this for
+    // paths and other wide strings, never std::filesystem::path::string(),
+    // which uses the active code page and throws for characters outside it.
+    // Unpaired surrogates become U+FFFD.
+    std::string ToUtf8(std::wstring_view text) noexcept;
+    std::string ToUtf8(const std::filesystem::path& path) noexcept;
+    // Exact-match overloads: std::wstring and wide literals convert to both
+    // std::wstring_view and std::filesystem::path, which would be ambiguous.
+    inline std::string ToUtf8(const std::wstring& text) noexcept { return ToUtf8(std::wstring_view(text)); }
+    inline std::string ToUtf8(const wchar_t* text) noexcept
+    {
+        return text ? ToUtf8(std::wstring_view(text)) : std::string();
+    }
 }
 
 #pragma warning(push)
@@ -36,6 +53,7 @@ namespace AppLog
 
 // ---------------------------------------------------------------------------
 // Logging macros — forward to the "fic2" named logger.
+// Arguments are evaluated only when the logger exists (AppLog::Init succeeded).
 // In Release builds DEBUG and TRACE macros are stripped to avoid overhead.
 // ---------------------------------------------------------------------------
 #define FIC2_LOG_INFO(...)   do { if (auto _l = spdlog::get("fic2")) _l->info(__VA_ARGS__);  } while (0)

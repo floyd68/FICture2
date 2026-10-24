@@ -861,8 +861,8 @@ namespace
             const std::wstring currentName = NormalizeLowerName(currentPath);
 
             FIC2_LOG_DEBUG("[IPC] UI: compare '{}' vs current '{}'", 
-                std::filesystem::path(incomingName).string(),
-                std::filesystem::path(currentName).string());
+                AppLog::ToUtf8(incomingName),
+                AppLog::ToUtf8(currentName));
 
             if (incomingName.empty() || currentName.empty())
             {
@@ -872,13 +872,13 @@ namespace
             if (incomingName != currentName)
             {
                 FIC2_LOG_INFO("[IPC] UI: filename mismatch ('{}' != '{}') — Ignore.",
-                    std::filesystem::path(incomingName).string(),
-                    std::filesystem::path(currentName).string());
+                    AppLog::ToUtf8(incomingName),
+                    AppLog::ToUtf8(currentName));
                 return false;
             }
 
             FIC2_LOG_INFO("[IPC] UI: filename match! Opening incoming path in split pane: {}",
-                std::filesystem::path(incomingFilePath).string());
+                AppLog::ToUtf8(incomingFilePath));
             auto vp = Floar::VirtualPath::Parse(incomingFilePath);
             if (vp)
             {
@@ -1523,7 +1523,7 @@ namespace
         void BuildUi()
         {
             FIC2_TIMER_START(t_build);
-            FIC2_LOG_DEBUG("[BuildUi] start (name='{}')", std::string(Name().begin(), Name().end()));
+            FIC2_LOG_DEBUG("[BuildUi] start (name='{}')", AppLog::ToUtf8(Name()));
 
             // Root: vertical split (main pane + thumb strip)
             auto rootSplit = std::make_shared<FD2D::SplitPanel>(L"rootSplit", FD2D::SplitterOrientation::Vertical);
@@ -1600,7 +1600,7 @@ namespace
             if (!m_initialFile.empty())
             {
                 FIC2_LOG_DEBUG("[BuildUi] initial file: '{}'",
-                    std::filesystem::path(m_initialFile).string());
+                    AppLog::ToUtf8(m_initialFile));
                 auto parsed = Floar::VirtualPath::Parse(m_initialFile);
                 if (parsed)
                 {
@@ -2149,8 +2149,8 @@ namespace
             m_thumbListLoading = true;
             m_progressiveStartMs = CommonUtil::NowMs();
             FIC2_LOG_INFO("[ThumbLoad] Started loading folder '{}' (browser={})",
-                std::filesystem::path(folder.wstring()).string(),
-                std::filesystem::path(browserName).string());
+                AppLog::ToUtf8(folder.wstring()),
+                AppLog::ToUtf8(browserName));
             m_progressiveListedEntries.clear();
             m_progressivePreferSelectPath = preferSelectPath;
             m_progressiveUiDirty = false;

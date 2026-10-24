@@ -313,6 +313,8 @@ target_include_directories(FICture2 PRIVATE
 
 target_compile_definitions(FICture2 PRIVATE
     FD2D_STATIC
+    # AppLog opens its file through a wide path (folders outside the ANSI code page).
+    SPDLOG_WCHAR_FILENAMES
     UNICODE
     _UNICODE
     _WINDOWS

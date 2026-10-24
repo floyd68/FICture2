@@ -729,7 +729,7 @@ namespace
 
         if (!ScreenshotUtil::SaveRenderSurfaceRectPng(backplate, rect, outPath))
         {
-            FIC2_LOG_ERROR("[Screenshot] Save failed: {}", std::filesystem::path(outPath).string());
+            FIC2_LOG_ERROR("[Screenshot] Save failed: {}", AppLog::ToUtf8(outPath));
             MessageBoxW(
                 ownerWindow,
                 (L"Failed to save screenshot:\n" + outPath).c_str(),
@@ -2013,7 +2013,7 @@ bool Ficture2Backplate::TryRestoreImageBrowserSession(const std::wstring& iniFil
             }
             FIC2_LOG_INFO(
                 "[Session] Dropping missing file from restore: {}",
-                std::filesystem::path(viewer.filePath).string());
+                AppLog::ToUtf8(viewer.filePath));
         }
         else if (!viewer.folderPath.empty())
         {
@@ -2025,7 +2025,7 @@ bool Ficture2Backplate::TryRestoreImageBrowserSession(const std::wstring& iniFil
             }
             FIC2_LOG_INFO(
                 "[Session] Dropping missing folder from restore: {}",
-                std::filesystem::path(viewer.folderPath).string());
+                AppLog::ToUtf8(viewer.folderPath));
         }
     }
 

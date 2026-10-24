@@ -266,8 +266,8 @@ int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
             ImageCore::Log::SetSink(&ForwardImageCoreLogToAppLog);
 
             FIC2_LOG_INFO("=== FICture2 startup ===");
-            FIC2_LOG_INFO("Executable : {}", std::filesystem::path(exePath).string());
-            FIC2_LOG_INFO("CommandLine: {}", std::filesystem::path(initialFile).string());
+            FIC2_LOG_INFO("Executable : {}", AppLog::ToUtf8(exePath));
+            FIC2_LOG_INFO("CommandLine: {}", AppLog::ToUtf8(initialFile));
         }
     }
 
@@ -284,7 +284,7 @@ int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
     if (hadExistingInstance && !initialFile.empty())
     {
         FIC2_LOG_INFO("[IPC] Client: sending path to existing instance: {}",
-            std::filesystem::path(initialFile).string());
+            AppLog::ToUtf8(initialFile));
 
         // Let the running instance take foreground when it accepts the file -
         // this fresh process currently holds that right.
@@ -327,7 +327,7 @@ int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
         AppIpc::StartServer([ipcUiWindow, ipcQueue](const std::wstring& path) -> AppIpc::Decision
         {
             FIC2_LOG_INFO("[IPC] Server: incoming request for path: {}",
-                std::filesystem::path(path).string());
+                AppLog::ToUtf8(path));
 
             if (!ipcQueue->TryEnqueue(path, kMaxIpcPanes))
             {
@@ -529,7 +529,7 @@ int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
                 if (!firstPicture.empty())
                 {
                     FIC2_LOG_INFO("First-run: opening first picture from Pictures folder: {}",
-                        std::filesystem::path(firstPicture).string());
+                        AppLog::ToUtf8(firstPicture));
                     backplate->OpenFileInRoot(firstPicture);
                 }
             }
