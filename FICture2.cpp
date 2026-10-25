@@ -10,6 +10,7 @@
 #include "AppIpc.h"
 #include "AppLog.h"
 #include "AppSetup.h"
+#include "AppShutdown.h"
 #include "CommonUtil.h"
 #include "FloarPathByteSource.h"
 #include "ImageBrowser.h"
@@ -359,6 +360,17 @@ int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
         });
     }
 
+    // Closed by every path that reaches the cleanup below; on a forced exit the
+    // process exit releases it.
+    auto closeInstanceMutex = [&instanceMutex]()
+    {
+        if (instanceMutex != nullptr)
+        {
+            CloseHandle(instanceMutex);
+            instanceMutex = nullptr;
+        }
+    };
+
     // --- Startup timing baseline (from just after IPC client check / StartServer) ---
     FIC2_TIMER_START(t_startup);
     if (!hadExistingInstance)
@@ -381,6 +393,9 @@ int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
     }
     else
     {
+        // Pre-service: nothing started yet, the shared cleanup creates nothing.
+        RunAppShutdown(AppExitPath::OleInitFailed, DefaultAppShutdownHooks(false));
+        closeInstanceMutex();
         return -1;
     }
     FIC2_LOG_STEP(t_startup, "OleInitialize");
@@ -395,6 +410,8 @@ int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
     initContext.instance = hInstance;
     if (FAILED(app.Initialize(initContext)))
     {
+        RunAppShutdown(AppExitPath::Fd2dInitFailed, DefaultAppShutdownHooks(oleInitialized));
+        closeInstanceMutex();
         return -1;
     }
     FIC2_LOG_STEP(t_startup, "FD2D::Application::Initialize (D3D/D2D device creation)");
@@ -456,10 +473,12 @@ int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
         auto backplate = std::make_shared<Ficture2Backplate>(L"main");
         if (!backplate || FAILED(backplate->CreateWindowed(opts)) || !app.RegisterBackplate(backplate))
         {
-            ImageAsyncBindingRegistry::Instance().ShutdownPrepare();
-            ImageCore::ImageLoader::Instance().Shutdown();
-            ImageGpuResourceCache::Instance().Clear();
-            app.Shutdown();
+            // Pre-service: no folder enumeration, decode or archive open has
+            // started, and the before-destroy callback (session persistence) is
+            // not registered yet, so destroying the window saves nothing.
+            backplate.reset();
+            RunAppShutdown(AppExitPath::WindowCreationFailed, DefaultAppShutdownHooks(oleInitialized));
+            closeInstanceMutex();
             return FALSE;
         }
         FIC2_LOG_STEP(t_startup, "Ficture2Backplate::CreateWindowed (HWND + render device)");
@@ -567,35 +586,14 @@ int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
         // backplate is destroyed here (end of scope), releasing any COM resources it owns.
     }
 
-    // Folder enumeration workers may be inside a blocked filesystem, network or
-    // archive call. Join them within a bound before any teardown; otherwise end
-    // the process without static destruction (see FolderEnumeration.h). The
-    // session was already saved when the window was destroyed.
-    FinishFolderEnumerationOrExit(FolderEnumerationService::Shared(), std::chrono::seconds(2), {});
-
-    if (instanceMutex != nullptr)
-    {
-        CloseHandle(instanceMutex);
-        instanceMutex = nullptr;
-    }
-
-    // Tear down async image bindings and ImageCore before FD2D::Application::Shutdown
-    // (which clears backplates and shuts down Core).
-    ImageAsyncBindingRegistry::Instance().ShutdownPrepare();
-    ImageCore::ImageLoader::Instance().Shutdown();
-    // Release cached SRVs explicitly: the process-static GPU cache must not keep
-    // the graphics device alive, whichever views are still attached.
-    ImageGpuResourceCache::Instance().Clear();
-
-    app.Shutdown();
-
-    FIC2_LOG_INFO("=== FICture2 shutdown (result={}) ===", result);
-    AppLog::Shutdown();
-
-    if (oleInitialized)
-    {
-        OleUninitialize();
-    }
+    // Folder enumeration workers, ImageCore reads and Floar archive opens may be
+    // inside a blocked filesystem, network or archive call. Each stage joins its
+    // workers within a bound before any later teardown; otherwise the process
+    // ends without static destruction (see AppShutdown.h and FolderEnumeration.h).
+    // The session was already saved when the window was destroyed.
+    FIC2_LOG_INFO("Message loop result={}", result);
+    RunAppShutdown(AppExitPath::Normal, DefaultAppShutdownHooks(oleInitialized));
+    closeInstanceMutex();
     return result;
 }
 

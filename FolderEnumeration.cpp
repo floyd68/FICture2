@@ -547,12 +547,22 @@ void FinishFolderEnumerationOrExit(
         return;
     }
 
-    FIC2_LOG_WARN("[FolderEnum] {} enumeration(s) still running {} ms after shutdown; ending the process without static teardown (exit code {}).",
-        service.RunningCount(), bound.count(), kFolderEnumerationForcedExitCode);
+    FIC2_LOG_WARN("[FolderEnum] {} enumeration(s) still running.", service.RunningCount());
+    EndProcessAfterShutdownTimeout("folder enumeration", bound, kFolderEnumerationForcedExitCode, beforeForcedExit);
+}
+
+void EndProcessAfterShutdownTimeout(
+    const char* stage,
+    std::chrono::milliseconds bound,
+    UINT exitCode,
+    const std::function<void()>& beforeForcedExit)
+{
+    FIC2_LOG_WARN("[Shutdown] {} still running {} ms after shutdown; ending the process without static teardown (exit code 0x{:X}).",
+        stage, bound.count(), exitCode);
     if (beforeForcedExit)
     {
         beforeForcedExit();
     }
     AppLog::Shutdown();
-    TerminateProcess(GetCurrentProcess(), kFolderEnumerationForcedExitCode);
+    TerminateProcess(GetCurrentProcess(), exitCode);
 }
