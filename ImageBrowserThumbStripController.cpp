@@ -122,7 +122,7 @@ ImageBrowserThumbStripController::RebuildResult ImageBrowserThumbStripController
 
             desiredOrder.push_back(name);
             desiredNames.emplace(name);
-            items.push_back({ ThumbItemKind::Up, parent, tile, nullptr, tile, nullptr });
+            items.push_back({ ThumbItemKind::Up, parent, tile, nullptr, tile, nullptr, ThumbItemModel::LookupKeyFor(parent) });
         }
 
         for (const ThumbModelEntry& folder : model.Folders())
@@ -173,7 +173,7 @@ ImageBrowserThumbStripController::RebuildResult ImageBrowserThumbStripController
 
             desiredOrder.push_back(name);
             desiredNames.emplace(name);
-            items.push_back({ ThumbItemKind::Folder, dir, tile, nullptr, tile, nullptr });
+            items.push_back({ ThumbItemKind::Folder, dir, tile, nullptr, tile, nullptr, folder.lookupKey });
         }
     }
 
@@ -204,10 +204,17 @@ ImageBrowserThumbStripController::RebuildResult ImageBrowserThumbStripController
                 onSelectIndex(index);
             }
         });
+        thumbTile->SetOnAspectChanged([onImageAspect = context.onImageAspect, key = entry.lookupKey](float aspect)
+        {
+            if (onImageAspect)
+            {
+                onImageAspect(key, aspect);
+            }
+        });
 
         desiredOrder.push_back(name);
         desiredNames.emplace(name);
-        items.push_back({ ThumbItemKind::Image, p, thumbTile, thumbTile->ImageWnd(), nullptr, thumbTile });
+        items.push_back({ ThumbItemKind::Image, p, thumbTile, thumbTile->ImageWnd(), nullptr, thumbTile, entry.lookupKey });
     }
 
     std::vector<std::wstring> toRemove;

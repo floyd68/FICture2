@@ -18,6 +18,9 @@ class ThumbImageTile : public FD2D::Wnd
 {
 public:
     using ClickHandler = std::function<void()>;
+    // Called (during render) when the decoded bitmap's aspect ratio becomes
+    // known or changes; the strip layout uses it for this tile's width.
+    using AspectHandler = std::function<void(float aspect)>;
 
     explicit ThumbImageTile(const std::wstring& name);
 
@@ -28,6 +31,9 @@ public:
     void SetSourceFile(const std::wstring& path);
     void SetSelected(bool selected);
     void SetOnClick(ClickHandler handler);
+    void SetOnAspectChanged(AspectHandler handler) { m_onAspectChanged = std::move(handler); }
+    // Width/height of the decoded bitmap, 0 until one is shown.
+    float BitmapAspect() const;
 
     std::shared_ptr<ImageBrowserThumbImage> ImageWnd() const { return m_image; }
 
@@ -47,6 +53,7 @@ private:
     std::shared_ptr<ImageBrowserThumbImage> m_image {};
     FD2D::Text m_label;
     ClickHandler m_onClick {};
+    AspectHandler m_onAspectChanged {};
 
     D2D1_RECT_F m_labelRect {};
     Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> m_labelBackdropBrush {};

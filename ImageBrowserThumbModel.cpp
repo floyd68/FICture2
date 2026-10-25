@@ -23,6 +23,32 @@ std::wstring ThumbItemModel::SortKeyFor(const Floar::VirtualPath& path)
     return CommonUtil::ToLower(path.GetFilename());
 }
 
+std::wstring ThumbItemModel::LookupKeyFor(const Floar::VirtualPath& path)
+{
+    return CommonUtil::ToLower(path.GetDisplayPath());
+}
+
+bool ThumbItemModel::SetAspect(const std::wstring& lookupKey, float aspect)
+{
+    if (!(aspect > 0.0f))
+    {
+        return false;
+    }
+    float& stored = m_aspectByKey[lookupKey];
+    if (stored == aspect)
+    {
+        return false;
+    }
+    stored = aspect;
+    return true;
+}
+
+float ThumbItemModel::AspectOf(const std::wstring& lookupKey) const
+{
+    const auto it = m_aspectByKey.find(lookupKey);
+    return (it != m_aspectByKey.end()) ? it->second : 0.0f;
+}
+
 void ThumbItemModel::Reset(const Floar::VirtualPath& folder, bool showNavItems, ImageFilter isImage)
 {
     m_folder = folder;
@@ -33,6 +59,7 @@ void ThumbItemModel::Reset(const Floar::VirtualPath& folder, bool showNavItems, 
     m_images.clear();
     m_folderKeys.clear();
     m_imageKeys.clear();
+    m_aspectByKey.clear();
     m_nextArrival = 0;
     m_listed = 0;
 
@@ -70,7 +97,7 @@ size_t ThumbItemModel::Merge(const std::vector<Floar::VirtualFileEntry>& entries
             continue;
         }
 
-        std::wstring lookupKey = CommonUtil::ToLower(entry.path.GetDisplayPath());
+        std::wstring lookupKey = LookupKeyFor(entry.path);
         auto& keys = isFolder ? m_folderKeys : m_imageKeys;
         if (!keys.insert(lookupKey).second)
         {

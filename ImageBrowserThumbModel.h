@@ -8,6 +8,7 @@
 #include <functional>
 #include <optional>
 #include <string>
+#include <unordered_map>
 #include <unordered_set>
 #include <vector>
 
@@ -58,6 +59,12 @@ public:
     size_t ListedCount() const { return m_listed; }
 
     static std::wstring SortKeyFor(const Floar::VirtualPath& path);
+    static std::wstring LookupKeyFor(const Floar::VirtualPath& path);
+
+    // Decoded aspect ratio (width / height) of an image, by lookup key; 0 while
+    // unknown. Kept across merges until the next Reset. Returns true if changed.
+    bool SetAspect(const std::wstring& lookupKey, float aspect);
+    float AspectOf(const std::wstring& lookupKey) const;
 
 private:
     static void MergeSorted(std::vector<ThumbModelEntry>& into, std::vector<ThumbModelEntry>&& added);
@@ -70,6 +77,7 @@ private:
     std::vector<ThumbModelEntry> m_images {};
     std::unordered_set<std::wstring> m_folderKeys {};
     std::unordered_set<std::wstring> m_imageKeys {};
+    std::unordered_map<std::wstring, float> m_aspectByKey {};
     uint64_t m_nextArrival { 0 };
     size_t m_listed { 0 };
 };

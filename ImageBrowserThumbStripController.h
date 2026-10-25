@@ -37,6 +37,8 @@ public:
         Floar::VirtualPath preferSelectPath {};
         std::function<void(size_t)> onSelectIndex {};
         std::function<void(size_t)> onActivateIndex {};
+        // An image tile's decoded aspect ratio became known (lookup key, aspect).
+        std::function<void(const std::wstring&, float)> onImageAspect {};
         std::function<bool(const Floar::VirtualPath&, const Floar::VirtualPath&)> pathEquals {};
         std::function<std::wstring(const wchar_t*, const Floar::VirtualPath&)> makeStableName {};
     };
