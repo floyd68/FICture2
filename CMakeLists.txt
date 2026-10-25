@@ -264,6 +264,7 @@ target_sources(FICture2 PRIVATE
     FICture2.cpp
     Ficture2Backplate.cpp
     FloarPathByteSource.cpp
+    FolderEnumeration.cpp
     ImageAlphaPresentation.cpp
     ImageAsyncBinding.cpp
     ImageBrowser.cpp

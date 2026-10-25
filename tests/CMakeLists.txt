@@ -9,6 +9,7 @@ add_executable(FICture2Tests
     IdleRenderingTests.cpp
     MainImagePresentationTests.cpp
     ImageAsyncBindingTests.cpp
+    FolderEnumerationTests.cpp
     ImageBrowserPathStateTests.cpp
     ImageBrowserRoutingTests.cpp
     IpcOpenQueueTests.cpp
@@ -28,6 +29,7 @@ add_executable(FICture2Tests
     ${PROJECT_SOURCE_DIR}/AppSetup.cpp
     ${PROJECT_SOURCE_DIR}/Ficture2Backplate.cpp
     ${PROJECT_SOURCE_DIR}/FloarPathByteSource.cpp
+    ${PROJECT_SOURCE_DIR}/FolderEnumeration.cpp
     ${PROJECT_SOURCE_DIR}/ImageBrowser.cpp
     ${PROJECT_SOURCE_DIR}/ImageBrowserContextMenu.cpp
     ${PROJECT_SOURCE_DIR}/ImageBrowserDeferredActions.cpp
@@ -91,6 +93,8 @@ add_test(NAME FICture2.GpuPresentation COMMAND FICture2Tests GpuPresentation_)
 add_test(NAME FICture2.MainImage COMMAND FICture2Tests MainImage_)
 add_test(NAME FICture2.IdleRendering COMMAND FICture2Tests IdleRendering_)
 add_test(NAME FICture2.ImageBrowserRouting COMMAND FICture2Tests ImageBrowserRouting_)
+add_test(NAME FICture2.FolderEnumeration COMMAND FICture2Tests FolderEnumeration_)
+add_test(NAME FICture2.FolderEnumerationForcedExit COMMAND FICture2Tests FolderEnumerationForcedExit_)
 # AppLog::Init runs once per process, so each Init scenario gets its own entry.
 add_test(NAME FICture2.AppLogText COMMAND FICture2Tests AppLogText_)
 add_test(NAME FICture2.AppLogLazy COMMAND FICture2Tests AppLogLazy_)

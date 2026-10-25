@@ -18,6 +18,7 @@
 
 #include "FloarLog.h"
 #include "ImageAsyncBinding.h"
+#include "FolderEnumeration.h"
 #include "ImageGpuResourceCache.h"
 #include "ImageCore/ImageCore.h"
 #include "ImageCore/ImageCoreLog.h"
@@ -565,6 +566,12 @@ int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
         // (Window placement + session are saved in Backplate::SetOnBeforeDestroy callback.)
         // backplate is destroyed here (end of scope), releasing any COM resources it owns.
     }
+
+    // Folder enumeration workers may be inside a blocked filesystem, network or
+    // archive call. Join them within a bound before any teardown; otherwise end
+    // the process without static destruction (see FolderEnumeration.h). The
+    // session was already saved when the window was destroyed.
+    FinishFolderEnumerationOrExit(FolderEnumerationService::Shared(), std::chrono::seconds(2), {});
 
     if (instanceMutex != nullptr)
     {
