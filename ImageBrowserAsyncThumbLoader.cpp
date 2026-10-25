@@ -24,17 +24,14 @@ bool ImageBrowserAsyncThumbLoader::AcceptChunk(
 
 bool ImageBrowserAsyncThumbLoader::ApplyChunkToProgressive(
     const AsyncThumbListChunkPayload& chunk,
-    std::vector<Floar::VirtualFileEntry>& progressiveListedEntries,
+    ThumbItemModel& model,
     bool& progressiveUiDirty,
     bool& progressiveLoadCompleted)
 {
     bool changed = false;
-    if (!chunk.batch.empty())
+    // Only chunks that add items need a UI update.
+    if (!chunk.batch.empty() && model.Merge(chunk.batch) > 0)
     {
-        progressiveListedEntries.insert(
-            progressiveListedEntries.end(),
-            chunk.batch.begin(),
-            chunk.batch.end());
         progressiveUiDirty = true;
         changed = true;
     }

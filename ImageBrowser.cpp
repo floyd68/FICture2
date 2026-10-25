@@ -2221,7 +2221,7 @@ namespace
             FIC2_LOG_INFO("[ThumbLoad] Started loading folder '{}' (browser={})",
                 AppLog::ToUtf8(folder.wstring()),
                 AppLog::ToUtf8(browserName));
-            m_progressiveListedEntries.clear();
+            ResetThumbModel(folder, showNavItems);
             m_progressivePreferSelectPath = preferSelectPath;
             m_progressiveUiDirty = false;
             m_progressiveLoadCompleted = false;
@@ -2263,7 +2263,7 @@ namespace
                 anyAccepted = true;
                 (void)ImageBrowserAsyncThumbLoader::ApplyChunkToProgressive(
                     chunk,
-                    m_progressiveListedEntries,
+                    m_thumbModel,
                     m_progressiveUiDirty,
                     m_progressiveLoadCompleted);
             }
@@ -2335,12 +2335,12 @@ namespace
             FIC2_TIMER_START(t_apply);
             RebuildThumbListImmediate(
                 m_progressivePreferSelectPath,
-                &m_progressiveListedEntries,
+                &m_thumbModel,
                 applySelection);
             const auto applyMs = FIC2_ELAPSED_MS(t_apply);
             FIC2_LOG_INFO(
                 "[ThumbLoad] ApplyProgressiveThumbUpdate: {} items in {}ms (finalize={}, entriesAccumulated={})",
-                m_items.size(), applyMs, m_progressiveLoadCompleted, m_progressiveListedEntries.size());
+                m_items.size(), applyMs, m_progressiveLoadCompleted, m_thumbModel.ListedCount());
 
             m_progressiveUiDirty = false;
             m_progressiveLastApplyMs = CommonUtil::NowMs();
@@ -2353,14 +2353,33 @@ namespace
             }
         }
 
+        void ResetThumbModel(const Floar::VirtualPath& folder, bool showNavItems)
+        {
+            m_thumbModel.Reset(folder, showNavItems, [](const Floar::VirtualPath& p)
+            {
+                return ImageAwareVfs::IsImageFile(p);
+            });
+        }
+
+        // `model` holds the (progressively) listed items; without one, the
+        // current folder is listed synchronously into m_thumbModel first.
         void RebuildThumbListImmediate(
             const Floar::VirtualPath& preferSelectPath,
-            const std::vector<Floar::VirtualFileEntry>* preloadedEntries,
+            const ThumbItemModel* model,
             bool applySelection = true)
         {
             if (!m_thumbPane || !m_thumbPane->Panel())
             {
                 return;
+            }
+            if (model == nullptr)
+            {
+                ResetThumbModel(m_currentFolder, m_showNavItems);
+                if (!m_currentFolder.hostPath.empty())
+                {
+                    (void)m_thumbModel.Merge(Floar::VirtualFileSystem::ListDirectory(m_currentFolder));
+                }
+                model = &m_thumbModel;
             }
 
             FIC2_TIMER_START(t_rebuild);
@@ -2370,7 +2389,7 @@ namespace
             m_selectedIndex = static_cast<size_t>(-1);
             m_selectedFocus.reset();
 
-            auto context = MakeThumbRebuildContext(preferSelectPath, preloadedEntries);
+            auto context = MakeThumbRebuildContext(preferSelectPath, model);
             FIC2_LOG_STEP(t_rebuild, "[RebuildImmediate] MakeThumbRebuildContext");
 
             auto result = m_thumbStripController.RebuildList(context);
@@ -2428,15 +2447,14 @@ namespace
 
         ImageBrowserThumbStripController::RebuildListContext MakeThumbRebuildContext(
             const Floar::VirtualPath& preferSelectPath,
-            const std::vector<Floar::VirtualFileEntry>* preloadedEntries)
+            const ThumbItemModel* model)
         {
             ImageBrowserThumbStripController::RebuildListContext context {};
             context.panel = (m_thumbPane != nullptr) ? m_thumbPane->Panel() : nullptr;
             context.items = &m_items;
             context.thumbW = m_thumbW;
             context.thumbH = m_thumbH;
-            context.showNavItems = m_showNavItems;
-            context.currentFolder = m_currentFolder;
+            context.model = model;
             context.preferSelectPath = preferSelectPath;
             context.onSelectIndex = [this](size_t index)
             {
@@ -2461,11 +2479,6 @@ namespace
             {
                 return MakeStableThumbName(prefix, p);
             };
-            context.isSupportedImage = [](const Floar::VirtualPath& p)
-            {
-                return ImageAwareVfs::IsImageFile(p);
-            };
-            context.preloadedEntries = preloadedEntries;
             return context;
         }
 
@@ -2922,7 +2935,7 @@ namespace
         std::atomic<unsigned long long> m_thumbListRequestId { 0 };
         bool m_thumbListLoading { false };
         Floar::VirtualPath m_progressivePreferSelectPath {};
-        std::vector<Floar::VirtualFileEntry> m_progressiveListedEntries {};
+        ThumbItemModel m_thumbModel {};   // listed items of m_currentFolder
         bool m_progressiveUiDirty { false };
         bool m_progressiveLoadCompleted { false };
         unsigned long long m_progressiveLastApplyMs { 0 };

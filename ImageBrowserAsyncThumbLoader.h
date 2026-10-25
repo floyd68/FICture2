@@ -1,5 +1,6 @@
 #pragma once
 
+#include "ImageBrowserThumbModel.h"
 #include "VirtualFileSystem.h"
 #include "VirtualPath.h"
 
@@ -28,7 +29,7 @@ public:
 
     static bool ApplyChunkToProgressive(
         const AsyncThumbListChunkPayload& chunk,
-        std::vector<Floar::VirtualFileEntry>& progressiveListedEntries,
+        ThumbItemModel& model,
         bool& progressiveUiDirty,
         bool& progressiveLoadCompleted);
 
