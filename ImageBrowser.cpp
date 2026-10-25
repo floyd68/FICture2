@@ -514,6 +514,16 @@ namespace
 
         bool OnCommandEvent(const FD2D::CommandEvent& event) override
         {
+            // Folder-listing readiness is broadcast to the window, but every
+            // browser - including side-by-side browsers nested inside this one -
+            // drains only its own queue: drain here, then pass it down the subtree.
+            if (event.id == CMD_FIC2_ASYNC_THUMB_READY)
+            {
+                DrainAsyncThumbChunks();
+                (void)Wnd::OnCommandEvent(event);
+                return true;
+            }
+
             if (TryHandleCommandEvent(event))
             {
                 return true;
