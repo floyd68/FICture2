@@ -52,11 +52,13 @@ namespace
     class IdleDecodeService : public IImageDecodeService
     {
     public:
-        ImageCore::ImageHandle RequestDecoded(const ImageCore::ImageRequest&, ImageCore::DecodedImageLoadCallback) override
+        ImageCore::ImageHandle RequestDecoded(const ImageCore::ImageRequest&, ImageCore::DecodedImageLoadCallback,
+            ImageCore::RequestPriority) override
         {
             return ++m_next;
         }
         void Cancel(ImageCore::ImageHandle) override {}
+        void SetPriority(ImageCore::ImageHandle, ImageCore::RequestPriority) override {}
 
     private:
         ImageCore::ImageHandle m_next { 0 };
@@ -73,12 +75,13 @@ namespace
         };
 
         ImageCore::ImageHandle RequestDecoded(const ImageCore::ImageRequest& request,
-            ImageCore::DecodedImageLoadCallback callback) override
+            ImageCore::DecodedImageLoadCallback callback, ImageCore::RequestPriority) override
         {
             requests.push_back({ request, std::move(callback) });
             return static_cast<ImageCore::ImageHandle>(requests.size());
         }
         void Cancel(ImageCore::ImageHandle) override {}
+        void SetPriority(ImageCore::ImageHandle, ImageCore::RequestPriority) override {}
 
         // Completes the latest request with a BGRA image of the given mip.
         void CompleteLatest(uint32_t size, uint32_t mipLevels, uint32_t mipIndex)

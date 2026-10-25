@@ -160,6 +160,16 @@ void ImageBrowserThumbImage::SetOnClick(ClickHandler handler)
     m_onClick = std::move(handler);
 }
 
+void ImageBrowserThumbImage::SetLoadPriority(ImageCore::RequestPriority priority)
+{
+    if (m_loadPriority == priority)
+    {
+        return;
+    }
+    m_loadPriority = priority;
+    m_binding.SetPriority(priority);
+}
+
 void ImageBrowserThumbImage::SetLoadingSpinnerEnabled(bool enabled)
 {
     if (m_loadingSpinnerEnabled == enabled)
@@ -208,7 +218,7 @@ void ImageBrowserThumbImage::RequestImageLoad()
     m_request.purpose = ImageCore::ImagePurpose::Thumbnail;
     m_request.allowGpuCompressedDDS = false;
 
-    m_binding.RequestLoad(m_request, m_filePath);
+    m_binding.RequestLoad(m_request, m_filePath, m_loadPriority);
 }
 
 void ImageBrowserThumbImage::TryReuploadCpuPayload(ID2D1RenderTarget* target)
