@@ -280,6 +280,7 @@ target_sources(FICture2 PRIVATE
     ImageBrowserSessionPersistence.cpp
     ImageBrowserSplitCoordinator.cpp
     ImageBrowserThumbImage.cpp
+    ImageBrowserThumbModel.cpp
     ImageBrowserThumbnailPane.cpp
     ImageBrowserThumbLayoutCoordinator.cpp
     ImageBrowserThumbStripController.cpp

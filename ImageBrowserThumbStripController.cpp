@@ -17,12 +17,6 @@
 
 namespace
 {
-    struct FolderEntryData
-    {
-        Floar::VirtualPath path {};
-        bool isArchive { false };
-    };
-
     std::wstring GetArchiveBadgeText(const Floar::VirtualPath& path)
     {
         const std::wstring ext = CommonUtil::ToLower(path.hostPath.extension().wstring());
@@ -50,7 +44,7 @@ ImageBrowserThumbStripController::RebuildResult ImageBrowserThumbStripController
     const RebuildListContext& context) const
 {
     RebuildResult result {};
-    if (!context.panel || context.items == nullptr)
+    if (!context.panel || context.items == nullptr || context.model == nullptr)
     {
         return result;
     }
@@ -59,81 +53,23 @@ ImageBrowserThumbStripController::RebuildResult ImageBrowserThumbStripController
 
     const auto& panel = context.panel;
     auto& items = *context.items;
+    const ThumbItemModel& model = *context.model;
     const float thumbW = context.thumbW;
     const float thumbH = context.thumbH;
-    const bool showNavItems = context.showNavItems;
-    const Floar::VirtualPath& currentFolder = context.currentFolder;
+    const bool showNavItems = model.ShowNavItems();
     const Floar::VirtualPath& preferSelectPath = context.preferSelectPath;
     const auto& onSelectIndex = context.onSelectIndex;
     const auto& onActivateIndex = context.onActivateIndex;
     const auto& pathEquals = context.pathEquals;
     const auto& makeStableName = context.makeStableName;
-    const auto& isSupportedImage = context.isSupportedImage;
-    const std::vector<Floar::VirtualFileEntry>* preloadedEntries = context.preloadedEntries;
 
     items.clear();
-
-    std::vector<FolderEntryData> folders;
-    std::vector<Floar::VirtualPath> files;
-    std::unordered_set<std::wstring> seenFolderKeys;
-    std::unordered_set<std::wstring> seenFileKeys;
-
-    if (!currentFolder.hostPath.empty())
-    {
-        std::vector<Floar::VirtualFileEntry> listedEntriesOwned {};
-        const std::vector<Floar::VirtualFileEntry>* listedEntries = preloadedEntries;
-        if (listedEntries == nullptr)
-        {
-            listedEntriesOwned = Floar::VirtualFileSystem::ListDirectory(currentFolder);
-            listedEntries = &listedEntriesOwned;
-        }
-
-        seenFolderKeys.reserve(listedEntries->size());
-        seenFileKeys.reserve(listedEntries->size());
-
-        for (const auto& entry : *listedEntries)
-        {
-            const std::wstring entryKey = CommonUtil::ToLower(entry.path.GetDisplayPath());
-
-            if (entry.isDirectory)
-            {
-                if (seenFolderKeys.insert(entryKey).second)
-                {
-                    folders.push_back({ entry.path, false });
-                }
-            }
-            else if (entry.path.IsFilesystemPath() &&
-                Floar::ArchiveReaderFactory::HasArchiveExtension(entry.path.hostPath.filename().wstring()))
-            {
-                if (seenFolderKeys.insert(entryKey).second)
-                {
-                    folders.push_back({ entry.path, true });
-                }
-            }
-            else if (isSupportedImage && isSupportedImage(entry.path))
-            {
-                if (seenFileKeys.insert(entryKey).second)
-                {
-                    files.push_back(entry.path);
-                }
-            }
-        }
-    }
-
-    std::sort(folders.begin(), folders.end(), [](const FolderEntryData& a, const FolderEntryData& b)
-    {
-        return CommonUtil::ToLower(a.path.GetFilename()) < CommonUtil::ToLower(b.path.GetFilename());
-    });
-
-    std::sort(files.begin(), files.end(), [](const Floar::VirtualPath& a, const Floar::VirtualPath& b)
-    {
-        return CommonUtil::ToLower(a.GetFilename()) < CommonUtil::ToLower(b.GetFilename());
-    });
+    items.reserve(model.DisplayCount());
 
     std::vector<std::wstring> desiredOrder;
-    desiredOrder.reserve(folders.size() + files.size() + 8);
+    desiredOrder.reserve(model.DisplayCount());
     std::unordered_set<std::wstring> desiredNames;
-    desiredNames.reserve(folders.size() + files.size() + 8);
+    desiredNames.reserve(model.DisplayCount());
 
     auto getExistingChild = [panel](const std::wstring& name) -> std::shared_ptr<FD2D::Wnd>
     {
@@ -148,9 +84,9 @@ ImageBrowserThumbStripController::RebuildResult ImageBrowserThumbStripController
 
     if (showNavItems)
     {
-        Floar::VirtualPath parent = currentFolder.GetParent();
-        if (parent != currentFolder)
+        if (model.Up())
         {
+            const Floar::VirtualPath& parent = model.Up()->path;
             std::wstring name = makeStableName ? makeStableName(L"nav_up", parent) : L"nav_up";
             auto tile = std::dynamic_pointer_cast<ThumbNavTile>(getExistingChild(name));
             if (!tile)
@@ -189,7 +125,7 @@ ImageBrowserThumbStripController::RebuildResult ImageBrowserThumbStripController
             items.push_back({ ThumbItemKind::Up, parent, tile, nullptr, tile, nullptr });
         }
 
-        for (const auto& folder : folders)
+        for (const ThumbModelEntry& folder : model.Folders())
         {
             const Floar::VirtualPath& dir = folder.path;
             std::wstring name = makeStableName ? makeStableName(L"nav_folder", dir) : L"nav_folder";
@@ -241,8 +177,9 @@ ImageBrowserThumbStripController::RebuildResult ImageBrowserThumbStripController
         }
     }
 
-    for (const auto& p : files)
+    for (const ThumbModelEntry& entry : model.Images())
     {
+        const Floar::VirtualPath& p = entry.path;
         std::wstring name = makeStableName ? makeStableName(L"thumb_img", p) : L"thumb_img";
         auto thumbTile = std::dynamic_pointer_cast<ThumbImageTile>(getExistingChild(name));
         if (!thumbTile)

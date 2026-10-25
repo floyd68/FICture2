@@ -1,5 +1,6 @@
 #pragma once
 
+#include "ImageBrowserThumbModel.h"
 #include "ImageBrowserThumbTypes.h"
 #include "VirtualPath.h"
 #include "VirtualFileSystem.h"
@@ -30,15 +31,14 @@ public:
         std::vector<ThumbItem>* items { nullptr };
         float thumbW { 0.0f };
         float thumbH { 0.0f };
-        bool showNavItems { false };
-        Floar::VirtualPath currentFolder {};
+        // Classified, de-duplicated and ordered items (Up/folders shown when the
+        // model was reset with nav items).
+        const ThumbItemModel* model { nullptr };
         Floar::VirtualPath preferSelectPath {};
         std::function<void(size_t)> onSelectIndex {};
         std::function<void(size_t)> onActivateIndex {};
         std::function<bool(const Floar::VirtualPath&, const Floar::VirtualPath&)> pathEquals {};
         std::function<std::wstring(const wchar_t*, const Floar::VirtualPath&)> makeStableName {};
-        std::function<bool(const Floar::VirtualPath&)> isSupportedImage {};
-        const std::vector<Floar::VirtualFileEntry>* preloadedEntries { nullptr };
     };
 
     struct SelectItemContext

@@ -3,6 +3,8 @@
 #include "VirtualFileSystem.h"
 #include "VirtualPath.h"
 
+#include "ImageCore/DecoderRegistry.h"
+#include "ImageCore/ImageCore.h"
 #include "ImageCore/ImageDecodeDispatcher.h"
 #include "CommonUtil.h"
 
@@ -13,23 +15,18 @@
 // Floar itself has no ImageCore dependency; these live in the FICture2 app.
 namespace ImageAwareVfs
 {
+    // Direct registry lookup: no per-call copy of the supported-extension list.
     inline bool IsImageFile(const std::wstring& filename)
     {
-        if (filename.empty())
+        const auto dotPos = filename.find_last_of(L'.');
+        if (filename.empty() || dotPos == std::wstring::npos)
         {
             return false;
         }
 
-        auto ext = CommonUtil::ToLower(filename);
-        const auto dotPos = ext.find_last_of(L'.');
-        if (dotPos == std::wstring::npos)
-        {
-            return false;
-        }
-
-        ext = ext.substr(dotPos);
-        const auto imageExts = ImageCore::ImageDecodeDispatcher::GetSupportedExtensions();
-        return std::find(imageExts.begin(), imageExts.end(), ext) != imageExts.end();
+        ImageCore::RegisterBuiltInDecoders();
+        return ImageCore::DecoderRegistry::Instance().IsSupportedExtension(
+            std::wstring_view(filename).substr(dotPos));
     }
 
     inline bool IsImageFile(const Floar::VirtualPath& path)
