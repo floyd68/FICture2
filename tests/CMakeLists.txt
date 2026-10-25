@@ -10,6 +10,8 @@ add_executable(FICture2Tests
     MainImagePresentationTests.cpp
     ImageAsyncBindingTests.cpp
     FolderEnumerationTests.cpp
+    ArchiveCancelTestSupport.h
+    ArchiveReadCancelTests.cpp
     ImageBrowserPathStateTests.cpp
     ThumbItemModelTests.cpp
     ThumbStripLayoutTests.cpp
@@ -105,6 +107,7 @@ add_test(NAME FICture2.ThumbItemModel COMMAND FICture2Tests ThumbItemModel_)
 add_test(NAME FICture2.ThumbStripLayout COMMAND FICture2Tests ThumbStripLayout_)
 add_test(NAME FICture2.FolderEnumeration COMMAND FICture2Tests FolderEnumeration_)
 add_test(NAME FICture2.FolderEnumerationForcedExit COMMAND FICture2Tests FolderEnumerationForcedExit_)
+add_test(NAME FICture2.ArchiveReadCancel COMMAND FICture2Tests ArchiveReadCancel_)
 # AppLog::Init runs once per process, so each Init scenario gets its own entry.
 add_test(NAME FICture2.AppLogText COMMAND FICture2Tests AppLogText_)
 add_test(NAME FICture2.AppLogLazy COMMAND FICture2Tests AppLogLazy_)

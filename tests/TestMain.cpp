@@ -1,5 +1,11 @@
 #include "TestHarness.h"
 
+#include "ArchiveReaderCache.h"
+#include "ImageCore/ImageLoader.h"
+
+#include <windows.h>
+
+#include <chrono>
 #include <cstdio>
 #include <cstring>
 #include <exception>
@@ -111,6 +117,17 @@ int main(int argc, char** argv)
     for (const auto& teardown : Teardowns())
     {
         teardown();
+    }
+
+    // Join the process-wide worker pools before static teardown (their
+    // destructors would join without a bound). Neither call creates anything
+    // that was never used.
+    if (!ImageCore::ImageLoader::ShutdownIfCreated(std::chrono::seconds(10)) ||
+        !Floar::ArchiveReaderCache::Shared().Shutdown(std::chrono::seconds(10)))
+    {
+        std::fprintf(stderr, "worker shutdown timed out; ending without static teardown\n");
+        std::fflush(nullptr);
+        TerminateProcess(GetCurrentProcess(), 3);
     }
 
     std::printf("%d test(s) run, %d failed\n", run, failedTests);
