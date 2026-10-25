@@ -2,6 +2,7 @@
 
 #include "AppLog.h"
 #include "FolderEnumeration.h"
+#include "TestArchives.h"   // Floar's ZIP fixture writer
 
 #include <windows.h>
 #include <shellapi.h>
@@ -262,6 +263,7 @@ namespace
         int advanceCalls { 0 };
         int entryQueryCalls { 0 };
         int archiveCalls { 0 };
+        int archiveEntries { 0 };   // delivered by Floar
         Op stopAt { Op::None };
         int stopAtAdvance { 1 };  // with Op::Advance: the advance that requests stop
         std::stop_source* stop { nullptr };
@@ -297,10 +299,17 @@ namespace
             return FilesystemFolderEnumerationBackend::EntryIsDirectory(entry, ec);
         }
 
-        std::vector<Floar::VirtualFileEntry> ListArchive(const Floar::VirtualPath& folder) override
+        bool EnumerateArchive(
+            const Floar::VirtualPath& folder,
+            std::stop_token stopToken,
+            const std::function<void(Floar::VirtualFileEntry&&)>& onEntry) override
         {
             ++archiveCalls;
-            return FilesystemFolderEnumerationBackend::ListArchive(folder);
+            return FilesystemFolderEnumerationBackend::EnumerateArchive(folder, stopToken, [&](Floar::VirtualFileEntry&& entry)
+            {
+                ++archiveEntries;
+                onEntry(std::move(entry));
+            });
         }
 
     private:
@@ -417,6 +426,59 @@ FIC2_TEST(FolderEnumeration_FilesystemBackendStartsNoOperationAfterStop)
 
     std::error_code ec;
     std::filesystem::remove_all(dir, ec);
+}
+
+FIC2_TEST(FolderEnumeration_ArchiveListingStopsBetweenEntries)
+{
+#if FLOAR_ENABLE_COMMON_ARCHIVES
+    const std::filesystem::path dir = MakeTempDir(L"zip");
+    const std::filesystem::path zip = dir / L"pack.zip";
+    std::vector<std::pair<std::wstring, std::string>> files;
+    for (int i = 0; i < 600; ++i)
+    {
+        files.emplace_back(L"f" + std::to_wstring(i) + L".png", "x");
+    }
+    FIC2_REQUIRE(FloarTest::WriteZip(zip, files, {}));
+    const Floar::VirtualPath folder(zip);
+    size_t total = 0;
+    int calls = 0;
+    bool completed = false;
+
+    // Full listing: the same 256-entry batches as folders, the last completed.
+    {
+        CountingFilesystemBackend backend {};
+        backend.Enumerate(folder, std::stop_token {}, [&](std::vector<Floar::VirtualFileEntry>&& batch, bool done)
+        {
+            total += batch.size();
+            ++calls;
+            completed = done;
+        });
+        FIC2_CHECK(total == 600 && calls == 3 && completed);
+        FIC2_CHECK(backend.archiveCalls == 1 && backend.archiveEntries == 600);
+    }
+
+    // Stop requested while the first batch is delivered: Floar delivers no
+    // further entry and nothing completes.
+    {
+        total = 0;
+        calls = 0;
+        completed = false;
+        std::stop_source stop {};
+        CountingFilesystemBackend backend {};
+        backend.Enumerate(folder, stop.get_token(), [&](std::vector<Floar::VirtualFileEntry>&& batch, bool done)
+        {
+            total += batch.size();
+            ++calls;
+            completed = done;
+            stop.request_stop();
+        });
+        FIC2_CHECK(calls == 1 && total == 256 && !completed);
+        FIC2_CHECK(backend.archiveEntries == 256);
+    }
+
+    std::error_code ec;
+    std::filesystem::remove_all(dir, ec);
+#endif
 }
 
 namespace

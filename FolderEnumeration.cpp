@@ -221,9 +221,12 @@ bool FilesystemFolderEnumerationBackend::EntryIsDirectory(const std::filesystem:
     return entry.is_directory(ec);
 }
 
-std::vector<Floar::VirtualFileEntry> FilesystemFolderEnumerationBackend::ListArchive(const Floar::VirtualPath& folder)
+bool FilesystemFolderEnumerationBackend::EnumerateArchive(
+    const Floar::VirtualPath& folder,
+    std::stop_token stop,
+    const std::function<void(Floar::VirtualFileEntry&&)>& onEntry)
 {
-    return Floar::VirtualFileSystem::ListDirectory(folder);
+    return Floar::VirtualFileSystem::EnumerateDirectory(folder, stop, onEntry);
 }
 
 void FilesystemFolderEnumerationBackend::Enumerate(
@@ -238,13 +241,26 @@ void FilesystemFolderEnumerationBackend::Enumerate(
         return;
     }
 
+    // Fewer, larger chunks reduce progressive UI rebuild overhead on large folders.
+    constexpr size_t kBatchSize = 256;
+    std::vector<Floar::VirtualFileEntry> batch {};
+    batch.reserve(kBatchSize);
+
     if (folder.IsInArchive() || folder.IsArchiveFile())
     {
-        // Archive listing is one snapshot (not cancellable before it returns).
-        std::vector<Floar::VirtualFileEntry> entries = ListArchive(folder);
-        if (!stop.stop_requested())
+        const bool completed = EnumerateArchive(folder, stop, [&](Floar::VirtualFileEntry&& entry)
         {
-            sink(std::move(entries), true);
+            batch.push_back(std::move(entry));
+            if (batch.size() >= kBatchSize)
+            {
+                sink(std::move(batch), false);
+                batch.clear();
+                batch.reserve(kBatchSize);
+            }
+        });
+        if (completed && !stop.stop_requested())
+        {
+            sink(std::move(batch), true);
         }
         return;
     }
@@ -273,10 +289,6 @@ void FilesystemFolderEnumerationBackend::Enumerate(
         return;
     }
 
-    // Fewer, larger chunks reduce progressive UI rebuild overhead on large folders.
-    constexpr size_t kBatchSize = 256;
-    std::vector<Floar::VirtualFileEntry> batch {};
-    batch.reserve(kBatchSize);
     const std::filesystem::directory_iterator end {};
     bool skipCurrent = false;  // the last advance failed
     while (it != end)
