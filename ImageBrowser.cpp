@@ -8,6 +8,7 @@
 #include "ThumbImageTile.h"
 #include "ImageBrowserMainPane.h"
 #include "ImageBrowserThumbnailPane.h"
+#include "ImageBrowserThumbLayout.h"
 #include "ImageBrowserAsyncThumbLoader.h"
 #include "FolderEnumeration.h"
 #include "ImageBrowserSplitCoordinator.h"
@@ -351,17 +352,164 @@ namespace
         void Arrange(FD2D::Rect finalRect) override
         {
             Wnd::Arrange(finalRect);
+            ApplyThumbScrollAfterArrange();
+        }
 
-            if (m_selectedFocus && m_thumbPane)
+        // ------------------------------------------------------------------
+        // Strip geometry from ThumbStripLayout (model extents), not tile windows.
+        // Scroll position rules after a layout pass:
+        //  - a pending centering (new selection, rebuilt list, resized strip)
+        //    centers the selection at once;
+        //  - otherwise, when extents changed (decoded widths, row height), the
+        //    anchor item (the selection if visible, else the first visible
+        //    item) keeps its viewport offset; a smooth scroll in progress keeps
+        //    running (ScrollView::ShiftScrollX).
+        // ------------------------------------------------------------------
+
+        // Tiles have no margin: their extent is their content width.
+        static constexpr float kThumbTileMargin = 0.0f;
+
+        struct ThumbScrollAnchor
+        {
+            bool valid { false };
+            std::wstring key {};   // ThumbItemModel lookup key of the anchor item
+            float offset { 0.0f }; // its start relative to the viewport's left edge
+        };
+
+        bool ThumbLayoutReady() const
+        {
+            return !m_items.empty() && m_thumbLayout.Count() == m_items.size();
+        }
+
+        // The strip viewport in panel coordinates: [left, left + width).
+        bool ThumbViewport(float& left, float& width) const
+        {
+            const auto scroll = m_thumbPane ? m_thumbPane->Scroll() : nullptr;
+            const auto panel = m_thumbPane ? m_thumbPane->Panel() : nullptr;
+            if (!scroll || !panel)
             {
-                const D2D1_RECT_F focusRect = m_selectedFocus->LayoutRect();
-                auto scroll = m_thumbPane->Scroll();
-                if (scroll)
+                return false;
+            }
+            const D2D1_RECT_F view = scroll->LayoutRect();
+            width = view.right - view.left;
+            left = view.left + scroll->ScrollX() - panel->LayoutRect().left;
+            return width > 1.0f;
+        }
+
+        // Client rectangle of item `index`, as the panel arranges it.
+        D2D1_RECT_F ThumbItemRect(size_t index) const
+        {
+            const D2D1_RECT_F panel = m_thumbPane->Panel()->LayoutRect();
+            return D2D1::RectF(
+                panel.left + m_thumbLayout.Start(index), panel.top,
+                panel.left + m_thumbLayout.End(index), panel.bottom);
+        }
+
+        std::wstring ThumbItemKey(size_t index) const
+        {
+            return (index < m_items.size()) ? m_items[index].key : std::wstring();
+        }
+
+        float ThumbItemExtent(const ThumbItem& item) const
+        {
+            if (item.kind == ThumbItemKind::Image)
+            {
+                const float aspect = m_thumbModel.AspectOf(item.key);
+                return ThumbStripLayout::ImageExtent(m_thumbH, aspect, kThumbTileMargin);
+            }
+            return m_thumbW + 2.0f * kThumbTileMargin;   // nav tiles are square
+        }
+
+        // Extents of every item (after a rebuild or a row-height change).
+        void RebuildThumbLayout()
+        {
+            std::vector<float> extents;
+            extents.reserve(m_items.size());
+            m_thumbItemIndexByKey.clear();
+            m_thumbItemIndexByKey.reserve(m_items.size());
+            for (size_t i = 0; i < m_items.size(); ++i)
+            {
+                extents.push_back(ThumbItemExtent(m_items[i]));
+                m_thumbItemIndexByKey.emplace(m_items[i].key, i);
+            }
+            m_thumbLayout.Reset(std::move(extents),
+                ImageBrowserThumbnailPane::kItemSpacing, ImageBrowserThumbnailPane::kPanelPadding);
+            m_thumbArrangePending = true;
+        }
+
+        // Remembers the anchor before extents change (once per layout pass).
+        void CaptureThumbAnchor()
+        {
+            float left = 0.0f;
+            float width = 0.0f;
+            if (m_thumbAnchor.valid || m_thumbCenterPending || !ThumbLayoutReady() || !ThumbViewport(left, width))
+            {
+                return;
+            }
+            const ThumbStripLayout::Anchor anchor = m_thumbLayout.AnchorFor(left, width, m_selectedIndex);
+            if (anchor.valid)
+            {
+                m_thumbAnchor = { true, ThumbItemKey(anchor.index), anchor.offset };
+            }
+        }
+
+        void OnThumbImageAspect(const std::wstring& key, float aspect)
+        {
+            if (!m_thumbModel.SetAspect(key, aspect))
+            {
+                return;
+            }
+            const auto it = m_thumbItemIndexByKey.find(key);
+            if (it == m_thumbItemIndexByKey.end() || !ThumbLayoutReady())
+            {
+                return;
+            }
+            CaptureThumbAnchor();
+            m_thumbLayout.SetExtent(it->second, ThumbStripLayout::ImageExtent(m_thumbH, aspect, kThumbTileMargin));
+            m_thumbArrangePending = true;
+            if (BackplateRef() != nullptr)
+            {
+                BackplateRef()->RequestLayout();
+            }
+        }
+
+        void ApplyThumbScrollAfterArrange()
+        {
+            m_thumbArrangePending = false;
+            const auto scroll = m_thumbPane ? m_thumbPane->Scroll() : nullptr;
+            float left = 0.0f;
+            float width = 0.0f;
+            if (!scroll || !ThumbLayoutReady() || !ThumbViewport(left, width))
+            {
+                return;
+            }
+            // A resized strip re-centers the selection (as before).
+            if (std::fabs(width - m_thumbLastViewportWidth) > 0.5f)
+            {
+                m_thumbLastViewportWidth = width;
+                m_thumbCenterPending = true;
+            }
+            if (m_thumbCenterPending)
+            {
+                m_thumbCenterPending = false;
+                m_thumbAnchor = {};
+                if (m_selectedIndex < m_items.size())
                 {
-                    scroll->EnsureCentered(focusRect, true);
+                    scroll->EnsureCentered(ThumbItemRect(m_selectedIndex), true);
+                }
+                return;
+            }
+            if (m_thumbAnchor.valid)
+            {
+                const ThumbScrollAnchor anchor = std::move(m_thumbAnchor);
+                m_thumbAnchor = {};
+                const auto it = m_thumbItemIndexByKey.find(anchor.key);
+                if (it != m_thumbItemIndexByKey.end())
+                {
+                    const float wantedLeft = m_thumbLayout.Start(it->second) - anchor.offset;
+                    scroll->ShiftScrollX(wantedLeft - left);
                 }
             }
-
         }
 
         void OnRenderD3D(ID3D11DeviceContext* context) override
@@ -752,34 +900,47 @@ namespace
         // their content coordinates; the scroll view translates while rendering.
         void UpdateThumbLoadPriorities()
         {
-            const auto scroll = m_thumbPane ? m_thumbPane->Scroll() : nullptr;
-            if (!scroll)
+            float left = 0.0f;
+            float width = 0.0f;
+            if (!ThumbLayoutReady() || !ThumbViewport(left, width))
             {
                 return;
             }
-            const D2D1_RECT_F view = scroll->LayoutRect();
-            const float left = view.left + scroll->ScrollX();
-            const float right = view.right + scroll->ScrollX();
-            for (const ThumbItem& item : m_items)
+            const auto [first, last] = m_thumbLayout.Range(left, left + width);
+            for (size_t i = 0; i < m_items.size(); ++i)
             {
-                if (!item.image)
+                if (m_items[i].image)
                 {
-                    continue;
+                    const bool visible = (i >= first && i < last);
+                    m_items[i].image->SetLoadPriority(visible ? ImageCore::RequestPriority::Visible : ImageCore::RequestPriority::Prefetch);
                 }
-                const D2D1_RECT_F rect = item.image->LayoutRect();
-                const bool visible = rect.right > rect.left && rect.right > left && rect.left < right;
-                item.image->SetLoadPriority(visible ? ImageCore::RequestPriority::Visible : ImageCore::RequestPriority::Prefetch);
             }
         }
 
+        // Items fully inside the viewport (at least 1).
         size_t PagingStepFromThumbViewport() const
         {
-            if (m_thumbPane == nullptr)
+            float left = 0.0f;
+            float width = 0.0f;
+            if (!ThumbLayoutReady() || !ThumbViewport(left, width))
             {
-                return 1;
+                if (m_thumbPane == nullptr)
+                {
+                    return 1;
+                }
+                const float itemExtent = (std::max)(1.0f, m_thumbW + m_thumbOuterSpacing);
+                return m_thumbPane->PagingStep(itemExtent);
             }
-            const float itemExtent = (std::max)(1.0f, m_thumbW + m_thumbOuterSpacing);
-            return m_thumbPane->PagingStep(itemExtent);
+            const auto [first, last] = m_thumbLayout.Range(left, left + width);
+            size_t full = 0;
+            for (size_t i = first; i < last; ++i)
+            {
+                if (m_thumbLayout.Start(i) >= left - 0.5f && m_thumbLayout.End(i) <= left + width + 0.5f)
+                {
+                    ++full;
+                }
+            }
+            return (std::max)(static_cast<size_t>(1), full);
         }
 
         bool OnFileDrop(const std::wstring& path, const POINT& clientPt) override
@@ -1163,6 +1324,7 @@ namespace
             }
             const float newHeight = sizing.newThumbSide;
 
+            CaptureThumbAnchor();   // the visible anchor stays put while widths scale
             m_thumbW = newHeight; // Keep this for navigation tiles
             m_thumbH = newHeight;
 
@@ -1189,6 +1351,7 @@ namespace
                     item.navTile->Invalidate();
                 }
             }
+            RebuildThumbLayout();
 
             if (BackplateRef() != nullptr)
             {
@@ -1596,6 +1759,10 @@ namespace
                     RequestFocus();
                 });
             FIC2_LOG_STEP(t_build, "[BuildUi] ImageBrowserThumbnailPane::Build");
+            if (auto strip = m_thumbPane->StripPanel())
+            {
+                strip->SetLayout(&m_thumbLayout);
+            }
 
             rootSplit->OnSplitChanged([this](float)
             {
@@ -1926,24 +2093,22 @@ namespace
             context.selectedFocus = &m_selectedFocus;
             context.ensureSelectionVisible = [this]()
             {
-                if (m_thumbPane == nullptr || !m_selectedFocus)
+                if (m_thumbPane == nullptr || m_selectedIndex >= m_items.size() || m_thumbKeepScrollOnSelect)
                 {
                     return;
                 }
 
+                // Before the next layout pass (list or extents just rebuilt) the
+                // panel does not match the layout yet: center when it does.
                 D2D1_RECT_F stripRect {};
-                const D2D1_RECT_F focusRect = m_selectedFocus->LayoutRect();
-                const bool layoutReady =
-                    m_thumbPane->TryGetStripRect(stripRect) &&
-                    (focusRect.right > focusRect.left) &&
-                    (focusRect.bottom > focusRect.top);
-                if (layoutReady)
+                if (m_thumbArrangePending || !ThumbLayoutReady() || !m_thumbPane->TryGetStripRect(stripRect))
                 {
-                    auto scroll = m_thumbPane->Scroll();
-                    if (scroll)
-                    {
-                        scroll->EnsureCentered(focusRect);
-                    }
+                    m_thumbCenterPending = true;
+                    return;
+                }
+                if (auto scroll = m_thumbPane->Scroll())
+                {
+                    scroll->EnsureCentered(ThumbItemRect(m_selectedIndex));
                 }
             };
             context.syncSuppressBroadcast = m_syncSuppressBroadcast;
@@ -2384,6 +2549,8 @@ namespace
 
             FIC2_TIMER_START(t_rebuild);
 
+            CaptureThumbAnchor();
+            const std::wstring previousSelectedKey = ThumbItemKey(m_selectedIndex);
             m_items.clear();
             m_typeSelectQuery.clear();
             m_selectedIndex = static_cast<size_t>(-1);
@@ -2394,6 +2561,15 @@ namespace
 
             auto result = m_thumbStripController.RebuildList(context);
             FIC2_LOG_STEP(t_rebuild, "[RebuildImmediate] ThumbStripController::RebuildList");
+            RebuildThumbLayout();
+            // The anchor survives a progressive merge by key; a different (or
+            // newly resolved) selection is centered instead.
+            const bool centerSelection = ThumbStripLayout::CenterAfterRebuild(
+                previousSelectedKey, ThumbItemKey(result.selectIndex), result.hasItems);
+            if (centerSelection)
+            {
+                m_thumbCenterPending = true;
+            }
 
             // Restore selection without scrolling yet; layout hasn't been updated.
             if (!result.hasItems)
@@ -2413,7 +2589,11 @@ namespace
             }
             else if (applySelection)
             {
+                // Re-applying the same selection (the final progressive update)
+                // must not re-center: the user may have scrolled away.
+                m_thumbKeepScrollOnSelect = !centerSelection;
                 SelectItemByIndex(result.selectIndex);
+                m_thumbKeepScrollOnSelect = false;
             }
             else
             {
@@ -2466,6 +2646,10 @@ namespace
                 RequestFocus();
                 SelectItemByIndex(index);
                 QueueDeferredAction(DeferredActionKind::ActivateSelected);
+            };
+            context.onImageAspect = [this](const std::wstring& key, float aspect)
+            {
+                OnThumbImageAspect(key, aspect);
             };
             context.pathEquals = [](const Floar::VirtualPath& a, const Floar::VirtualPath& b)
             {
@@ -2936,6 +3120,13 @@ namespace
         bool m_thumbListLoading { false };
         Floar::VirtualPath m_progressivePreferSelectPath {};
         ThumbItemModel m_thumbModel {};   // listed items of m_currentFolder
+        ThumbStripLayout m_thumbLayout {};  // geometry of m_items (see ApplyThumbScrollAfterArrange)
+        std::unordered_map<std::wstring, size_t> m_thumbItemIndexByKey {};
+        ThumbScrollAnchor m_thumbAnchor {};
+        bool m_thumbCenterPending { false };
+        bool m_thumbArrangePending { false };
+        bool m_thumbKeepScrollOnSelect { false };   // see RebuildThumbListImmediate
+        float m_thumbLastViewportWidth { 0.0f };
         bool m_progressiveUiDirty { false };
         bool m_progressiveLoadCompleted { false };
         unsigned long long m_progressiveLastApplyMs { 0 };

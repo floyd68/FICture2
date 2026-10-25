@@ -4,6 +4,58 @@
 #include <algorithm>
 #include <cmath>
 
+ThumbStripPanel::ThumbStripPanel()
+    : FD2D::StackPanel(L"thumbs", FD2D::Orientation::Horizontal)
+{
+}
+
+bool ThumbStripPanel::LayoutMatchesChildren() const
+{
+    return m_layout != nullptr && m_layout->Count() == ChildrenInOrder().size();
+}
+
+FD2D::Size ThumbStripPanel::Measure(FD2D::Size available)
+{
+    if (!LayoutMatchesChildren())
+    {
+        return FD2D::StackPanel::Measure(available);
+    }
+
+    // Widths come from the layout; tiles only report their (fixed) height.
+    float cross = 0.0f;
+    for (const auto& child : ChildrenInOrder())
+    {
+        if (child)
+        {
+            cross = (std::max)(cross, child->Measure(available).h);
+        }
+    }
+    m_desired = { m_layout->ContentWidth() + 2.0f * m_margin, cross + 2.0f * m_padding + 2.0f * m_margin };
+    return m_desired;
+}
+
+void ThumbStripPanel::Arrange(FD2D::Rect finalRect)
+{
+    if (!LayoutMatchesChildren())
+    {
+        FD2D::StackPanel::Arrange(finalRect);
+        return;
+    }
+
+    const FD2D::Rect inset = FD2D::Inset(finalRect, m_margin);
+    const FD2D::Rect childArea = FD2D::Inset(inset, m_padding);
+    const auto& children = ChildrenInOrder();
+    for (size_t i = 0; i < children.size(); ++i)
+    {
+        if (children[i])
+        {
+            children[i]->Arrange({ inset.x + m_layout->Start(i), childArea.y, m_layout->Extent(i), childArea.h });
+        }
+    }
+    m_bounds = finalRect;
+    m_layoutRect = FD2D::ToD2D(finalRect);
+}
+
 ImageBrowserThumbnailPane::ImageBrowserThumbnailPane()
     : FD2D::Wnd(L"thumbnailPane")
 {
@@ -23,9 +75,9 @@ void ImageBrowserThumbnailPane::Build(
     m_onWheelFocus = onWheelFocus;
     m_wheelRemainder = 0;
 
-    m_thumbPanel = std::make_shared<FD2D::StackPanel>(L"thumbs", FD2D::Orientation::Horizontal);
-    m_thumbPanel->SetSpacing(4.0f);
-    m_thumbPanel->SetPadding(4.0f);
+    m_thumbPanel = std::make_shared<ThumbStripPanel>();
+    m_thumbPanel->SetSpacing(kItemSpacing);
+    m_thumbPanel->SetPadding(kPanelPadding);
 
     m_thumbScroll = std::make_shared<FD2D::ScrollView>(L"thumbScroll");
     m_thumbScroll->SetScrollStep(96.0f);

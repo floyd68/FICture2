@@ -12,6 +12,7 @@ add_executable(FICture2Tests
     FolderEnumerationTests.cpp
     ImageBrowserPathStateTests.cpp
     ThumbItemModelTests.cpp
+    ThumbStripLayoutTests.cpp
     ImageBrowserRoutingTests.cpp
     IpcOpenQueueTests.cpp
     ${PROJECT_SOURCE_DIR}/AppLog.cpp
@@ -20,6 +21,7 @@ add_executable(FICture2Tests
     ${PROJECT_SOURCE_DIR}/ImageBrowserMainImage.cpp
     ${PROJECT_SOURCE_DIR}/ImageBrowserThumbImage.cpp
     ${PROJECT_SOURCE_DIR}/ImageBrowserThumbModel.cpp
+    ${PROJECT_SOURCE_DIR}/ImageBrowserThumbLayout.cpp
     ${PROJECT_SOURCE_DIR}/ImageBrowserAssets.cpp
     ${PROJECT_SOURCE_DIR}/ThumbImageTile.cpp
     ${PROJECT_SOURCE_DIR}/ThumbNavTile.cpp
@@ -100,6 +102,7 @@ add_test(NAME FICture2.MainImage COMMAND FICture2Tests MainImage_)
 add_test(NAME FICture2.IdleRendering COMMAND FICture2Tests IdleRendering_)
 add_test(NAME FICture2.ImageBrowserRouting COMMAND FICture2Tests ImageBrowserRouting_)
 add_test(NAME FICture2.ThumbItemModel COMMAND FICture2Tests ThumbItemModel_)
+add_test(NAME FICture2.ThumbStripLayout COMMAND FICture2Tests ThumbStripLayout_)
 add_test(NAME FICture2.FolderEnumeration COMMAND FICture2Tests FolderEnumeration_)
 add_test(NAME FICture2.FolderEnumerationForcedExit COMMAND FICture2Tests FolderEnumerationForcedExit_)
 # AppLog::Init runs once per process, so each Init scenario gets its own entry.

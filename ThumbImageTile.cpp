@@ -112,6 +112,12 @@ void ThumbImageTile::SetOnClick(ClickHandler handler)
     m_onClick = std::move(handler);
 }
 
+float ThumbImageTile::BitmapAspect() const
+{
+    const D2D1_SIZE_F size = m_image ? m_image->GetBitmapSize() : D2D1::SizeF(0.0f, 0.0f);
+    return (size.width > 0.0f && size.height > 0.0f) ? size.width / size.height : 0.0f;
+}
+
 FD2D::Size ThumbImageTile::Measure(FD2D::Size available)
 {
     UNREFERENCED_PARAMETER(available);
@@ -273,6 +279,10 @@ void ThumbImageTile::OnRender(ID2D1RenderTarget* target)
         if (sizeChanged && isLoaded)
         {
             m_lastBitmapSize = currentSize;
+            if (m_onAspectChanged)
+            {
+                m_onAspectChanged(currentSize.width / currentSize.height);
+            }
 
             // Force parent container to re-layout
             // Note: RequestLayout during rendering will set m_renderRequested flag

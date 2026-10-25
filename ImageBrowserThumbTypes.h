@@ -28,4 +28,5 @@ struct ThumbItem
     std::shared_ptr<ImageBrowserThumbImage> image {};
     std::shared_ptr<ThumbNavTile> navTile {};
     std::shared_ptr<ThumbImageTile> imageTile {};
+    std::wstring key {};   // ThumbItemModel lookup key (lower-cased display path)
 };
