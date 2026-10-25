@@ -8,16 +8,9 @@
 
 #include <memory>
 
-// Folder-listing readiness is broadcast to the window and reaches the outer
-// image browser first; side-by-side browsers are nested inside it. Every
+// A folder-listing wakeup reaches the outer image browser first; side-by-side browsers are nested inside it. Every
 // browser must drain its own queue, or a nested pane's last chunks stay
 // invisible once nothing else renders.
-
-namespace
-{
-    // Must match ImageBrowserImpl::CMD_FIC2_ASYNC_THUMB_READY.
-    constexpr UINT kAsyncThumbReady = WM_APP + 0x7A13;
-}
 
 FIC2_TEST(ImageBrowserRouting_ReadyBroadcastDrainsNestedBrowser)
 {
@@ -36,9 +29,10 @@ FIC2_TEST(ImageBrowserRouting_ReadyBroadcastDrainsNestedBrowser)
     innerLane->Post(std::move(last));
     FIC2_REQUIRE(innerLane->HasChunks());
 
-    // The broadcast arrives at the top-level browser, as FD2D delivers it.
+    // The wakeup reaches the top-level browser (Ficture2Backplate dispatches it
+    // to top-level Wnds only).
     FD2D::CommandEvent event {};
-    event.id = kAsyncThumbReady;
+    event.id = kFolderListingReadyMessage;
     FIC2_CHECK(outer->OnCommandEvent(event));
     FIC2_CHECK(!innerLane->HasChunks());   // the nested browser drained its queue
 }

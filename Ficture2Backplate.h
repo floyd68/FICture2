@@ -11,6 +11,8 @@
 #include <unordered_map>
 #include <vector>
 
+class FolderListingWakeup;
+
 class Ficture2Backplate : public FD2D::Backplate
 {
 public:
@@ -89,6 +91,13 @@ public:
     void SynchronizeAlphaCheckerboard(FD2D::Wnd* source, bool checkerEnabled);
     bool TryStartCompareWithFileNameMatch(const std::wstring& incomingFilePath);
     void SetIpcOpenQueue(std::shared_ptr<IpcOpenQueue> queue);
+
+    // Wakes this window when folder-listing chunks arrive (null before the
+    // window exists); disconnected when the window is destroyed.
+    std::shared_ptr<FolderListingWakeup> FolderListingWakeupTarget() const { return m_folderListingWakeup; }
+    // Delivers a folder-listing wakeup to every top-level Wnd; each image
+    // browser drains its own lane and passes it to nested browsers.
+    void DispatchFolderListingReady();
     void RefreshIpcOpenSnapshot();
     void DrainIpcOpenQueue();
     void OpenFileInRoot(const std::wstring& filePath);
@@ -126,6 +135,8 @@ private:
     float m_imageZoomStiffness { 80.0f };
     bool m_imageBrowserIniInitialized { false };
     std::shared_ptr<IpcOpenQueue> m_ipcQueue {};
+    // Created with the window, disconnected when it is destroyed.
+    std::shared_ptr<FolderListingWakeup> m_folderListingWakeup {};
 
 protected:
     FD2D::Wnd* FindTargetWnd(const POINT& ptClient) override;

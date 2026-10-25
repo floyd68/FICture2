@@ -1,19 +1,10 @@
 #include "FolderEnumeration.h"
 #include "AppLog.h"
-#include "FD2D/Backplate.h"
 
 #include <condition_variable>
-#include <filesystem>
 #include <list>
-#include <mutex>
 #include <optional>
 #include <thread>
-
-namespace
-{
-    // Must match ImageBrowserImpl::CMD_FIC2_ASYNC_THUMB_READY.
-    constexpr UINT kAsyncThumbReadyCommand = WM_APP + 0x7A13;
-}
 
 namespace FolderEnumerationDetail
 {
@@ -36,7 +27,7 @@ namespace FolderEnumerationDetail
         std::stop_source stop {};    // of the running request
 
         std::deque<AsyncThumbListChunkPayload> chunks {};
-        HWND window { nullptr };
+        std::shared_ptr<FolderListingWakeup> wakeup {};
         bool notifyPending { false };  // posted, not yet drained
     };
 
@@ -70,33 +61,17 @@ namespace FolderEnumerationDetail
 
         void PostChunk(ServiceState& service, LaneState& lane, AsyncThumbListChunkPayload&& chunk)
         {
-            HWND notifyWindow = nullptr;
+            std::lock_guard<std::mutex> lock(service.mutex);
+            if (lane.closed || chunk.requestId != lane.currentRequestId)
             {
-                std::lock_guard<std::mutex> lock(service.mutex);
-                if (lane.closed || chunk.requestId != lane.currentRequestId)
-                {
-                    return;
-                }
-                lane.chunks.push_back(std::move(chunk));
-                if (lane.window != nullptr && !lane.notifyPending)
-                {
-                    lane.notifyPending = true;
-                    notifyWindow = lane.window;
-                }
+                return;
             }
-
-            // The UI drains the queue when this message arrives (FD2D broadcast ->
-            // ImageBrowser command handler).
-            if (notifyWindow != nullptr)
+            lane.chunks.push_back(std::move(chunk));
+            // Posted under the lock (PostMessageW does not wait): once Close()
+            // or SetWakeup() returns, this lane posts nothing to the old window.
+            if (lane.wakeup && !lane.notifyPending)
             {
-                auto* message = new FD2D::Backplate::BroadcastMessage();
-                message->message = kAsyncThumbReadyCommand;
-                if (!PostMessageW(notifyWindow, FD2D::Backplate::WM_FD2D_BROADCAST, 0, reinterpret_cast<LPARAM>(message)))
-                {
-                    delete message;
-                    std::lock_guard<std::mutex> lock(service.mutex);
-                    lane.notifyPending = false;
-                }
+                lane.notifyPending = lane.wakeup->Post();
             }
         }
 
@@ -205,15 +180,63 @@ namespace FolderEnumerationDetail
 
 using namespace FolderEnumerationDetail;
 
+FolderListingWakeup::FolderListingWakeup(HWND window)
+    : m_window(window)
+{
+}
+
+bool FolderListingWakeup::Post()
+{
+    std::lock_guard<std::mutex> lock(m_mutex);
+    return m_window != nullptr && PostMessageW(m_window, kFolderListingReadyMessage, 0, 0) != FALSE;
+}
+
+void FolderListingWakeup::Disconnect()
+{
+    std::lock_guard<std::mutex> lock(m_mutex);
+    m_window = nullptr;
+}
+
+bool FilesystemFolderEnumerationBackend::IsDirectory(const std::filesystem::path& path)
+{
+    std::error_code ec;
+    return std::filesystem::is_directory(path, ec);
+}
+
+void FilesystemFolderEnumerationBackend::OpenDirectory(
+    const std::filesystem::path& path,
+    std::filesystem::directory_iterator& it,
+    std::error_code& ec)
+{
+    it = std::filesystem::directory_iterator(path, std::filesystem::directory_options::skip_permission_denied, ec);
+}
+
+void FilesystemFolderEnumerationBackend::Advance(std::filesystem::directory_iterator& it, std::error_code& ec)
+{
+    it.increment(ec);
+}
+
+std::vector<Floar::VirtualFileEntry> FilesystemFolderEnumerationBackend::ListArchive(const Floar::VirtualPath& folder)
+{
+    return Floar::VirtualFileSystem::ListDirectory(folder);
+}
+
 void FilesystemFolderEnumerationBackend::Enumerate(
     const Floar::VirtualPath& folder,
     std::stop_token stop,
     const ChunkSink& sink)
 {
+    // Every directory operation below may block (network paths): none starts
+    // once stop is requested.
+    if (stop.stop_requested())
+    {
+        return;
+    }
+
     if (folder.IsInArchive() || folder.IsArchiveFile())
     {
         // Archive listing is one snapshot (not cancellable before it returns).
-        std::vector<Floar::VirtualFileEntry> entries = Floar::VirtualFileSystem::ListDirectory(folder);
+        std::vector<Floar::VirtualFileEntry> entries = ListArchive(folder);
         if (!stop.stop_requested())
         {
             sink(std::move(entries), true);
@@ -221,15 +244,24 @@ void FilesystemFolderEnumerationBackend::Enumerate(
         return;
     }
 
-    // Same listing as Floar::VirtualFileSystem::EnumerateFilesystemDirectory,
-    // but checking the stop request between entries.
-    std::error_code ec;
-    if (!std::filesystem::is_directory(folder.hostPath, ec))
+    // Same listing as Floar::VirtualFileSystem::EnumerateFilesystemDirectory.
+    const bool isDirectory = IsDirectory(folder.hostPath);
+    if (stop.stop_requested())
+    {
+        return;
+    }
+    if (!isDirectory)
     {
         sink({}, true);
         return;
     }
-    std::filesystem::directory_iterator it(folder.hostPath, std::filesystem::directory_options::skip_permission_denied, ec);
+    std::error_code ec;
+    std::filesystem::directory_iterator it {};
+    OpenDirectory(folder.hostPath, it, ec);
+    if (stop.stop_requested())
+    {
+        return;
+    }
     if (ec)
     {
         sink({}, true);
@@ -241,32 +273,35 @@ void FilesystemFolderEnumerationBackend::Enumerate(
     std::vector<Floar::VirtualFileEntry> batch {};
     batch.reserve(kBatchSize);
     const std::filesystem::directory_iterator end {};
-    for (; it != end; it.increment(ec))
+    bool skipCurrent = false;  // the last advance failed
+    while (it != end)
     {
+        if (!skipCurrent)
+        {
+            const std::filesystem::directory_entry& entry = *it;
+            std::error_code typeEc;
+            const bool isDir = entry.is_directory(typeEc);
+            if (!typeEc)
+            {
+                batch.emplace_back(Floar::VirtualPath(entry.path()), isDir, 0, 0);
+                if (batch.size() >= kBatchSize)
+                {
+                    sink(std::move(batch), false);
+                    batch.clear();
+                    batch.reserve(kBatchSize);
+                }
+            }
+        }
+
+        // Checked before each advance: a stop requested while this entry (or
+        // its batch) was handled must not start another directory read.
         if (stop.stop_requested())
         {
             return;
         }
-        if (ec)
-        {
-            ec.clear();
-            continue;
-        }
-
-        const std::filesystem::directory_entry& entry = *it;
-        std::error_code typeEc;
-        const bool isDir = entry.is_directory(typeEc);
-        if (typeEc)
-        {
-            continue;
-        }
-        batch.emplace_back(Floar::VirtualPath(entry.path()), isDir, 0, 0);
-        if (batch.size() >= kBatchSize)
-        {
-            sink(std::move(batch), false);
-            batch.clear();
-            batch.reserve(kBatchSize);
-        }
+        Advance(it, ec);
+        skipCurrent = static_cast<bool>(ec);
+        ec.clear();
     }
 
     if (!stop.stop_requested())
@@ -298,14 +333,15 @@ FolderLoadLane::~FolderLoadLane()
     Close();
 }
 
-void FolderLoadLane::SetNotifyWindow(HWND window)
+void FolderLoadLane::SetWakeup(std::shared_ptr<FolderListingWakeup> wakeup)
 {
     if (!m_lane)
     {
         return;
     }
     std::lock_guard<std::mutex> lock(m_service->mutex);
-    m_lane->window = m_lane->closed ? nullptr : window;
+    m_lane->wakeup = m_lane->closed ? nullptr : std::move(wakeup);
+    m_lane->notifyPending = false;
 }
 
 void FolderLoadLane::Start(FolderLoadRequest request)
@@ -382,7 +418,7 @@ void FolderLoadLane::Close()
         lane.closed = true;
         lane.pending.reset();
         lane.chunks.clear();
-        lane.window = nullptr;
+        lane.wakeup.reset();
         if (lane.worker != nullptr)
         {
             RequestStopLocked(lane);

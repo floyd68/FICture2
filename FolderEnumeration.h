@@ -9,7 +9,9 @@
 #include <chrono>
 #include <deque>
 #include <functional>
+#include <filesystem>
 #include <memory>
+#include <mutex>
 #include <stop_token>
 #include <vector>
 
@@ -18,8 +20,9 @@
 // A FolderEnumerationService runs enumerations on a bounded worker pool. Each
 // browser owns a FolderLoadLane: at most one running and one pending request
 // (latest wins); results carry the request id (generation) and reach the lane's
-// queue only while the lane is open and the request is current, after which the
-// browser is told by one posted message per batch.
+// queue only while the lane is open and the request is current. The browser is
+// woken by one payload-free message per batch (FolderListingWakeup) and drains
+// its lane; the results never travel in the message.
 //
 // Navigation and browser destruction never wait for a worker: they request stop
 // (cooperative, plus best-effort CancelSynchronousIo) and detach the lane. A
@@ -50,12 +53,42 @@ public:
     virtual void Enumerate(const Floar::VirtualPath& folder, std::stop_token stop, const ChunkSink& sink) = 0;
 };
 
-// Production backend: the filesystem (checking stop between entries) and
-// Floar archives (one snapshot listing).
-class FilesystemFolderEnumerationBackend final : public FolderEnumerationBackend
+// Production backend: the filesystem and Floar archives (one snapshot
+// listing). Stop is checked before every directory operation, so no new
+// (possibly blocking) call starts once stop is requested.
+class FilesystemFolderEnumerationBackend : public FolderEnumerationBackend
 {
 public:
     void Enumerate(const Floar::VirtualPath& folder, std::stop_token stop, const ChunkSink& sink) override;
+
+protected:
+    // The directory operations, one call each (overridden by tests to observe them).
+    virtual bool IsDirectory(const std::filesystem::path& path);
+    virtual void OpenDirectory(const std::filesystem::path& path, std::filesystem::directory_iterator& it, std::error_code& ec);
+    virtual void Advance(std::filesystem::directory_iterator& it, std::error_code& ec);
+    virtual std::vector<Floar::VirtualFileEntry> ListArchive(const Floar::VirtualPath& folder);
+};
+
+// Message (no payload) that wakes a window when folder-listing chunks arrive;
+// each image browser then drains its own lane (CMD_FIC2_ASYNC_THUMB_READY).
+constexpr UINT kFolderListingReadyMessage = WM_APP + 0x7A13;
+
+// Lifetime-safe wakeup for one window. The window disconnects it when it is
+// destroyed; once Disconnect() returns, nothing is posted to that HWND again.
+// The message carries no payload, so one discarded with the window leaks
+// nothing: the results stay in the lanes.
+class FolderListingWakeup
+{
+public:
+    explicit FolderListingWakeup(HWND window);
+
+    // Posts kFolderListingReadyMessage; false when disconnected or posting failed.
+    bool Post();
+    void Disconnect();
+
+private:
+    std::mutex m_mutex {};
+    HWND m_window { nullptr };
 };
 
 struct FolderLoadRequest
@@ -84,9 +117,9 @@ public:
 
     explicit operator bool() const { return m_lane != nullptr; }
 
-    // Window that receives CMD_FIC2_ASYNC_THUMB_READY (as an FD2D broadcast)
-    // when chunks arrive; one message per batch until the queue is drained.
-    void SetNotifyWindow(HWND window);
+    // Wakes the browser's window when chunks arrive: one message per batch
+    // until the queue is drained (null: no wakeups).
+    void SetWakeup(std::shared_ptr<FolderListingWakeup> wakeup);
 
     // Makes `request` current: stops the running enumeration (it keeps its
     // worker until the backend returns) and replaces any pending request.
@@ -100,7 +133,8 @@ public:
     bool HasChunks() const;
 
     // Detaches the lane: stops the running enumeration, drops the pending
-    // request and queued chunks, and stops notifications. Never waits.
+    // request and queued chunks, and stops wakeups (none is posted after this
+    // returns). Never waits.
     void Close();
 
 private:

@@ -84,16 +84,13 @@ FIC2_TEST(IdleRendering_MainImageNotifiesOnlyOnRealChanges)
 
 namespace
 {
-    // Counts and frees the FD2D broadcast messages posted to a message-only window.
-    int DrainBroadcasts(HWND window, UINT& lastCommand)
+    // Counts the folder-listing wakeups posted to a message-only window.
+    int DrainWakeups(HWND window)
     {
         int count = 0;
         MSG msg {};
-        while (PeekMessageW(&msg, window, FD2D::Backplate::WM_FD2D_BROADCAST, FD2D::Backplate::WM_FD2D_BROADCAST, PM_REMOVE))
+        while (PeekMessageW(&msg, window, kFolderListingReadyMessage, kFolderListingReadyMessage, PM_REMOVE))
         {
-            auto* message = reinterpret_cast<FD2D::Backplate::BroadcastMessage*>(msg.lParam);
-            lastCommand = message ? message->message : 0;
-            delete message;
             ++count;
         }
         return count;
@@ -106,27 +103,25 @@ FIC2_TEST(IdleRendering_FolderChunksPostOneMessagePerBatch)
     FIC2_REQUIRE(window != nullptr);
     FolderEnumerationService service(std::make_shared<FilesystemFolderEnumerationBackend>(), 1);
     FolderLoadLane lane = service.CreateLane();
-    lane.SetNotifyWindow(window);
+    lane.SetWakeup(std::make_shared<FolderListingWakeup>(window));
 
     // Several chunks before the UI drains: one message.
     for (int i = 0; i < 5; ++i)
     {
         lane.Post(AsyncThumbListChunkPayload {});
     }
-    UINT command = 0;
-    FIC2_CHECK(DrainBroadcasts(window, command) == 1);
-    FIC2_CHECK(command == WM_APP + 0x7A13);   // CMD_FIC2_ASYNC_THUMB_READY
+    FIC2_CHECK(DrainWakeups(window) == 1);
     FIC2_CHECK(lane.HasChunks());
 
     // The UI drains; the next chunk is announced again.
     FIC2_CHECK(lane.Dequeue().size() == 5);
     lane.Post(AsyncThumbListChunkPayload {});
-    FIC2_CHECK(DrainBroadcasts(window, command) == 1);
+    FIC2_CHECK(DrainWakeups(window) == 1);
     FIC2_CHECK(lane.Dequeue().size() == 1);
     // Nothing queued: no message.
     FIC2_CHECK(lane.Dequeue().empty());
     FIC2_CHECK(!lane.HasChunks());
-    FIC2_CHECK(DrainBroadcasts(window, command) == 0);
+    FIC2_CHECK(DrainWakeups(window) == 0);
 
     lane.Close();
     DestroyWindow(window);

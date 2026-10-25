@@ -106,8 +106,11 @@ namespace
         {
             FIC2_TIMER_START(t_attach);
             Wnd::OnAttached(backplate);
-            // Folder listing chunks are announced to this window by message.
-            m_folderLane.SetNotifyWindow(backplate.Window());
+            // Folder listing chunks wake this window (payload-free message).
+            if (auto* folderBp = dynamic_cast<Ficture2Backplate*>(&backplate))
+            {
+                m_folderLane.SetWakeup(folderBp->FolderListingWakeupTarget());
+            }
             FIC2_LOG_STEP(t_attach, "[OnAttached] Wnd::OnAttached (recursive child attach + layout)");
 
             RegisterWithEventBus();
@@ -1079,7 +1082,7 @@ namespace
         static constexpr ULONGLONG kKeyRepeatMinIntervalMs = 60;
         static constexpr UINT CMD_FIC2_DEFERRED_ACTION = WM_APP + 0x7A11;
         static constexpr UINT CMD_FIC2_IPC_OPEN = WM_APP + 0x7A12;
-        static constexpr UINT CMD_FIC2_ASYNC_THUMB_READY = WM_APP + 0x7A13;
+        static constexpr UINT CMD_FIC2_ASYNC_THUMB_READY = kFolderListingReadyMessage;
 
         enum class DeferredActionKind
         {

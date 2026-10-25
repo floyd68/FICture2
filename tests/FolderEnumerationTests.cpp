@@ -7,6 +7,7 @@
 #include <shellapi.h>
 
 #include <algorithm>
+#include <atomic>
 #include <chrono>
 #include <condition_variable>
 #include <filesystem>
@@ -247,56 +248,222 @@ FIC2_TEST(FolderEnumeration_LaneDropsSupersededAndClosedChunks)
     FIC2_CHECK(!lane.HasChunks());
 }
 
-FIC2_TEST(FolderEnumeration_FilesystemBackendStopsBetweenEntries)
+namespace
+{
+    // The production backend with each directory operation counted; `stopAt`
+    // requests stop from inside one operation (a cancel arriving while it blocks).
+    class CountingFilesystemBackend final : public FilesystemFolderEnumerationBackend
+    {
+    public:
+        enum class Op { None, IsDirectory, OpenDirectory };
+
+        int isDirectoryCalls { 0 };
+        int openCalls { 0 };
+        int advanceCalls { 0 };
+        int archiveCalls { 0 };
+        Op stopAt { Op::None };
+        std::stop_source* stop { nullptr };
+
+    protected:
+        bool IsDirectory(const std::filesystem::path& path) override
+        {
+            ++isDirectoryCalls;
+            StopIf(Op::IsDirectory);
+            return FilesystemFolderEnumerationBackend::IsDirectory(path);
+        }
+
+        void OpenDirectory(const std::filesystem::path& path, std::filesystem::directory_iterator& it, std::error_code& ec) override
+        {
+            ++openCalls;
+            StopIf(Op::OpenDirectory);
+            FilesystemFolderEnumerationBackend::OpenDirectory(path, it, ec);
+        }
+
+        void Advance(std::filesystem::directory_iterator& it, std::error_code& ec) override
+        {
+            ++advanceCalls;
+            FilesystemFolderEnumerationBackend::Advance(it, ec);
+        }
+
+        std::vector<Floar::VirtualFileEntry> ListArchive(const Floar::VirtualPath& folder) override
+        {
+            ++archiveCalls;
+            return FilesystemFolderEnumerationBackend::ListArchive(folder);
+        }
+
+    private:
+        void StopIf(Op op)
+        {
+            if (stopAt == op && stop != nullptr)
+            {
+                stop->request_stop();
+            }
+        }
+    };
+}
+
+FIC2_TEST(FolderEnumeration_FilesystemBackendStartsNoOperationAfterStop)
 {
     const std::filesystem::path dir = MakeTempDir(L"enum");
     for (int i = 0; i < 600; ++i)
     {
         std::ofstream(dir / (L"f" + std::to_wstring(i) + L".png")).put('x');
     }
-    FilesystemFolderEnumerationBackend backend {};
-
-    // Full listing: 256-entry batches, the last one completed.
+    const Floar::VirtualPath folder(dir);
     size_t total = 0;
     int calls = 0;
     bool completed = false;
-    backend.Enumerate(Floar::VirtualPath(dir), std::stop_token {}, [&](std::vector<Floar::VirtualFileEntry>&& batch, bool done)
+    const auto reset = [&] { total = 0; calls = 0; completed = false; };
+    const auto count = [&](std::vector<Floar::VirtualFileEntry>&& batch, bool done)
     {
         total += batch.size();
         ++calls;
         completed = done;
-    });
-    FIC2_CHECK(total == 600);
-    FIC2_CHECK(calls == 3);
-    FIC2_CHECK(completed);
+    };
 
-    // Stop requested during the first batch: no further entries are read.
-    std::stop_source stop {};
-    total = 0;
-    calls = 0;
-    completed = false;
-    backend.Enumerate(Floar::VirtualPath(dir), stop.get_token(), [&](std::vector<Floar::VirtualFileEntry>&& batch, bool done)
+    // Full listing: 256-entry batches, the last one completed; one advance per entry.
     {
-        total += batch.size();
-        ++calls;
-        completed = done;
+        CountingFilesystemBackend backend {};
+        backend.Enumerate(folder, std::stop_token {}, count);
+        FIC2_CHECK(total == 600 && calls == 3 && completed);
+        FIC2_CHECK(backend.isDirectoryCalls == 1 && backend.openCalls == 1);
+        FIC2_CHECK(backend.advanceCalls == 600);
+    }
+
+    // Stop requested while the first batch is delivered: the iterator is not
+    // advanced again (that read could block on a network share).
+    {
+        reset();
+        std::stop_source stop {};
+        CountingFilesystemBackend backend {};
+        backend.Enumerate(folder, stop.get_token(), [&](std::vector<Floar::VirtualFileEntry>&& batch, bool done)
+        {
+            count(std::move(batch), done);
+            stop.request_stop();
+        });
+        FIC2_CHECK(calls == 1 && total == 256 && !completed);
+        FIC2_CHECK(backend.advanceCalls == 255);   // after entries 1..255, not after the 256th
+    }
+
+    // Stop already requested: no directory or archive operation starts.
+    {
+        reset();
+        std::stop_source stop {};
         stop.request_stop();
-    });
-    FIC2_CHECK(calls == 1);
-    FIC2_CHECK(total == 256);
-    FIC2_CHECK(!completed);
+        CountingFilesystemBackend backend {};
+        backend.Enumerate(folder, stop.get_token(), count);
+        backend.Enumerate(Floar::VirtualPath(dir / L"pack.zip"), stop.get_token(), count);
+        FIC2_CHECK(calls == 0);
+        FIC2_CHECK(backend.isDirectoryCalls == 0 && backend.openCalls == 0 && backend.advanceCalls == 0 && backend.archiveCalls == 0);
+    }
+
+    // Stop arriving during the directory check, then during the open: the
+    // next operation never starts and nothing is delivered.
+    {
+        reset();
+        std::stop_source stop {};
+        CountingFilesystemBackend backend {};
+        backend.stop = &stop;
+        backend.stopAt = CountingFilesystemBackend::Op::IsDirectory;
+        backend.Enumerate(folder, stop.get_token(), count);
+        FIC2_CHECK(backend.isDirectoryCalls == 1 && backend.openCalls == 0 && calls == 0);
+    }
+    {
+        reset();
+        std::stop_source stop {};
+        CountingFilesystemBackend backend {};
+        backend.stop = &stop;
+        backend.stopAt = CountingFilesystemBackend::Op::OpenDirectory;
+        backend.Enumerate(folder, stop.get_token(), count);
+        FIC2_CHECK(backend.openCalls == 1 && backend.advanceCalls == 0 && calls == 0);
+    }
 
     // A missing folder completes empty.
-    calls = 0;
-    backend.Enumerate(Floar::VirtualPath(dir / L"missing"), std::stop_token {}, [&](std::vector<Floar::VirtualFileEntry>&& batch, bool done)
     {
-        ++calls;
-        completed = done && batch.empty();
-    });
-    FIC2_CHECK(calls == 1 && completed);
+        reset();
+        CountingFilesystemBackend backend {};
+        backend.Enumerate(Floar::VirtualPath(dir / L"missing"), std::stop_token {}, count);
+        FIC2_CHECK(calls == 1 && completed && total == 0);
+        FIC2_CHECK(backend.openCalls == 0);
+    }
 
     std::error_code ec;
     std::filesystem::remove_all(dir, ec);
+}
+
+namespace
+{
+    int DrainWakeups(HWND window)
+    {
+        int count = 0;
+        MSG msg {};
+        while (PeekMessageW(&msg, window, kFolderListingReadyMessage, kFolderListingReadyMessage, PM_REMOVE))
+        {
+            FIC2_CHECK(msg.wParam == 0 && msg.lParam == 0);   // no payload to own
+            ++count;
+        }
+        return count;
+    }
+
+    // Streams one-entry chunks until stopped.
+    class StreamingBackend final : public FolderEnumerationBackend
+    {
+    public:
+        std::atomic<int> chunks { 0 };
+
+        void Enumerate(const Floar::VirtualPath& folder, std::stop_token stop, const ChunkSink& sink) override
+        {
+            while (!stop.stop_requested())
+            {
+                std::vector<Floar::VirtualFileEntry> entries {};
+                entries.emplace_back(Floar::VirtualPath(folder.hostPath / L"a.png"), false, 0, 0);
+                sink(std::move(entries), false);
+                ++chunks;
+            }
+        }
+    };
+}
+
+FIC2_TEST(FolderEnumeration_NoWakeupAfterCloseOrWindowDestroy)
+{
+    HWND window = CreateWindowExW(0, L"STATIC", L"", 0, 0, 0, 0, 0, HWND_MESSAGE, nullptr, nullptr, nullptr);
+    FIC2_REQUIRE(window != nullptr);
+    auto wakeup = std::make_shared<FolderListingWakeup>(window);
+    auto backend = std::make_shared<StreamingBackend>();
+    FolderEnumerationService service(backend, 1);
+
+    // A worker keeps delivering while the UI drains; closing the lane races it.
+    FolderLoadLane lane = service.CreateLane();
+    lane.SetWakeup(wakeup);
+    lane.Start(Request(1, L"stream"));
+    for (int i = 0; i < 200 && backend->chunks < 1000; ++i)
+    {
+        (void)DrainWakeups(window);
+        (void)lane.Dequeue();
+        std::this_thread::sleep_for(1ms);
+    }
+    FIC2_CHECK(backend->chunks > 0);
+    lane.Close();
+    (void)DrainWakeups(window);   // posted before Close returned
+    std::this_thread::sleep_for(30ms);
+    FIC2_CHECK(DrainWakeups(window) == 0);
+
+    // Window destruction while a wakeup is pending: the window disconnects the
+    // wakeup; later chunks still queue but post nothing, and nothing leaks.
+    FolderLoadLane second = service.CreateLane();
+    second.SetWakeup(wakeup);
+    AsyncThumbListChunkPayload chunk {};
+    second.Post(std::move(chunk));
+    FIC2_CHECK(DrainWakeups(window) == 1);
+    wakeup->Disconnect();
+    DestroyWindow(window);
+    (void)second.Dequeue();
+    second.Post(AsyncThumbListChunkPayload {});
+    FIC2_CHECK(second.HasChunks());
+    FIC2_CHECK(!wakeup->Post());
+    second.Close();
+
+    FIC2_CHECK(service.Shutdown(5s));
 }
 
 // Child: a worker stays blocked past the shutdown bound; the forced path must
