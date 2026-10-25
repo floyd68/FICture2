@@ -66,6 +66,7 @@ protected:
     virtual bool IsDirectory(const std::filesystem::path& path);
     virtual void OpenDirectory(const std::filesystem::path& path, std::filesystem::directory_iterator& it, std::error_code& ec);
     virtual void Advance(std::filesystem::directory_iterator& it, std::error_code& ec);
+    virtual bool EntryIsDirectory(const std::filesystem::directory_entry& entry, std::error_code& ec);
     virtual std::vector<Floar::VirtualFileEntry> ListArchive(const Floar::VirtualPath& folder);
 };
 

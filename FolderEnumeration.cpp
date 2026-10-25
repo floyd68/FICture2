@@ -216,6 +216,11 @@ void FilesystemFolderEnumerationBackend::Advance(std::filesystem::directory_iter
     it.increment(ec);
 }
 
+bool FilesystemFolderEnumerationBackend::EntryIsDirectory(const std::filesystem::directory_entry& entry, std::error_code& ec)
+{
+    return entry.is_directory(ec);
+}
+
 std::vector<Floar::VirtualFileEntry> FilesystemFolderEnumerationBackend::ListArchive(const Floar::VirtualPath& folder)
 {
     return Floar::VirtualFileSystem::ListDirectory(folder);
@@ -276,11 +281,18 @@ void FilesystemFolderEnumerationBackend::Enumerate(
     bool skipCurrent = false;  // the last advance failed
     while (it != end)
     {
+        // Checked before the entry's metadata query (it may hit the file
+        // system for reparse points): a stop that arrived while the previous
+        // advance blocked must not start another call.
+        if (stop.stop_requested())
+        {
+            return;
+        }
         if (!skipCurrent)
         {
             const std::filesystem::directory_entry& entry = *it;
             std::error_code typeEc;
-            const bool isDir = entry.is_directory(typeEc);
+            const bool isDir = EntryIsDirectory(entry, typeEc);
             if (!typeEc)
             {
                 batch.emplace_back(Floar::VirtualPath(entry.path()), isDir, 0, 0);

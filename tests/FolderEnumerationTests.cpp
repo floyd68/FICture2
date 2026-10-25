@@ -255,13 +255,15 @@ namespace
     class CountingFilesystemBackend final : public FilesystemFolderEnumerationBackend
     {
     public:
-        enum class Op { None, IsDirectory, OpenDirectory };
+        enum class Op { None, IsDirectory, OpenDirectory, Advance };
 
         int isDirectoryCalls { 0 };
         int openCalls { 0 };
         int advanceCalls { 0 };
+        int entryQueryCalls { 0 };
         int archiveCalls { 0 };
         Op stopAt { Op::None };
+        int stopAtAdvance { 1 };  // with Op::Advance: the advance that requests stop
         std::stop_source* stop { nullptr };
 
     protected:
@@ -282,7 +284,17 @@ namespace
         void Advance(std::filesystem::directory_iterator& it, std::error_code& ec) override
         {
             ++advanceCalls;
+            if (advanceCalls == stopAtAdvance)
+            {
+                StopIf(Op::Advance);
+            }
             FilesystemFolderEnumerationBackend::Advance(it, ec);
+        }
+
+        bool EntryIsDirectory(const std::filesystem::directory_entry& entry, std::error_code& ec) override
+        {
+            ++entryQueryCalls;
+            return FilesystemFolderEnumerationBackend::EntryIsDirectory(entry, ec);
         }
 
         std::vector<Floar::VirtualFileEntry> ListArchive(const Floar::VirtualPath& folder) override
@@ -328,6 +340,22 @@ FIC2_TEST(FolderEnumeration_FilesystemBackendStartsNoOperationAfterStop)
         FIC2_CHECK(total == 600 && calls == 3 && completed);
         FIC2_CHECK(backend.isDirectoryCalls == 1 && backend.openCalls == 1);
         FIC2_CHECK(backend.advanceCalls == 600);
+        FIC2_CHECK(backend.entryQueryCalls == 600);
+    }
+
+    // Stop arriving while an advance blocks (the 10th): the entry it lands on
+    // is not queried, and nothing more is read or delivered.
+    {
+        reset();
+        std::stop_source stop {};
+        CountingFilesystemBackend backend {};
+        backend.stop = &stop;
+        backend.stopAt = CountingFilesystemBackend::Op::Advance;
+        backend.stopAtAdvance = 10;
+        backend.Enumerate(folder, stop.get_token(), count);
+        FIC2_CHECK(backend.advanceCalls == 10);
+        FIC2_CHECK(backend.entryQueryCalls == 10);   // entries 1..10, not the 11th
+        FIC2_CHECK(calls == 0);
     }
 
     // Stop requested while the first batch is delivered: the iterator is not
