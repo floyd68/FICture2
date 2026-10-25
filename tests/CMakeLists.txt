@@ -56,6 +56,9 @@ target_include_directories(FICture2Tests PRIVATE
     ${PROJECT_SOURCE_DIR}/ImageCore
     ${PROJECT_BINARY_DIR}   # generated Version.h
     ${PROJECT_SOURCE_DIR}/external/spdlog/include
+    # Floar's ZIP fixture writer (TestArchives.h) and the libarchive writer it uses.
+    ${PROJECT_SOURCE_DIR}/Floar/tests
+    ${PROJECT_SOURCE_DIR}/Floar/external/libarchive/libarchive
 )
 
 target_compile_definitions(FICture2Tests PRIVATE
@@ -63,6 +66,7 @@ target_compile_definitions(FICture2Tests PRIVATE
     SPDLOG_WCHAR_FILENAMES
     UNICODE
     _UNICODE
+    LIBARCHIVE_STATIC
     # The app's build-flavor and feature switches, for the app sources above.
     $<TARGET_PROPERTY:FICture2,COMPILE_DEFINITIONS>
 )

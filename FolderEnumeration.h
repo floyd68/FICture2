@@ -53,9 +53,10 @@ public:
     virtual void Enumerate(const Floar::VirtualPath& folder, std::stop_token stop, const ChunkSink& sink) = 0;
 };
 
-// Production backend: the filesystem and Floar archives (one snapshot
-// listing). Stop is checked before every directory operation, so no new
-// (possibly blocking) call starts once stop is requested.
+// Production backend: the filesystem and Floar archives. Stop is checked
+// before every directory operation, so no new (possibly blocking) call starts
+// once stop is requested; archive listings stop between entries, and an
+// archive scan in progress stops between headers (Floar EnumerateDirectory).
 class FilesystemFolderEnumerationBackend : public FolderEnumerationBackend
 {
 public:
@@ -67,7 +68,11 @@ protected:
     virtual void OpenDirectory(const std::filesystem::path& path, std::filesystem::directory_iterator& it, std::error_code& ec);
     virtual void Advance(std::filesystem::directory_iterator& it, std::error_code& ec);
     virtual bool EntryIsDirectory(const std::filesystem::directory_entry& entry, std::error_code& ec);
-    virtual std::vector<Floar::VirtualFileEntry> ListArchive(const Floar::VirtualPath& folder);
+    // Streams an archive (folder) listing; false once stopped.
+    virtual bool EnumerateArchive(
+        const Floar::VirtualPath& folder,
+        std::stop_token stop,
+        const std::function<void(Floar::VirtualFileEntry&&)>& onEntry);
 };
 
 // Message (no payload) that wakes a window when folder-listing chunks arrive;
