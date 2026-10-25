@@ -4,6 +4,7 @@
 #include "Resource.h"
 #include "ImageBrowserAssets.h"
 #include "ThumbTileStyle.h"
+#include "SelectionStyle.h"
 #include "FD2D/Backplate.h"
 #include "FD2D/Util.h"
 
@@ -270,10 +271,9 @@ void ThumbNavTile::OnRender(ID2D1RenderTarget* target)
 
     if (m_selected)
     {
-        // Breathe animation: modulate alpha + thickness + slight expand.
-        unsigned long long nowMs = GetTickCount64();
-        float t = static_cast<float>((nowMs - m_selectedStartMs) % 1800) / 1800.0f;
-        float s = 0.5f + 0.5f * sinf(t * 6.2831853f);
+        // Breathe animation (bounded): modulate alpha + thickness + slight expand.
+        bool breatheRunning = false;
+        const float s = FD2D::SelectionBreathe(GetTickCount64() - m_selectedStartMs, 1800, 3, breatheRunning);
         float a = 0.52f + (0.20f * s);
         stroke = D2D1::ColorF(1.0f, 0.60f, 0.24f, a);
 
@@ -286,7 +286,7 @@ void ThumbNavTile::OnRender(ID2D1RenderTarget* target)
 
         strokeThickness = 1.8f + (1.0f * s);
 
-        if (BackplateRef() != nullptr)
+        if (breatheRunning && BackplateRef() != nullptr)
         {
             BackplateRef()->RequestAnimationFrame();
         }

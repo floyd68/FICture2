@@ -23,6 +23,9 @@ class ImageBrowserAsyncThumbLoader
 {
 public:
     static void RegisterBrowser(const std::wstring& browserName, HANDLE readyEvent);
+    // Window that receives CMD_FIC2_ASYNC_THUMB_READY (as an FD2D broadcast) when
+    // chunks arrive for `browserName`; one message per batch until it is drained.
+    static void SetBrowserWindow(const std::wstring& browserName, HWND window);
     static void UnregisterBrowser(const std::wstring& browserName);
     static void EnqueueChunk(const std::wstring& browserName, AsyncThumbListChunkPayload&& payload);
     static std::deque<AsyncThumbListChunkPayload> DequeueChunks(const std::wstring& browserName, HANDLE readyEvent);

@@ -27,6 +27,9 @@ public:
     // Called on the UI thread whenever the presented image path changes: the
     // path of a newly presented image, or "" when the content is cleared/lost.
     using PresentedPathHandler = std::function<void(const std::wstring&)>;
+    // Called on the UI thread when anything shown in the image information
+    // (loaded metadata, mip, alpha, channel, sampling, zoom %, rotation) changes.
+    using InfoChangedHandler = std::function<void()>;
 
     ImageBrowserMainImage();
     explicit ImageBrowserMainImage(const std::wstring& name);
@@ -64,6 +67,7 @@ public:
     void SetViewTransform(const ImageViewTransform& vt, bool notify = true);
     void SetOnViewChanged(ViewChangedHandler handler);
     void SetOnPresentedPathChanged(PresentedPathHandler handler);
+    void SetOnInfoChanged(InfoChangedHandler handler);
 
     void RotateCW();
     void RotateCCW();
@@ -195,6 +199,11 @@ private:
 
     ViewChangedHandler m_onViewChanged {};
     PresentedPathHandler m_onPresentedPathChanged {};
+    InfoChangedHandler m_onInfoChanged {};
+    std::wstring m_lastInfoKey {};
+    // Fires m_onInfoChanged when the information-relevant state differs from the
+    // last notification (cheap; called wherever that state may change).
+    void NotifyInfoIfChanged();
 
     // Single place where the presented path changes; notifies the owner.
     void SetLoadedFilePath(const std::wstring& path);

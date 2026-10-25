@@ -6,6 +6,7 @@ add_executable(FICture2Tests
     TestMain.cpp
     AppLogTests.cpp
     GpuPresentationTests.cpp
+    IdleRenderingTests.cpp
     MainImagePresentationTests.cpp
     ImageAsyncBindingTests.cpp
     ImageBrowserPathStateTests.cpp
@@ -18,6 +19,7 @@ add_executable(FICture2Tests
     ${PROJECT_SOURCE_DIR}/ImageBrowserAssets.cpp
     ${PROJECT_SOURCE_DIR}/ThumbImageTile.cpp
     ${PROJECT_SOURCE_DIR}/ThumbNavTile.cpp
+    ${PROJECT_SOURCE_DIR}/ImageBrowserAsyncThumbLoader.cpp
     ${PROJECT_SOURCE_DIR}/ImageAsyncBinding.cpp
 )
 
@@ -58,6 +60,7 @@ add_test(NAME FICture2.ImageAsyncBinding COMMAND FICture2Tests ImageAsyncBinding
 add_test(NAME FICture2.PathState COMMAND FICture2Tests PathState_)
 add_test(NAME FICture2.GpuPresentation COMMAND FICture2Tests GpuPresentation_)
 add_test(NAME FICture2.MainImage COMMAND FICture2Tests MainImage_)
+add_test(NAME FICture2.IdleRendering COMMAND FICture2Tests IdleRendering_)
 # AppLog::Init runs once per process, so each Init scenario gets its own entry.
 add_test(NAME FICture2.AppLogText COMMAND FICture2Tests AppLogText_)
 add_test(NAME FICture2.AppLogLazy COMMAND FICture2Tests AppLogLazy_)
