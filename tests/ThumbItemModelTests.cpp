@@ -124,6 +124,28 @@ FIC2_TEST(ThumbItemModel_NavItemsHiddenOrAtRoot)
     FIC2_CHECK(hidden.Merge({ File(L"A.png") }) == 1);
 }
 
+FIC2_TEST(ThumbItemModel_AspectsSurviveASameFolderRebuild)
+{
+    // A rebuild of the same folder (for example toggling nav items) reuses the
+    // tiles, which do not report their aspect again: the model keeps it.
+    ThumbItemModel model;
+    model.Reset(kFolder, true, &IsTestImage);
+    (void)model.Merge(Listing());
+    const std::wstring key = ThumbItemModel::LookupKeyFor(File(L"b.png").path);
+    FIC2_CHECK(model.SetAspect(key, 2.0f));
+    FIC2_CHECK(!model.SetAspect(key, 2.0f));   // unchanged
+    FIC2_CHECK(!model.SetAspect(key, 0.0f));   // not an aspect
+
+    model.Reset(Floar::VirtualPath(std::filesystem::path(L"c:/pictures/trip")), false, &IsTestImage);   // same folder, other spelling
+    FIC2_CHECK(model.AspectOf(key) == 2.0f);
+    (void)model.Merge(Listing());
+    FIC2_CHECK(model.AspectOf(key) == 2.0f);
+
+    // Another folder starts without aspects.
+    model.Reset(Floar::VirtualPath(std::filesystem::path(L"C:\\Pictures\\Other")), true, &IsTestImage);
+    FIC2_CHECK(model.AspectOf(key) == 0.0f);
+}
+
 FIC2_TEST(ThumbItemModel_ImageExtensionLookup)
 {
     // Direct registry lookup, case-insensitive; no extension, unsupported.

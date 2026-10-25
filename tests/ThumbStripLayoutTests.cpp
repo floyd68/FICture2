@@ -87,6 +87,18 @@ FIC2_TEST(ThumbStripLayout_ImageWidthEstimate)
     FIC2_CHECK(Near(ThumbStripLayout::ImageExtent(100.0f, 0.5f, 2.0f), 54.0f));
 }
 
+FIC2_TEST(ThumbStripLayout_RebuildCentersOnlyANewSelection)
+{
+    // The final progressive update re-applies the selection the user already
+    // had: no re-centering, so a strip scrolled away keeps its anchor.
+    FIC2_CHECK(!ThumbStripLayout::CenterAfterRebuild(L"c:\\a\\p05.png", L"c:\\a\\p05.png", true));
+    // A different item, or one resolved for the first time, is centered.
+    FIC2_CHECK(ThumbStripLayout::CenterAfterRebuild(L"c:\\a\\p05.png", L"c:\\a\\p06.png", true));
+    FIC2_CHECK(ThumbStripLayout::CenterAfterRebuild(L"", L"c:\\a\\p05.png", true));
+    // Nothing to center in an empty list.
+    FIC2_CHECK(!ThumbStripLayout::CenterAfterRebuild(L"", L"", false));
+}
+
 FIC2_TEST(ThumbStripLayout_AnchorKeepsTheVisibleItemInPlace)
 {
     ThumbStripLayout layout = Sample();

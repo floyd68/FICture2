@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstddef>
+#include <string>
 #include <utility>
 #include <vector>
 
@@ -41,6 +42,14 @@ public:
     Anchor AnchorFor(float scroll, float viewportWidth, size_t selected) const;
     // The scroll offset that puts the anchor back at its viewport offset.
     float ScrollKeeping(const Anchor& anchor) const;
+
+    // After the list is rebuilt: center the selection only when it is a
+    // different (or newly resolved) item. An unchanged selection - including a
+    // final progressive update that re-applies it - keeps the captured anchor.
+    static bool CenterAfterRebuild(const std::wstring& previousSelectedKey, const std::wstring& selectedKey, bool hasItems)
+    {
+        return hasItems && selectedKey != previousSelectedKey;
+    }
 
     static float ImageExtent(float rowHeight, float aspect, float margin)
     {

@@ -2093,7 +2093,7 @@ namespace
             context.selectedFocus = &m_selectedFocus;
             context.ensureSelectionVisible = [this]()
             {
-                if (m_thumbPane == nullptr || m_selectedIndex >= m_items.size())
+                if (m_thumbPane == nullptr || m_selectedIndex >= m_items.size() || m_thumbKeepScrollOnSelect)
                 {
                     return;
                 }
@@ -2564,7 +2564,9 @@ namespace
             RebuildThumbLayout();
             // The anchor survives a progressive merge by key; a different (or
             // newly resolved) selection is centered instead.
-            if (result.hasItems && ThumbItemKey(result.selectIndex) != previousSelectedKey)
+            const bool centerSelection = ThumbStripLayout::CenterAfterRebuild(
+                previousSelectedKey, ThumbItemKey(result.selectIndex), result.hasItems);
+            if (centerSelection)
             {
                 m_thumbCenterPending = true;
             }
@@ -2587,7 +2589,11 @@ namespace
             }
             else if (applySelection)
             {
+                // Re-applying the same selection (the final progressive update)
+                // must not re-center: the user may have scrolled away.
+                m_thumbKeepScrollOnSelect = !centerSelection;
                 SelectItemByIndex(result.selectIndex);
+                m_thumbKeepScrollOnSelect = false;
             }
             else
             {
@@ -3119,6 +3125,7 @@ namespace
         ThumbScrollAnchor m_thumbAnchor {};
         bool m_thumbCenterPending { false };
         bool m_thumbArrangePending { false };
+        bool m_thumbKeepScrollOnSelect { false };   // see RebuildThumbListImmediate
         float m_thumbLastViewportWidth { 0.0f };
         bool m_progressiveUiDirty { false };
         bool m_progressiveLoadCompleted { false };

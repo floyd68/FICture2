@@ -36,7 +36,10 @@ public:
     using ImageFilter = std::function<bool(const Floar::VirtualPath&)>;
 
     // Starts an empty listing of `folder`. `isImage` decides which files become
-    // image items (archive files are folders, other files are dropped).
+    // image items (archive files are folders, other files are dropped). Known
+    // aspects are kept when `folder` is the folder already listed: a rebuild of
+    // the same folder reuses its tiles, which report an aspect only when their
+    // bitmap changes.
     void Reset(const Floar::VirtualPath& folder, bool showNavItems, ImageFilter isImage);
 
     // Classifies `entries`, drops duplicates and unsupported files, and merges
@@ -62,7 +65,8 @@ public:
     static std::wstring LookupKeyFor(const Floar::VirtualPath& path);
 
     // Decoded aspect ratio (width / height) of an image, by lookup key; 0 while
-    // unknown. Kept across merges until the next Reset. Returns true if changed.
+    // unknown. Kept across merges, and across a Reset of the same folder.
+    // Returns true if changed.
     bool SetAspect(const std::wstring& lookupKey, float aspect);
     float AspectOf(const std::wstring& lookupKey) const;
 

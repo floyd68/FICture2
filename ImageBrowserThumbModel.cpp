@@ -51,6 +51,10 @@ float ThumbItemModel::AspectOf(const std::wstring& lookupKey) const
 
 void ThumbItemModel::Reset(const Floar::VirtualPath& folder, bool showNavItems, ImageFilter isImage)
 {
+    if (!(folder == m_folder))
+    {
+        m_aspectByKey.clear();
+    }
     m_folder = folder;
     m_showNavItems = showNavItems;
     m_isImage = std::move(isImage);
@@ -59,7 +63,6 @@ void ThumbItemModel::Reset(const Floar::VirtualPath& folder, bool showNavItems, 
     m_images.clear();
     m_folderKeys.clear();
     m_imageKeys.clear();
-    m_aspectByKey.clear();
     m_nextArrival = 0;
     m_listed = 0;
 
