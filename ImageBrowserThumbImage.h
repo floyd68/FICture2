@@ -35,6 +35,10 @@ public:
 
     void SetOnClick(ClickHandler handler);
     void SetLoadingSpinnerEnabled(bool enabled);
+    // Decode priority of this thumbnail: Prefetch until the strip reports it
+    // on screen (Visible). Applied to a request in flight and to later ones.
+    void SetLoadPriority(ImageCore::RequestPriority priority);
+    ImageCore::RequestPriority LoadPriority() const { return m_loadPriority; }
 
     D2D1_SIZE_F GetBitmapSize() const;
 
@@ -55,6 +59,7 @@ private:
 
     std::shared_ptr<FD2D::Image> m_texture {};
     std::shared_ptr<FD2D::Spinner> m_spinner {};
+    ImageCore::RequestPriority m_loadPriority { ImageCore::RequestPriority::Prefetch };
     ImageAsyncBinding m_binding {};
     ImageCore::ImageRequest m_request {};
 

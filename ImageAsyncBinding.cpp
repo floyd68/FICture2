@@ -12,13 +12,24 @@ namespace
 
     ImageCore::ImageHandle RequestDecode(
         const ImageCore::ImageRequest& request,
-        ImageCore::DecodedImageLoadCallback callback)
+        ImageCore::DecodedImageLoadCallback callback,
+        ImageCore::RequestPriority priority)
     {
         if (IImageDecodeService* service = g_decodeServiceOverride.load())
         {
-            return service->RequestDecoded(request, std::move(callback));
+            return service->RequestDecoded(request, std::move(callback), priority);
         }
-        return ImageCore::ImageLoader::Instance().RequestDecoded(request, std::move(callback));
+        return ImageCore::ImageLoader::Instance().RequestDecoded(request, std::move(callback), priority);
+    }
+
+    void SetDecodePriority(ImageCore::ImageHandle handle, ImageCore::RequestPriority priority)
+    {
+        if (IImageDecodeService* service = g_decodeServiceOverride.load())
+        {
+            service->SetPriority(handle, priority);
+            return;
+        }
+        ImageCore::ImageLoader::Instance().SetPriority(handle, priority);
     }
 
     void CancelDecode(ImageCore::ImageHandle handle)
@@ -178,6 +189,34 @@ void ImageAsyncBinding::RequestLoad(
     const ImageCore::ImageRequest& request,
     const std::wstring& normalizedPath)
 {
+    RequestLoad(request, normalizedPath, ImageCore::DefaultPriority(request.purpose));
+}
+
+void ImageAsyncBinding::SetPriority(ImageCore::RequestPriority priority)
+{
+    ImageCore::ImageHandle handle = 0;
+    {
+        std::lock_guard<std::mutex> lock(m_state->mutex);
+        if (m_state->phase != Phase::Loading || m_state->priority == priority)
+        {
+            return;
+        }
+        m_state->priority = priority;
+        handle = m_state->handle;
+    }
+    // A handle not stored yet (RequestDecode still returning) keeps the
+    // dispatch priority; RequestLoad re-applies the current one once stored.
+    if (handle != 0)
+    {
+        SetDecodePriority(handle, priority);
+    }
+}
+
+void ImageAsyncBinding::RequestLoad(
+    const ImageCore::ImageRequest& request,
+    const std::wstring& normalizedPath,
+    ImageCore::RequestPriority priority)
+{
     uint64_t gen = 0;
     ImageCore::ImageHandle oldHandle = 0;
     {
@@ -186,6 +225,7 @@ void ImageAsyncBinding::RequestLoad(
         gen = ++m_state->generation;
         m_state->phase = Phase::Loading;
         m_state->requestPath = normalizedPath;
+        m_state->priority = priority;
     }
 
     if (oldHandle != 0)
@@ -201,10 +241,13 @@ void ImageAsyncBinding::RequestLoad(
         [state, gen](HRESULT hr, ImageCore::DecodedImage image)
         {
             OnDecodeComplete(state, gen, hr, std::move(image));
-        });
+        },
+        priority);
 
     bool cancelNewHandle = false;
     bool rejected = false;
+    bool reapplyPriority = false;
+    ImageCore::RequestPriority currentPriority = priority;
     {
         std::lock_guard<std::mutex> lock(m_state->mutex);
         if (gen != m_state->generation)
@@ -217,6 +260,9 @@ void ImageAsyncBinding::RequestLoad(
             if (handle != 0)
             {
                 m_state->handle = handle;
+                // SetPriority while dispatching could not reach the handle yet.
+                currentPriority = m_state->priority;
+                reapplyPriority = (currentPriority != priority);
             }
             else
             {
@@ -234,6 +280,10 @@ void ImageAsyncBinding::RequestLoad(
     if (cancelNewHandle)
     {
         CancelDecode(handle);
+    }
+    if (reapplyPriority)
+    {
+        SetDecodePriority(handle, currentPriority);
     }
     if (rejected)
     {

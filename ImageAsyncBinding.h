@@ -54,8 +54,11 @@ public:
 
     virtual ImageCore::ImageHandle RequestDecoded(
         const ImageCore::ImageRequest& request,
-        ImageCore::DecodedImageLoadCallback callback) = 0;
+        ImageCore::DecodedImageLoadCallback callback,
+        ImageCore::RequestPriority priority) = 0;
     virtual void Cancel(ImageCore::ImageHandle handle) = 0;
+    // Promotes or demotes a queued request (ImageCore::ImageLoader::SetPriority).
+    virtual void SetPriority(ImageCore::ImageHandle handle, ImageCore::RequestPriority priority) = 0;
 };
 
 // Global registry so app shutdown can invalidate all in-flight bindings
@@ -100,6 +103,7 @@ struct ImageAsyncBindingState
     Phase phase { Phase::Idle };
     uint64_t generation { 0 };          // bumped by every request and invalidation
     ImageCore::ImageHandle handle { 0 }; // in-flight handle of `generation`, 0 when none
+    ImageCore::RequestPriority priority { ImageCore::RequestPriority::Visible };  // of `generation`
     std::wstring requestPath {};         // normalized path of `generation`'s request
     std::shared_ptr<FD2D::AsyncRedrawToken> redrawToken {};
 
@@ -142,9 +146,19 @@ public:
     void SetRedrawToken(std::shared_ptr<FD2D::AsyncRedrawToken> token);
 
     // Supersedes any prior request (canceling its handle), then dispatches a new
-    // decode: phase Loading. A request ImageCore rejects (handle 0, for example
-    // after shutdown) ends in Failed with E_ABORT recorded for the path.
+    // decode at `priority` (ImageCore::DefaultPriority of the purpose when
+    // omitted): phase Loading. A request ImageCore rejects (handle 0, for
+    // example after shutdown) ends in Failed with E_ABORT recorded for the path.
     void RequestLoad(const ImageCore::ImageRequest& request, const std::wstring& normalizedPath);
+    void RequestLoad(
+        const ImageCore::ImageRequest& request,
+        const std::wstring& normalizedPath,
+        ImageCore::RequestPriority priority);
+
+    // Changes the priority of the in-flight request (no-op unless Loading; the
+    // next RequestLoad takes its own priority). ImageCore applies it while the
+    // request still waits in a queue.
+    void SetPriority(ImageCore::RequestPriority priority);
 
     // Invalidates the current request: Loading/Ready -> Superseded (in-flight
     // handle canceled, staged payload dropped). The failure memo is kept.

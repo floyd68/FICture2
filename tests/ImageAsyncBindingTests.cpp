@@ -2,6 +2,7 @@
 
 #include "CommonUtil.h"
 #include "ImageAsyncBinding.h"
+#include "ImageBrowserThumbImage.h"
 #include "ImageCore/ImageCore.h"
 #include "ImageCore/ImageLoader.h"
 
@@ -18,6 +19,7 @@
 #include <mutex>
 #include <string>
 #include <thread>
+#include <utility>
 #include <vector>
 
 // ImageAsyncBinding tests.
@@ -72,6 +74,7 @@ namespace
             ImageCore::ImageHandle handle { 0 };
             ImageCore::ImageRequest request {};
             ImageCore::DecodedImageLoadCallback callback {};
+            ImageCore::RequestPriority priority { ImageCore::RequestPriority::Visible };
         };
 
         // Next RequestDecoded returns 0 without keeping the callback (ImageCore
@@ -80,10 +83,14 @@ namespace
         // Next RequestDecoded completes successfully before it returns (a worker
         // finishing before the binding stores the handle).
         bool completeBeforeReturn = false;
+        // Runs inside the next RequestDecoded, before it returns (UI work that
+        // reaches the binding while the request is being dispatched).
+        std::function<void()> duringDispatch {};
 
         ImageCore::ImageHandle RequestDecoded(
             const ImageCore::ImageRequest& request,
-            ImageCore::DecodedImageLoadCallback callback) override
+            ImageCore::DecodedImageLoadCallback callback,
+            ImageCore::RequestPriority priority) override
         {
             ImageCore::DecodedImageLoadCallback immediate;
             ImageCore::ImageHandle handle = 0;
@@ -95,7 +102,7 @@ namespace
                     return 0;
                 }
                 handle = ++m_nextHandle;
-                requests.push_back({ handle, request, callback });
+                requests.push_back({ handle, request, callback, priority });
                 if (completeBeforeReturn)
                 {
                     completeBeforeReturn = false;
@@ -106,6 +113,10 @@ namespace
             {
                 immediate(S_OK, MakeBgraImage(2, 2));
             }
+            if (auto hook = std::exchange(duringDispatch, {}))
+            {
+                hook();
+            }
             return handle;
         }
 
@@ -114,6 +125,14 @@ namespace
             std::lock_guard<std::mutex> lock(m_mutex);
             cancels.push_back(handle);
         }
+
+        void SetPriority(ImageCore::ImageHandle handle, ImageCore::RequestPriority priority) override
+        {
+            std::lock_guard<std::mutex> lock(m_mutex);
+            priorityChanges.push_back({ handle, priority });
+        }
+
+        std::vector<std::pair<ImageCore::ImageHandle, ImageCore::RequestPriority>> priorityChanges;
 
         // Delivers the completion of request `index` (as a worker thread would).
         // Safe to call from any thread.
@@ -277,6 +296,73 @@ namespace
 // -------------------------------------------------------------------------
 // Controlled completion delivery (fake decode service)
 // -------------------------------------------------------------------------
+
+FIC2_TEST(ImageAsyncBinding_PriorityReachesTheDecodeService)
+{
+    using ImageCore::RequestPriority;
+    ScopedFakeDecodeService service;
+    ImageAsyncBinding binding;
+
+    // Default: the purpose's priority (MakeRequest is full resolution: MainImage).
+    binding.RequestLoad(MakeRequest(FakePathA()), FakePathA());
+    FIC2_REQUIRE(service.fake.RequestCount() == 1);
+    FIC2_CHECK(service.fake.requests[0].priority == RequestPriority::MainImage);
+
+    // Explicit priority, then promotion of the request in flight.
+    binding.RequestLoad(MakeRequest(FakePathB()), FakePathB(), RequestPriority::Prefetch);
+    FIC2_REQUIRE(service.fake.RequestCount() == 2);
+    FIC2_CHECK(service.fake.requests[1].priority == RequestPriority::Prefetch);
+    const ImageCore::ImageHandle handle = service.fake.requests[1].handle;
+    binding.SetPriority(RequestPriority::Visible);
+    binding.SetPriority(RequestPriority::Visible);   // unchanged: not forwarded
+    FIC2_REQUIRE(service.fake.priorityChanges.size() == 1);
+    FIC2_CHECK(service.fake.priorityChanges[0].first == handle);
+    FIC2_CHECK(service.fake.priorityChanges[0].second == RequestPriority::Visible);
+
+    // Finished requests are not re-prioritized.
+    service.fake.Complete(1, S_OK, MakeBgraImage(2, 2));
+    binding.SetPriority(RequestPriority::Prefetch);
+    FIC2_CHECK(service.fake.priorityChanges.size() == 1);
+}
+
+FIC2_TEST(ImageAsyncBinding_PromotionDuringDispatchIsApplied)
+{
+    using ImageCore::RequestPriority;
+    ScopedFakeDecodeService service;
+    ImageAsyncBinding binding;
+
+    // The tile scrolls into view while RequestDecoded is still returning: the
+    // handle is not stored yet, so the promotion is applied once it is.
+    service.fake.duringDispatch = [&] { binding.SetPriority(RequestPriority::Visible); };
+    binding.RequestLoad(MakeRequest(FakePathA()), FakePathA(), RequestPriority::Prefetch);
+    FIC2_REQUIRE(service.fake.RequestCount() == 1);
+    FIC2_REQUIRE(service.fake.priorityChanges.size() == 1);
+    FIC2_CHECK(service.fake.priorityChanges[0].first == service.fake.requests[0].handle);
+    FIC2_CHECK(service.fake.priorityChanges[0].second == RequestPriority::Visible);
+}
+
+FIC2_TEST(ImageAsyncBinding_ThumbnailLoadPriorityFollowsTheTile)
+{
+    using ImageCore::RequestPriority;
+    ScopedFakeDecodeService service;
+    {
+        auto thumb = std::make_shared<ImageBrowserThumbImage>(L"thumb");
+        // Tiles start as prefetch work until the strip sees them on screen.
+        FIC2_CHECK(thumb->LoadPriority() == RequestPriority::Prefetch);
+        (void)thumb->SetSourceFile(FakePathA());
+        FIC2_REQUIRE(service.fake.RequestCount() == 1);
+        FIC2_CHECK(service.fake.requests[0].priority == RequestPriority::Prefetch);
+
+        thumb->SetLoadPriority(RequestPriority::Visible);
+        FIC2_REQUIRE(service.fake.priorityChanges.size() == 1);
+        FIC2_CHECK(service.fake.priorityChanges[0].second == RequestPriority::Visible);
+
+        // The next file of a reused tile is requested at its current priority.
+        (void)thumb->SetSourceFile(FakePathB());
+        FIC2_REQUIRE(service.fake.RequestCount() == 2);
+        FIC2_CHECK(service.fake.requests[1].priority == RequestPriority::Visible);
+    }
+}
 
 FIC2_TEST(ImageAsyncBinding_NewerRequestCancelsSupersededHandle)
 {

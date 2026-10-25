@@ -395,6 +395,7 @@ namespace
             }
             // Throttle progressive UI list updates so large folders don't monopolize the UI thread.
             ApplyThrottledProgressiveUpdate();
+            UpdateThumbLoadPriorities();
             if (m_pendingThumbStripBroadcast && m_rootSplit != nullptr && !m_rootSplit->IsSplitterDragging())
             {
                 m_pendingThumbStripBroadcast = false;
@@ -742,6 +743,33 @@ namespace
                 return false;
             }
             return false;
+        }
+
+        // Thumbnail decode priority follows the strip's viewport: tiles that
+        // overlap it load at Visible priority, all others as Prefetch, so
+        // ImageCore serves on-screen thumbnails first in both its I/O and decode
+        // stages (and promotes queued ones as they scroll into view). Tiles keep
+        // their content coordinates; the scroll view translates while rendering.
+        void UpdateThumbLoadPriorities()
+        {
+            const auto scroll = m_thumbPane ? m_thumbPane->Scroll() : nullptr;
+            if (!scroll)
+            {
+                return;
+            }
+            const D2D1_RECT_F view = scroll->LayoutRect();
+            const float left = view.left + scroll->ScrollX();
+            const float right = view.right + scroll->ScrollX();
+            for (const ThumbItem& item : m_items)
+            {
+                if (!item.image)
+                {
+                    continue;
+                }
+                const D2D1_RECT_F rect = item.image->LayoutRect();
+                const bool visible = rect.right > rect.left && rect.right > left && rect.left < right;
+                item.image->SetLoadPriority(visible ? ImageCore::RequestPriority::Visible : ImageCore::RequestPriority::Prefetch);
+            }
         }
 
         size_t PagingStepFromThumbViewport() const
