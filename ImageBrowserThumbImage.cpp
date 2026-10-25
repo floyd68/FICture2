@@ -338,13 +338,14 @@ void ImageBrowserThumbImage::DrawSelectionOverlay(ID2D1RenderTarget* target)
     const float baseInflate = m_selectionStyle.baseInflate;
 
     float breathe01 = 0.0f;
-    if (m_selectionStyle.breatheEnabled && m_selectionStyle.breathePeriodMs > 0)
+    bool breatheRunning = false;
+    if (m_selectionStyle.breatheEnabled && m_selectionAnimStartMs != 0)
     {
-        const float period = static_cast<float>(m_selectionStyle.breathePeriodMs);
-        const float t = static_cast<float>(
-            CommonUtil::NowMs() % static_cast<unsigned long long>(m_selectionStyle.breathePeriodMs));
-        const float phase = (t / period) * 6.28318530718f;
-        breathe01 = 0.5f + 0.5f * std::sinf(phase);
+        breathe01 = FD2D::SelectionBreathe(
+            CommonUtil::NowMs() - m_selectionAnimStartMs,
+            m_selectionStyle.breathePeriodMs,
+            m_selectionStyle.breatheCycles,
+            breatheRunning);
     }
     const float breatheInflate = m_selectionStyle.breatheInflateAmp * breathe01;
 
@@ -391,8 +392,7 @@ void ImageBrowserThumbImage::DrawSelectionOverlay(ID2D1RenderTarget* target)
     target->DrawRoundedRectangle(rr, m_selectionBrush.Get(), accentW);
 
     const bool breatheAnimActive =
-        m_selectionStyle.breatheEnabled &&
-        m_selectionStyle.breathePeriodMs > 0 &&
+        breatheRunning &&
         (
             m_selectionStyle.breatheInflateAmp > 0.0f ||
             m_selectionStyle.breatheThicknessAmp > 0.0f ||

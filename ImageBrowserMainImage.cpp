@@ -377,6 +377,9 @@ void ImageBrowserMainImage::SyncTextureDrawState()
             ? 1
             : 0;
     m_texture->SetDrawState(ds);
+    // Draw state and loaded metadata only change through here or ApplyPresentation
+    // (which ends here too): report information changes, not every frame.
+    NotifyInfoIfChanged();
 }
 
 bool ImageBrowserMainImage::TryGetContentSize(D2D1_SIZE_F& outSize) const
@@ -570,6 +573,43 @@ void ImageBrowserMainImage::SetOnViewChanged(ViewChangedHandler handler)
 void ImageBrowserMainImage::SetOnPresentedPathChanged(PresentedPathHandler handler)
 {
     m_onPresentedPathChanged = std::move(handler);
+}
+
+void ImageBrowserMainImage::SetOnInfoChanged(InfoChangedHandler handler)
+{
+    m_onInfoChanged = std::move(handler);
+}
+
+void ImageBrowserMainImage::NotifyInfoIfChanged()
+{
+    if (!m_onInfoChanged)
+    {
+        return;
+    }
+
+    const ImageLoadedInfo li = GetLoadedInfo();
+    const int zoomPercent = static_cast<int>(std::round(li.zoomScale * 100.0f));
+    std::wstring key = li.sourcePath;
+    for (const uint64_t v : {
+             static_cast<uint64_t>(li.width), static_cast<uint64_t>(li.height),
+             static_cast<uint64_t>(li.format), static_cast<uint64_t>(li.sourceMipLevels),
+             static_cast<uint64_t>(li.sourceMipIndex), static_cast<uint64_t>(li.sourceWidth),
+             static_cast<uint64_t>(li.sourceHeight), static_cast<uint64_t>(li.alphaEncoding),
+             static_cast<uint64_t>(li.alphaUsageHint), static_cast<uint64_t>(li.alphaUsageOverride),
+             static_cast<uint64_t>(li.effectiveAlphaUsage), static_cast<uint64_t>(li.sourceWasBlockCompressed),
+             static_cast<uint64_t>(li.gpuPresentation), static_cast<uint64_t>(li.channelMode),
+             static_cast<uint64_t>(li.alphaCheckerboardEnabled), static_cast<uint64_t>(li.highQualitySampling),
+             static_cast<uint64_t>(static_cast<int64_t>(zoomPercent)), static_cast<uint64_t>(li.rotationQuarters) })
+    {
+        key += L'|';
+        key += std::to_wstring(v);
+    }
+    if (key == m_lastInfoKey)
+    {
+        return;
+    }
+    m_lastInfoKey = std::move(key);
+    m_onInfoChanged();
 }
 
 void ImageBrowserMainImage::SetLoadedFilePath(const std::wstring& path)
@@ -1416,6 +1456,10 @@ void ImageBrowserMainImage::SetZoomStiffness(float stiffness)
 
 void ImageBrowserMainImage::AdvanceZoomAnimation(unsigned long long nowMs)
 {
+    const float zoomBefore = m_zoomScale;
+    const float panXBefore = m_panX;
+    const float panYBefore = m_panY;
+
     if (m_lastZoomAnimMs == 0)
     {
         m_lastZoomAnimMs = nowMs;
@@ -1465,7 +1509,11 @@ void ImageBrowserMainImage::AdvanceZoomAnimation(unsigned long long nowMs)
         BackplateRef()->RequestAnimationFrame();
     }
 
-    if (!m_suppressViewNotify && m_onViewChanged)
+    // Synchronized panes follow only real changes of the effective transform;
+    // a settled animation called from every render pass must not keep
+    // re-broadcasting (and invalidating the other pane).
+    const bool changed = m_zoomScale != zoomBefore || m_panX != panXBefore || m_panY != panYBefore;
+    if (changed && !m_suppressViewNotify && m_onViewChanged)
     {
         m_onViewChanged(GetViewTransform());
     }

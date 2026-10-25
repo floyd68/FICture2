@@ -1,5 +1,6 @@
 #include "ImageBrowserAsyncThumbLoader.h"
 #include "CommonUtil.h"
+#include "FD2D/Backplate.h"
 
 #include <deque>
 #include <mutex>
@@ -18,6 +19,12 @@ namespace
     std::mutex g_asyncThumbListMutex;
     std::unordered_map<std::wstring, std::deque<AsyncThumbListChunkPayload>> g_asyncThumbListChunksByBrowser {};
     std::unordered_map<std::wstring, HANDLE> g_asyncThumbReadyEventByBrowser {};
+    std::unordered_map<std::wstring, HWND> g_asyncThumbWindowByBrowser {};
+    // Browsers with a posted, not yet drained ready message (coalescing).
+    std::unordered_map<std::wstring, bool> g_asyncThumbNotifyPending {};
+
+    // Must match ImageBrowserImpl::CMD_FIC2_ASYNC_THUMB_READY.
+    constexpr UINT kAsyncThumbReadyCommand = WM_APP + 0x7A13;
 }
 
 void ImageBrowserAsyncThumbLoader::RegisterBrowser(const std::wstring& browserName, HANDLE readyEvent)
@@ -31,11 +38,20 @@ void ImageBrowserAsyncThumbLoader::UnregisterBrowser(const std::wstring& browser
     std::lock_guard<std::mutex> lock(g_asyncThumbListMutex);
     g_asyncThumbListChunksByBrowser.erase(browserName);
     g_asyncThumbReadyEventByBrowser.erase(browserName);
+    g_asyncThumbWindowByBrowser.erase(browserName);
+    g_asyncThumbNotifyPending.erase(browserName);
+}
+
+void ImageBrowserAsyncThumbLoader::SetBrowserWindow(const std::wstring& browserName, HWND window)
+{
+    std::lock_guard<std::mutex> lock(g_asyncThumbListMutex);
+    g_asyncThumbWindowByBrowser[browserName] = window;
 }
 
 void ImageBrowserAsyncThumbLoader::EnqueueChunk(const std::wstring& browserName, AsyncThumbListChunkPayload&& payload)
 {
     HANDLE eventHandle = nullptr;
+    HWND notifyWindow = nullptr;
     {
         std::lock_guard<std::mutex> lock(g_asyncThumbListMutex);
         auto& queue = g_asyncThumbListChunksByBrowser[browserName];
@@ -45,11 +61,32 @@ void ImageBrowserAsyncThumbLoader::EnqueueChunk(const std::wstring& browserName,
         {
             eventHandle = eventIt->second;
         }
+        auto windowIt = g_asyncThumbWindowByBrowser.find(browserName);
+        bool& pending = g_asyncThumbNotifyPending[browserName];
+        if (windowIt != g_asyncThumbWindowByBrowser.end() && windowIt->second != nullptr && !pending)
+        {
+            pending = true;
+            notifyWindow = windowIt->second;
+        }
     }
 
     if (eventHandle != nullptr)
     {
         SetEvent(eventHandle);
+    }
+
+    // Owned notification instead of render-loop polling: the UI drains the queue
+    // when this message arrives (FD2D broadcast -> ImageBrowser command handler).
+    if (notifyWindow != nullptr)
+    {
+        auto* message = new FD2D::Backplate::BroadcastMessage();
+        message->message = kAsyncThumbReadyCommand;
+        if (!PostMessageW(notifyWindow, FD2D::Backplate::WM_FD2D_BROADCAST, 0, reinterpret_cast<LPARAM>(message)))
+        {
+            delete message;
+            std::lock_guard<std::mutex> lock(g_asyncThumbListMutex);
+            g_asyncThumbNotifyPending[browserName] = false;
+        }
     }
 }
 
@@ -66,6 +103,8 @@ std::deque<AsyncThumbListChunkPayload> ImageBrowserAsyncThumbLoader::DequeueChun
             chunks = std::move(it->second);
             g_asyncThumbListChunksByBrowser.erase(it);
         }
+        // Chunks enqueued after this drain need a new message.
+        g_asyncThumbNotifyPending[browserName] = false;
     }
 
     if (readyEvent != nullptr && chunks.empty())

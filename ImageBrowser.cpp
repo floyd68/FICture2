@@ -113,6 +113,8 @@ namespace
         {
             FIC2_TIMER_START(t_attach);
             Wnd::OnAttached(backplate);
+            // Folder listing chunks are announced to this window by message.
+            ImageBrowserAsyncThumbLoader::SetBrowserWindow(Name(), backplate.Window());
             FIC2_LOG_STEP(t_attach, "[OnAttached] Wnd::OnAttached (recursive child attach + layout)");
 
             RegisterWithEventBus();
@@ -388,33 +390,21 @@ namespace
             // live while dragging.
             (void)ApplySyncedThumbStripHeightIfNeeded();
             (void)UpdateThumbSizingFromPane();
-            if (m_thumbListLoading && m_asyncThumbReadyEvent != nullptr)
+            // Folder listing chunks arrive through CMD_FIC2_ASYNC_THUMB_READY (posted
+            // by the loader); this only picks up chunks if a frame happens to render
+            // first, and never requests frames itself.
+            if (m_thumbListLoading && m_asyncThumbReadyEvent != nullptr &&
+                WaitForSingleObject(m_asyncThumbReadyEvent, 0) == WAIT_OBJECT_0)
             {
-                if (WaitForSingleObject(m_asyncThumbReadyEvent, 0) == WAIT_OBJECT_0)
-                {
-                    DrainAsyncThumbChunks();
-                }
-                if (BackplateRef() != nullptr)
-                {
-                    BackplateRef()->RequestAnimationFrame();
-                }
+                DrainAsyncThumbChunks();
             }
             // Throttle progressive UI list updates so large folders don't monopolize the UI thread.
-            if (m_progressiveUiDirty && !m_progressiveLoadCompleted)
-            {
-                const unsigned long long now = CommonUtil::NowMs();
-                if (now - m_progressiveLastApplyMs >= 50)
-                {
-                    ApplyProgressiveThumbUpdate(false);
-                }
-            }
+            ApplyThrottledProgressiveUpdate();
             if (m_pendingThumbStripBroadcast && m_rootSplit != nullptr && !m_rootSplit->IsSplitterDragging())
             {
                 m_pendingThumbStripBroadcast = false;
                 NotifyThumbStripHeightChanged(m_pendingThumbStripHeight);
             }
-            RefreshInfoPanel();
-
             // D2D-only backend: fill per-ImageBrowser background before drawing children.
             // (On the D3D swapchain backend, D2D runs after the GPU image pass, so we must NOT fill here.)
             if (target != nullptr)
@@ -524,6 +514,16 @@ namespace
 
         bool OnCommandEvent(const FD2D::CommandEvent& event) override
         {
+            // Folder-listing readiness is broadcast to the window, but every
+            // browser - including side-by-side browsers nested inside this one -
+            // drains only its own queue: drain here, then pass it down the subtree.
+            if (event.id == CMD_FIC2_ASYNC_THUMB_READY)
+            {
+                DrainAsyncThumbChunks();
+                (void)Wnd::OnCommandEvent(event);
+                return true;
+            }
+
             if (TryHandleCommandEvent(event))
             {
                 return true;
@@ -1749,6 +1749,12 @@ namespace
                 {
                     OnMainImagePresentedPathChanged(path);
                 });
+                // Image information follows the main image's own change
+                // notification instead of being rebuilt on every frame.
+                m_mainImage->SetOnInfoChanged([this]()
+                {
+                    RefreshInfoPanel();
+                });
             }
 
                     if (!m_initialFile.empty())
@@ -2277,6 +2283,31 @@ namespace
             if (shouldApplyNow)
             {
                 ApplyProgressiveThumbUpdate(m_progressiveLoadCompleted);
+            }
+            else
+            {
+                ApplyThrottledProgressiveUpdate();
+            }
+        }
+
+        // Applies a pending progressive list update once the throttle interval
+        // has passed. While one is pending (and only then) it keeps requesting
+        // frames, so a throttled update is not left waiting for an unrelated
+        // render; it stops when the update is applied or the folder completes.
+        void ApplyThrottledProgressiveUpdate()
+        {
+            if (!m_progressiveUiDirty || m_progressiveLoadCompleted)
+            {
+                return;
+            }
+            const unsigned long long now = CommonUtil::NowMs();
+            if (now - m_progressiveLastApplyMs >= 50)
+            {
+                ApplyProgressiveThumbUpdate(false);
+            }
+            else if (BackplateRef() != nullptr)
+            {
+                BackplateRef()->RequestAnimationFrame();
             }
         }
 

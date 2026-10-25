@@ -19,6 +19,7 @@ FICture2 is available on NexusMods: [https://www.nexusmods.com/fallout4/mods/100
 
 ## What's New in v1.7
 
+- **Improved:** An idle window no longer keeps rendering: the selection outline breathes briefly after a selection instead of forever, synchronized panes no longer redraw each other continuously, and folder loading no longer polls every frame (idle CPU drops from ~7–12% of a core to ~0)
 - **Fixed:** Replacing an image file (or its archive) and returning to it showed the old picture from the GPU cache; a graphics target recreation no longer drops GPU (channel-isolation) presentation, and device loss or renderer fallback rebuilds the image from the right source
 - **Fixed:** Opening a file from another instance for side-by-side compare, the window title, and view sync now follow the newly selected image immediately instead of the previous image still on screen; screenshots are named after the image actually shown
 - **Fixed:** Thumbnails of images inside archives could fail to load during fast scrolling or folder changes when an earlier request for the same image was canceled

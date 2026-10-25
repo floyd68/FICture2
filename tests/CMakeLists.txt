@@ -6,9 +6,11 @@ add_executable(FICture2Tests
     TestMain.cpp
     AppLogTests.cpp
     GpuPresentationTests.cpp
+    IdleRenderingTests.cpp
     MainImagePresentationTests.cpp
     ImageAsyncBindingTests.cpp
     ImageBrowserPathStateTests.cpp
+    ImageBrowserRoutingTests.cpp
     IpcOpenQueueTests.cpp
     ${PROJECT_SOURCE_DIR}/AppLog.cpp
     ${PROJECT_SOURCE_DIR}/ImageGpuResourceCache.cpp
@@ -18,7 +20,31 @@ add_executable(FICture2Tests
     ${PROJECT_SOURCE_DIR}/ImageBrowserAssets.cpp
     ${PROJECT_SOURCE_DIR}/ThumbImageTile.cpp
     ${PROJECT_SOURCE_DIR}/ThumbNavTile.cpp
+    ${PROJECT_SOURCE_DIR}/ImageBrowserAsyncThumbLoader.cpp
     ${PROJECT_SOURCE_DIR}/ImageAsyncBinding.cpp
+    # The rest of the app (everything but FICture2.cpp, which holds WinMain)
+    # for tests that build real image browsers.
+    ${PROJECT_SOURCE_DIR}/AppIpc.cpp
+    ${PROJECT_SOURCE_DIR}/AppSetup.cpp
+    ${PROJECT_SOURCE_DIR}/Ficture2Backplate.cpp
+    ${PROJECT_SOURCE_DIR}/FloarPathByteSource.cpp
+    ${PROJECT_SOURCE_DIR}/ImageBrowser.cpp
+    ${PROJECT_SOURCE_DIR}/ImageBrowserContextMenu.cpp
+    ${PROJECT_SOURCE_DIR}/ImageBrowserDeferredActions.cpp
+    ${PROJECT_SOURCE_DIR}/ImageBrowserDragController.cpp
+    ${PROJECT_SOURCE_DIR}/ImageBrowserInfoPresenter.cpp
+    ${PROJECT_SOURCE_DIR}/ImageBrowserKeyboardController.cpp
+    ${PROJECT_SOURCE_DIR}/ImageBrowserMainPane.cpp
+    ${PROJECT_SOURCE_DIR}/ImageBrowserSessionPersistence.cpp
+    ${PROJECT_SOURCE_DIR}/ImageBrowserSplitCoordinator.cpp
+    ${PROJECT_SOURCE_DIR}/ImageBrowserThumbnailPane.cpp
+    ${PROJECT_SOURCE_DIR}/ImageBrowserThumbLayoutCoordinator.cpp
+    ${PROJECT_SOURCE_DIR}/ImageBrowserThumbStripController.cpp
+    ${PROJECT_SOURCE_DIR}/ImageViewUtil.cpp
+    ${PROJECT_SOURCE_DIR}/RecentFiles.cpp
+    ${PROJECT_SOURCE_DIR}/ScreenshotUtil.cpp
+    # The app imports Common Controls v6 entry points, which load only with its manifest.
+    ${PROJECT_SOURCE_DIR}/app.manifest
 )
 
 target_include_directories(FICture2Tests PRIVATE
@@ -26,6 +52,7 @@ target_include_directories(FICture2Tests PRIVATE
     ${PROJECT_SOURCE_DIR}
     ${PROJECT_SOURCE_DIR}/FD2D
     ${PROJECT_SOURCE_DIR}/ImageCore
+    ${PROJECT_BINARY_DIR}   # generated Version.h
     ${PROJECT_SOURCE_DIR}/external/spdlog/include
 )
 
@@ -34,6 +61,8 @@ target_compile_definitions(FICture2Tests PRIVATE
     SPDLOG_WCHAR_FILENAMES
     UNICODE
     _UNICODE
+    # The app's build-flavor and feature switches, for the app sources above.
+    $<TARGET_PROPERTY:FICture2,COMPILE_DEFINITIONS>
 )
 
 target_link_libraries(FICture2Tests PRIVATE
@@ -41,8 +70,10 @@ target_link_libraries(FICture2Tests PRIVATE
     ImageCore
     Floar
     DirectXTex
+    comctl32
     d2d1
     dwrite
+    shell32
     windowscodecs
     d3d11
     dxgi
@@ -58,6 +89,8 @@ add_test(NAME FICture2.ImageAsyncBinding COMMAND FICture2Tests ImageAsyncBinding
 add_test(NAME FICture2.PathState COMMAND FICture2Tests PathState_)
 add_test(NAME FICture2.GpuPresentation COMMAND FICture2Tests GpuPresentation_)
 add_test(NAME FICture2.MainImage COMMAND FICture2Tests MainImage_)
+add_test(NAME FICture2.IdleRendering COMMAND FICture2Tests IdleRendering_)
+add_test(NAME FICture2.ImageBrowserRouting COMMAND FICture2Tests ImageBrowserRouting_)
 # AppLog::Init runs once per process, so each Init scenario gets its own entry.
 add_test(NAME FICture2.AppLogText COMMAND FICture2Tests AppLogText_)
 add_test(NAME FICture2.AppLogLazy COMMAND FICture2Tests AppLogLazy_)
