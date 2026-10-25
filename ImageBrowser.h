@@ -16,6 +16,8 @@ namespace FD2D
     class Wnd;
 }
 
+class FolderLoadLane;
+
 class IImageBrowserSync
 {
 public:
@@ -121,3 +123,7 @@ public:
 // Core viewer component: single main image per ImageBrowser.
 // paneCount is kept for compatibility and is currently ignored (always 1).
 std::shared_ptr<FD2D::Wnd> CreateImageBrowser(const std::wstring& name, const std::wstring& initialFile = L"");
+
+// Test seam: the lane that feeds `browser` its folder listing (nullptr if
+// `browser` is not an image browser).
+FolderLoadLane* ImageBrowserFolderLoadLane(FD2D::Wnd& browser);

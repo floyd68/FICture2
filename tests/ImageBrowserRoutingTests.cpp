@@ -2,34 +2,15 @@
 
 #include "FD2D/Backplate.h"
 #include "ImageBrowser.h"
-#include "ImageBrowserAsyncThumbLoader.h"
+#include "FolderEnumeration.h"
 
 #include <windows.h>
 
 #include <memory>
 
-// Folder-listing readiness is broadcast to the window and reaches the outer
-// image browser first; side-by-side browsers are nested inside it. Every
+// A folder-listing wakeup reaches the outer image browser first; side-by-side browsers are nested inside it. Every
 // browser must drain its own queue, or a nested pane's last chunks stay
 // invisible once nothing else renders.
-
-namespace
-{
-    // Must match ImageBrowserImpl::CMD_FIC2_ASYNC_THUMB_READY.
-    constexpr UINT kAsyncThumbReady = WM_APP + 0x7A13;
-
-    size_t QueuedChunks(const wchar_t* browser)
-    {
-        // Peek by draining and re-enqueueing (the loader has no read-only view).
-        std::deque<AsyncThumbListChunkPayload> chunks = ImageBrowserAsyncThumbLoader::DequeueChunks(browser, nullptr);
-        const size_t count = chunks.size();
-        for (auto& chunk : chunks)
-        {
-            ImageBrowserAsyncThumbLoader::EnqueueChunk(browser, std::move(chunk));
-        }
-        return count;
-    }
-}
 
 FIC2_TEST(ImageBrowserRouting_ReadyBroadcastDrainsNestedBrowser)
 {
@@ -41,14 +22,17 @@ FIC2_TEST(ImageBrowserRouting_ReadyBroadcastDrainsNestedBrowser)
     FIC2_REQUIRE(backplate.AddWnd(outer));
 
     // Rendering has stopped; the nested pane's folder delivers its final chunk.
+    FolderLoadLane* innerLane = ImageBrowserFolderLoadLane(*inner);
+    FIC2_REQUIRE(innerLane != nullptr);
     AsyncThumbListChunkPayload last {};
     last.completed = true;
-    ImageBrowserAsyncThumbLoader::EnqueueChunk(L"routing_inner", std::move(last));
-    FIC2_REQUIRE(QueuedChunks(L"routing_inner") == 1);
+    innerLane->Post(std::move(last));
+    FIC2_REQUIRE(innerLane->HasChunks());
 
-    // The broadcast arrives at the top-level browser, as FD2D delivers it.
+    // The wakeup reaches the top-level browser (Ficture2Backplate dispatches it
+    // to top-level Wnds only).
     FD2D::CommandEvent event {};
-    event.id = kAsyncThumbReady;
+    event.id = kFolderListingReadyMessage;
     FIC2_CHECK(outer->OnCommandEvent(event));
-    FIC2_CHECK(QueuedChunks(L"routing_inner") == 0);   // the nested browser drained its queue
+    FIC2_CHECK(!innerLane->HasChunks());   // the nested browser drained its queue
 }

@@ -35,11 +35,30 @@ namespace TestHarness
     {
         Teardowns().push_back(std::move(teardown));
     }
+
+    std::vector<ChildCase>& ChildRegistry()
+    {
+        static std::vector<ChildCase> registry;
+        return registry;
+    }
 }
 
-// Usage: FICture2Tests [--list | <name prefix>]
+// Usage: FICture2Tests [--list | <name prefix> | --child <name> [args...]]
 int main(int argc, char** argv)
 {
+    if (argc > 2 && std::strcmp(argv[1], "--child") == 0)
+    {
+        for (const auto& child : TestHarness::ChildRegistry())
+        {
+            if (std::strcmp(child.name, argv[2]) == 0)
+            {
+                return child.fn(argc - 3, argv + 3);
+            }
+        }
+        std::fprintf(stderr, "unknown child: %s\n", argv[2]);
+        return 2;
+    }
+
     const char* prefix = (argc > 1) ? argv[1] : "";
     if (std::strcmp(prefix, "--list") == 0)
     {

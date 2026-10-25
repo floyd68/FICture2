@@ -1,6 +1,7 @@
 #include "Ficture2Backplate.h"
 
 #include "AppLog.h"
+#include "FolderEnumeration.h"
 #include "CommonUtil.h"
 #include "IniStore.h"
 #include "FD2D/Core.h"
@@ -1072,6 +1073,7 @@ bool Ficture2Backplate::HandleMessage(HWND hWnd, UINT message, WPARAM wParam, LP
     {
     case WM_CREATE:
     {
+        m_folderListingWakeup = std::make_shared<FolderListingWakeup>(hWnd);
         UpdateTitleBarInfo();
         DragAcceptFiles(m_window, TRUE);
         (void)EnsureDropTargetRegistered();
@@ -1124,8 +1126,19 @@ bool Ficture2Backplate::HandleMessage(HWND hWnd, UINT message, WPARAM wParam, LP
         result = 0;
         return true;
     }
+    case kFolderListingReadyMessage:
+    {
+        DispatchFolderListingReady();
+        result = 0;
+        return true;
+    }
     case WM_DESTROY:
     {
+        // No folder-listing wakeup is posted to this HWND after this.
+        if (m_folderListingWakeup)
+        {
+            m_folderListingWakeup->Disconnect();
+        }
         HandleFileDragLeave();
         UnregisterDropTarget();
         break;
@@ -1135,6 +1148,20 @@ bool Ficture2Backplate::HandleMessage(HWND hWnd, UINT message, WPARAM wParam, LP
     }
 
     return Backplate::HandleMessage(hWnd, message, wParam, lParam, result);
+}
+
+void Ficture2Backplate::DispatchFolderListingReady()
+{
+    const FD2D::CommandEvent event { kFolderListingReadyMessage, 0, 0 };
+    // Copy: a handler may change the tree.
+    const std::vector<std::shared_ptr<FD2D::Wnd>> children = m_childrenOrdered;
+    for (const auto& child : children)
+    {
+        if (child)
+        {
+            (void)child->OnCommandEvent(event);
+        }
+    }
 }
 
 void Ficture2Backplate::EnsureImageBrowserIniInitialized()

@@ -9,6 +9,7 @@
 #include "ImageBrowserMainPane.h"
 #include "ImageBrowserThumbnailPane.h"
 #include "ImageBrowserAsyncThumbLoader.h"
+#include "FolderEnumeration.h"
 #include "ImageBrowserSplitCoordinator.h"
 #include "ImageBrowserDeferredActions.h"
 #include "ImageBrowserDragController.h"
@@ -87,34 +88,29 @@ namespace
             , m_initialFile(initialFile)
         {
             FIC2_TIMER_START(t_ctor);
-            m_asyncThumbReadyEvent = CreateEventW(nullptr, TRUE, FALSE, nullptr);
-            FIC2_LOG_STEP(t_ctor, "ctor: CreateEventW");
-            if (m_asyncThumbReadyEvent != nullptr)
-            {
-                ImageBrowserAsyncThumbLoader::RegisterBrowser(Name(), m_asyncThumbReadyEvent);
-                FIC2_LOG_STEP(t_ctor, "ctor: AsyncThumbLoader::RegisterBrowser");
-            }
+            m_folderLane = FolderEnumerationService::Shared().CreateLane();
             BuildUi();
             FIC2_LOG_STEP(t_ctor, "ctor: BuildUi total");
         }
 
         ~ImageBrowserImpl() override
         {
-            ImageBrowserAsyncThumbLoader::UnregisterBrowser(Name());
-            if (m_asyncThumbReadyEvent != nullptr)
-            {
-                CloseHandle(m_asyncThumbReadyEvent);
-                m_asyncThumbReadyEvent = nullptr;
-            }
+            // Detaches the folder enumeration without waiting for its worker.
+            m_folderLane.Close();
             UnregisterFromEventBus();
         }
+
+        FolderLoadLane& FolderLane() { return m_folderLane; }
 
         void OnAttached(FD2D::Backplate& backplate) override
         {
             FIC2_TIMER_START(t_attach);
             Wnd::OnAttached(backplate);
-            // Folder listing chunks are announced to this window by message.
-            ImageBrowserAsyncThumbLoader::SetBrowserWindow(Name(), backplate.Window());
+            // Folder listing chunks wake this window (payload-free message).
+            if (auto* folderBp = dynamic_cast<Ficture2Backplate*>(&backplate))
+            {
+                m_folderLane.SetWakeup(folderBp->FolderListingWakeupTarget());
+            }
             FIC2_LOG_STEP(t_attach, "[OnAttached] Wnd::OnAttached (recursive child attach + layout)");
 
             RegisterWithEventBus();
@@ -393,8 +389,7 @@ namespace
             // Folder listing chunks arrive through CMD_FIC2_ASYNC_THUMB_READY (posted
             // by the loader); this only picks up chunks if a frame happens to render
             // first, and never requests frames itself.
-            if (m_thumbListLoading && m_asyncThumbReadyEvent != nullptr &&
-                WaitForSingleObject(m_asyncThumbReadyEvent, 0) == WAIT_OBJECT_0)
+            if (m_thumbListLoading && m_folderLane.HasChunks())
             {
                 DrainAsyncThumbChunks();
             }
@@ -1087,7 +1082,7 @@ namespace
         static constexpr ULONGLONG kKeyRepeatMinIntervalMs = 60;
         static constexpr UINT CMD_FIC2_DEFERRED_ACTION = WM_APP + 0x7A11;
         static constexpr UINT CMD_FIC2_IPC_OPEN = WM_APP + 0x7A12;
-        static constexpr UINT CMD_FIC2_ASYNC_THUMB_READY = WM_APP + 0x7A13;
+        static constexpr UINT CMD_FIC2_ASYNC_THUMB_READY = kFolderListingReadyMessage;
 
         enum class DeferredActionKind
         {
@@ -2203,28 +2198,13 @@ namespace
             m_progressiveUiDirty = false;
             m_progressiveLoadCompleted = false;
             m_progressiveLastApplyMs = 0;
-            if (m_asyncThumbReadyEvent != nullptr)
-            {
-                ResetEvent(m_asyncThumbReadyEvent);
-            }
             if (BackplateRef() != nullptr)
             {
                 BackplateRef()->RequestAnimationFrame();
             }
 
-            ImageBrowserAsyncThumbLoader::StartEnumerate(
-                folder,
-                [requestId, browserName, folder, preferSelectPath, showNavItems](std::vector<Floar::VirtualFileEntry>&& batch, bool completed)
-            {
-                AsyncThumbListChunkPayload payload {};
-                payload.requestId = requestId;
-                payload.folder = folder;
-                payload.preferSelectPath = preferSelectPath;
-                payload.showNavItems = showNavItems;
-                payload.completed = completed;
-                payload.batch = std::move(batch);
-                ImageBrowserAsyncThumbLoader::EnqueueChunk(browserName, std::move(payload));
-            });
+            // Supersedes the previous load of this browser (latest request wins).
+            m_folderLane.Start(FolderLoadRequest { requestId, folder, preferSelectPath, showNavItems });
         }
 
         bool HandleAsyncThumbReadyMessage()
@@ -2235,7 +2215,7 @@ namespace
 
         std::deque<AsyncThumbListChunkPayload> DequeueAsyncThumbChunks()
         {
-            return ImageBrowserAsyncThumbLoader::DequeueChunks(Name(), m_asyncThumbReadyEvent);
+            return m_folderLane.Dequeue();
         }
 
         bool MergeAcceptedAsyncThumbChunks(const std::deque<AsyncThumbListChunkPayload>& chunks)
@@ -2919,7 +2899,7 @@ namespace
         bool m_progressiveLoadCompleted { false };
         unsigned long long m_progressiveLastApplyMs { 0 };
         unsigned long long m_progressiveStartMs { 0 };
-        HANDLE m_asyncThumbReadyEvent { nullptr };
+        FolderLoadLane m_folderLane {};
         float m_thumbW { 128.0f };
         float m_thumbH { 128.0f };
         unsigned long long m_lastThumbSizingApplyMs { 0 };
@@ -3032,5 +3012,11 @@ namespace
 std::shared_ptr<FD2D::Wnd> CreateImageBrowser(const std::wstring& name, const std::wstring& initialFile)
 {
     return std::make_shared<ImageBrowserImpl>(name, initialFile);
+}
+
+FolderLoadLane* ImageBrowserFolderLoadLane(FD2D::Wnd& browser)
+{
+    auto* impl = dynamic_cast<ImageBrowserImpl*>(&browser);
+    return impl ? &impl->FolderLane() : nullptr;
 }
 

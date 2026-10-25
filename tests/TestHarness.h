@@ -41,12 +41,37 @@ namespace TestHarness
 
     // Runs once after all selected tests (e.g. to shut down process singletons).
     void RegisterTeardown(std::function<void()> teardown);
+
+    // Child-process entry points, for paths that end their own process:
+    // `FICture2Tests --child <name> [args...]` runs one and exits with its result.
+    using ChildFn = int (*)(int argc, char** argv);  // the args after <name>
+
+    struct ChildCase
+    {
+        const char* name { nullptr };
+        ChildFn fn { nullptr };
+    };
+
+    std::vector<ChildCase>& ChildRegistry();
+
+    struct ChildRegistrar
+    {
+        ChildRegistrar(const char* name, ChildFn fn)
+        {
+            ChildRegistry().push_back({ name, fn });
+        }
+    };
 }
 
 #define FIC2_TEST(name) \
     static void name(); \
     static const TestHarness::Registrar name##_registrar(#name, &name); \
     static void name()
+
+#define FIC2_CHILD(name) \
+    static int name(int argc, char** argv); \
+    static const TestHarness::ChildRegistrar name##_registrar(#name, &name); \
+    static int name(int argc, char** argv)
 
 #define FIC2_CHECK(expr) \
     do { \

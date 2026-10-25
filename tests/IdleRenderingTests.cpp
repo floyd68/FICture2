@@ -1,7 +1,7 @@
 #include "TestHarness.h"
 
 #include "FD2D/Backplate.h"
-#include "ImageBrowserAsyncThumbLoader.h"
+#include "FolderEnumeration.h"
 #include "ImageBrowserMainImage.h"
 #include "SelectionStyle.h"
 
@@ -84,16 +84,13 @@ FIC2_TEST(IdleRendering_MainImageNotifiesOnlyOnRealChanges)
 
 namespace
 {
-    // Counts and frees the FD2D broadcast messages posted to a message-only window.
-    int DrainBroadcasts(HWND window, UINT& lastCommand)
+    // Counts the folder-listing wakeups posted to a message-only window.
+    int DrainWakeups(HWND window)
     {
         int count = 0;
         MSG msg {};
-        while (PeekMessageW(&msg, window, FD2D::Backplate::WM_FD2D_BROADCAST, FD2D::Backplate::WM_FD2D_BROADCAST, PM_REMOVE))
+        while (PeekMessageW(&msg, window, kFolderListingReadyMessage, kFolderListingReadyMessage, PM_REMOVE))
         {
-            auto* message = reinterpret_cast<FD2D::Backplate::BroadcastMessage*>(msg.lParam);
-            lastCommand = message ? message->message : 0;
-            delete message;
             ++count;
         }
         return count;
@@ -104,32 +101,28 @@ FIC2_TEST(IdleRendering_FolderChunksPostOneMessagePerBatch)
 {
     HWND window = CreateWindowExW(0, L"STATIC", L"", 0, 0, 0, 0, 0, HWND_MESSAGE, nullptr, nullptr, nullptr);
     FIC2_REQUIRE(window != nullptr);
-    HANDLE ready = CreateEventW(nullptr, TRUE, FALSE, nullptr);
-    const std::wstring browser = L"idle-test-browser";
-    ImageBrowserAsyncThumbLoader::RegisterBrowser(browser, ready);
-    ImageBrowserAsyncThumbLoader::SetBrowserWindow(browser, window);
+    FolderEnumerationService service(std::make_shared<FilesystemFolderEnumerationBackend>(), 1);
+    FolderLoadLane lane = service.CreateLane();
+    lane.SetWakeup(std::make_shared<FolderListingWakeup>(window));
 
     // Several chunks before the UI drains: one message.
     for (int i = 0; i < 5; ++i)
     {
-        ImageBrowserAsyncThumbLoader::EnqueueChunk(browser, AsyncThumbListChunkPayload {});
+        lane.Post(AsyncThumbListChunkPayload {});
     }
-    UINT command = 0;
-    FIC2_CHECK(DrainBroadcasts(window, command) == 1);
-    FIC2_CHECK(command == WM_APP + 0x7A13);   // CMD_FIC2_ASYNC_THUMB_READY
-    FIC2_CHECK(WaitForSingleObject(ready, 0) == WAIT_OBJECT_0);
+    FIC2_CHECK(DrainWakeups(window) == 1);
+    FIC2_CHECK(lane.HasChunks());
 
     // The UI drains; the next chunk is announced again.
-    FIC2_CHECK(ImageBrowserAsyncThumbLoader::DequeueChunks(browser, ready).size() == 5);
-    ImageBrowserAsyncThumbLoader::EnqueueChunk(browser, AsyncThumbListChunkPayload {});
-    FIC2_CHECK(DrainBroadcasts(window, command) == 1);
-    FIC2_CHECK(ImageBrowserAsyncThumbLoader::DequeueChunks(browser, ready).size() == 1);
-    // Nothing queued: no message, and the drain resets the event.
-    FIC2_CHECK(ImageBrowserAsyncThumbLoader::DequeueChunks(browser, ready).empty());
-    FIC2_CHECK(WaitForSingleObject(ready, 0) == WAIT_TIMEOUT);
-    FIC2_CHECK(DrainBroadcasts(window, command) == 0);
+    FIC2_CHECK(lane.Dequeue().size() == 5);
+    lane.Post(AsyncThumbListChunkPayload {});
+    FIC2_CHECK(DrainWakeups(window) == 1);
+    FIC2_CHECK(lane.Dequeue().size() == 1);
+    // Nothing queued: no message.
+    FIC2_CHECK(lane.Dequeue().empty());
+    FIC2_CHECK(!lane.HasChunks());
+    FIC2_CHECK(DrainWakeups(window) == 0);
 
-    ImageBrowserAsyncThumbLoader::UnregisterBrowser(browser);
-    CloseHandle(ready);
+    lane.Close();
     DestroyWindow(window);
 }

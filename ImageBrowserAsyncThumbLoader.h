@@ -3,10 +3,6 @@
 #include "VirtualFileSystem.h"
 #include "VirtualPath.h"
 
-#include <Windows.h>
-#include <deque>
-#include <functional>
-#include <string>
 #include <vector>
 
 struct AsyncThumbListChunkPayload
@@ -19,22 +15,11 @@ struct AsyncThumbListChunkPayload
     std::vector<Floar::VirtualFileEntry> batch {};
 };
 
+// Folder-listing chunks (produced by FolderEnumeration.h) and how the browser
+// merges them into its progressive thumbnail list.
 class ImageBrowserAsyncThumbLoader
 {
 public:
-    static void RegisterBrowser(const std::wstring& browserName, HANDLE readyEvent);
-    // Window that receives CMD_FIC2_ASYNC_THUMB_READY (as an FD2D broadcast) when
-    // chunks arrive for `browserName`; one message per batch until it is drained.
-    static void SetBrowserWindow(const std::wstring& browserName, HWND window);
-    static void UnregisterBrowser(const std::wstring& browserName);
-    static void EnqueueChunk(const std::wstring& browserName, AsyncThumbListChunkPayload&& payload);
-    static std::deque<AsyncThumbListChunkPayload> DequeueChunks(const std::wstring& browserName, HANDLE readyEvent);
-
-    // Starts detached background enumeration and reports chunks via callback.
-    static void StartEnumerate(
-        const Floar::VirtualPath& folder,
-        const std::function<void(std::vector<Floar::VirtualFileEntry>&&, bool completed)>& onChunk);
-
     static bool AcceptChunk(
         const AsyncThumbListChunkPayload& chunk,
         unsigned long long currentRequestId,
