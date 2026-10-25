@@ -19,6 +19,8 @@ FICture2 is available on NexusMods: [https://www.nexusmods.com/fallout4/mods/100
 
 ## What's New in v1.7
 
+- **Fixed:** Leaving a folder inside a large (for example solid 7z) archive no longer stalls the next folder's thumbnails: the archive read still in progress is canceled (while the archive is opening, waiting for it, or extracting), so the new folder's thumbnails load at once instead of after the old extraction finishes; canceling a full-resolution image inside an archive stops its read the same way
+- **Fixed:** Exit no longer hangs on a stuck image or archive read: folder listing, image decoding and archive opening each get a bounded time (2 s) to stop, and a service that does not stop in time ends the process without further cleanup (logged when logging is on)
 - **Improved:** Thumbnails on screen load before offscreen ones, and thumbnails that scroll into view while a large folder is still loading move ahead of the queue (the main image still loads first)
 - **Improved:** An idle window no longer keeps rendering: the selection outline breathes briefly after a selection instead of forever, synchronized panes no longer redraw each other continuously, and folder loading no longer polls every frame (idle CPU drops from ~7–12% of a core to ~0)
 - **Fixed:** Replacing an image file (or its archive) and returning to it showed the old picture from the GPU cache; a graphics target recreation no longer drops GPU (channel-isolation) presentation, and device loss or renderer fallback rebuilds the image from the right source
