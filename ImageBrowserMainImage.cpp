@@ -187,6 +187,28 @@ namespace
             return false;
         }
     }
+
+    // Texture and view formats of a compressed passthrough texture. sRGB-encoded
+    // formats are viewed as their _UNORM twin (no sRGB-to-linear conversion on
+    // sampling): the D3D image shader and the B8G8R8A8_UNORM targets do no
+    // transfer conversion, so the stored values are what must be displayed.
+    struct CompressedTextureFormats
+    {
+        DXGI_FORMAT texture { DXGI_FORMAT_UNKNOWN };
+        DXGI_FORMAT view { DXGI_FORMAT_UNKNOWN };
+    };
+
+    CompressedTextureFormats CompressedFormatsFor(DXGI_FORMAT fmt)
+    {
+        switch (fmt)
+        {
+        case DXGI_FORMAT_BC1_UNORM_SRGB: return { DXGI_FORMAT_BC1_TYPELESS, DXGI_FORMAT_BC1_UNORM };
+        case DXGI_FORMAT_BC2_UNORM_SRGB: return { DXGI_FORMAT_BC2_TYPELESS, DXGI_FORMAT_BC2_UNORM };
+        case DXGI_FORMAT_BC3_UNORM_SRGB: return { DXGI_FORMAT_BC3_TYPELESS, DXGI_FORMAT_BC3_UNORM };
+        case DXGI_FORMAT_BC7_UNORM_SRGB: return { DXGI_FORMAT_BC7_TYPELESS, DXGI_FORMAT_BC7_UNORM };
+        default: return { fmt, fmt };
+        }
+    }
 }
 
 HRESULT CreateCompressedShaderResource(
@@ -200,12 +222,14 @@ HRESULT CreateCompressedShaderResource(
         return E_INVALIDARG;
     }
 
+    const CompressedTextureFormats formats = CompressedFormatsFor(payload.format);
+
     D3D11_TEXTURE2D_DESC td {};
     td.Width = payload.width;
     td.Height = payload.height;
     td.MipLevels = 1;
     td.ArraySize = 1;
-    td.Format = payload.format;
+    td.Format = formats.texture;
     td.SampleDesc.Count = 1;
     td.Usage = D3D11_USAGE_IMMUTABLE;
     td.BindFlags = D3D11_BIND_SHADER_RESOURCE;
@@ -222,7 +246,7 @@ HRESULT CreateCompressedShaderResource(
     if (texMs > 30)
     {
         FIC2_LOG_INFO("[D3D] CreateTexture2D {}x{} fmt={} took {}ms",
-            payload.width, payload.height, static_cast<int>(payload.format), texMs);
+            payload.width, payload.height, static_cast<int>(formats.texture), texMs);
     }
     if (FAILED(hrTex) || !tex)
     {
@@ -230,7 +254,15 @@ HRESULT CreateCompressedShaderResource(
         return FAILED(hrTex) ? hrTex : E_FAIL;
     }
 
-    const HRESULT hrSrv = device->CreateShaderResourceView(tex.Get(), nullptr, &outSrv);
+    // A null description views the texture in its own format; a _TYPELESS
+    // texture needs the view format spelled out.
+    D3D11_SHADER_RESOURCE_VIEW_DESC sd {};
+    sd.Format = formats.view;
+    sd.ViewDimension = D3D11_SRV_DIMENSION_TEXTURE2D;
+    sd.Texture2D.MostDetailedMip = 0;
+    sd.Texture2D.MipLevels = 1;
+    const HRESULT hrSrv = device->CreateShaderResourceView(
+        tex.Get(), formats.view != formats.texture ? &sd : nullptr, &outSrv);
     if (FAILED(hrSrv) || !outSrv)
     {
         LogImageHr(L"D3D CreateShaderResourceView", payload.sourcePath, hrSrv);
@@ -1194,6 +1226,8 @@ void ImageBrowserMainImage::ApplyPendingPayload(ID2D1RenderTarget* target)
                 {
                     m_texture->SetShaderResource(srv);
                 }
+                // The presented and cached format stays the source format (an
+                // _SRGB format included); only the view reads it as _UNORM.
                 ApplyPresentation(PresentationKind::ShaderResource, pending.sourcePath, pending.width,
                     pending.height, pending.format, AlphaInfoFromPayload(pending), pending.sourceMipLevels,
                     pending.sourceMipIndex, m_requestIdentity);
