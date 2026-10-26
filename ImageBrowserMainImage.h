@@ -15,6 +15,7 @@
 #include <atomic>
 #include <functional>
 #include <memory>
+#include <optional>
 #include <string>
 
 // FICture2 main-image control: owns FD2D::Image + Spinner + ImageAsyncBinding.
@@ -103,11 +104,45 @@ public:
     bool OnInputEvent(const FD2D::InputEvent& event) override;
 
 private:
+    // A GPU-cache entry about to be presented (cache hits of SetSourceFile and
+    // SelectMip).
+    struct CachedPresentation
+    {
+        Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> srv {};
+        std::wstring path {};
+        uint32_t width { 0 };
+        uint32_t height { 0 };
+        DXGI_FORMAT format { DXGI_FORMAT_UNKNOWN };
+        ImageAlphaInfo alpha {};
+        uint32_t sourceMipLevels { 1 };
+        uint32_t sourceMipIndex { 0 };
+        ImageSourceIdentity identity {};
+        uint64_t deviceGeneration { 0 };
+        // A new source (SetSourceFile) rather than another mip of the shown one.
+        bool replacesSource { false };
+    };
+
     void InitChildren();
     void RequestImageLoad();
     void SyncTextureDrawState();
+    // The frame's presentation handoff (see OnRenderD3D): installs a staged
+    // cache hit, a completed decode or a CPU re-upload before anything of this
+    // control is drawn in the frame, so both passes draw the same content.
+    void PresentPendingContent(ID2D1RenderTarget* target);
     void ApplyPendingPayload(ID2D1RenderTarget* target);
     void TryReuploadCpuPayload(ID2D1RenderTarget* target);
+    bool TryGetCachedPresentation(
+        const std::wstring& path,
+        uint32_t mipLevel,
+        const ImageSourceIdentity& identity,
+        CachedPresentation& out) const;
+    // Presents a cache hit now, or at the next frame's handoff when this
+    // frame's D3D pass has already drawn and its D2D pass has not.
+    void PresentCached(CachedPresentation&& cached);
+    void InstallCached(const CachedPresentation& cached);
+    // Between this control's D3D pass and its D2D pass of the same frame.
+    bool IsBetweenRenderPasses() const;
+    bool HasStagedContentForCurrentRequest() const;
     bool TryGetContentSize(D2D1_SIZE_F& outSize) const;
     void ClampPanToVisible();
     bool HasDisplayedContentForCurrentPath() const;
@@ -145,6 +180,11 @@ private:
     // Last applied CPU BGRA8 payload (kept across target/device invalidation for re-upload).
     ImageAsyncBinding::Payload m_cpuPayload {};
     bool m_needsCpuReupload { false };
+
+    // A cache hit that arrived between this frame's passes (presented at the
+    // next handoff), and whether this frame's handoff ran in the D3D pass.
+    std::optional<CachedPresentation> m_stagedCacheHit {};
+    bool m_presentedInD3DPass { false };
 
     uint32_t m_loadedW { 0 };
     uint32_t m_loadedH { 0 };
