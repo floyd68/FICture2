@@ -1,5 +1,6 @@
 #include "TestHarness.h"
 
+#include "BackplateTestAccess.h"
 #include "CommonUtil.h"
 #include "FD2D/Backplate.h"
 #include "FD2D/Core.h"
@@ -29,23 +30,6 @@
 // content comes from ImageGpuResourceCache (WARP SRVs), decodes go to a fake
 // service that never completes, and the backplate's device generation changes
 // through FD2D's test access - the same way a real device loss changes it.
-
-namespace FD2D
-{
-    struct BackplateTestAccess
-    {
-        static void TargetRecreated(Backplate& backplate)
-        {
-            backplate.InvalidateGraphics(GraphicsInvalidationReason::TargetRecreated, false, true, false);
-        }
-
-        static void DeviceLost(Backplate& backplate)
-        {
-            backplate.DiscardDeviceResources();
-            backplate.InvalidateGraphics(GraphicsInvalidationReason::DeviceLost, true, true, false);
-        }
-    };
-}
 
 using Microsoft::WRL::ComPtr;
 

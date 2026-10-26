@@ -24,6 +24,7 @@ public:
 
     explicit ThumbImageTile(const std::wstring& name);
 
+    // Setters invalidate only when the value changes.
     void SetFixedSize(const FD2D::Size& size);
     void SetFixedHeight(float height);
     void SetCaption(const std::wstring& text);

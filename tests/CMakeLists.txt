@@ -4,6 +4,7 @@
 add_executable(FICture2Tests
     TestHarness.h
     TestMain.cpp
+    BackplateTestAccess.h
     AppLogTests.cpp
     GpuPresentationTests.cpp
     IdleRenderingTests.cpp
@@ -21,6 +22,9 @@ add_executable(FICture2Tests
     ThumbStripTilesTests.cpp
     ImageBrowserRoutingTests.cpp
     ImageBrowserThumbStripTests.cpp
+    ListingRenderTests.cpp
+    ListingPixelTests.cpp
+    TestAssets.rc
     IpcOpenQueueTests.cpp
     ${PROJECT_SOURCE_DIR}/AppLog.cpp
     ${PROJECT_SOURCE_DIR}/ImageGpuResourceCache.cpp
@@ -115,6 +119,8 @@ add_test(NAME FICture2.ThumbStripLayout COMMAND FICture2Tests ThumbStripLayout_)
 add_test(NAME FICture2.ThumbPayloadCache COMMAND FICture2Tests ThumbPayloadCache_)
 add_test(NAME FICture2.ThumbStripTiles COMMAND FICture2Tests ThumbStripTiles_)
 add_test(NAME FICture2.ImageBrowserThumbStrip COMMAND FICture2Tests ImageBrowserThumbStrip_)
+add_test(NAME FICture2.ListingRender COMMAND FICture2Tests ListingRender_)
+add_test(NAME FICture2.ListingPixels COMMAND FICture2Tests ListingPixels_)
 add_test(NAME FICture2.FolderEnumeration COMMAND FICture2Tests FolderEnumeration_)
 add_test(NAME FICture2.FolderEnumerationForcedExit COMMAND FICture2Tests FolderEnumerationForcedExit_)
 add_test(NAME FICture2.ArchiveReadCancel COMMAND FICture2Tests ArchiveReadCancel_)

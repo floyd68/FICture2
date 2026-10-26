@@ -1,5 +1,6 @@
 #pragma once
 
+#include "DeferredRenderScope.h"
 #include "FD2D/Backplate.h"
 #include "ImageViewTypes.h"
 #include "IpcOpenRequest.h"
@@ -13,7 +14,7 @@
 
 class FolderListingWakeup;
 
-class Ficture2Backplate : public FD2D::Backplate
+class Ficture2Backplate : public FD2D::Backplate, public DeferredLayoutHost
 {
 public:
     using FD2D::Backplate::Backplate;
@@ -124,6 +125,15 @@ public:
     void SaveImageBrowserSession(const std::wstring& iniFile);
     bool TryRestoreImageBrowserSession(const std::wstring& iniFile);
     void UpdateTitleBarInfo() override;
+
+    // Test seam: the browsers attached from now on do not load the user's
+    // INI settings (the defaults stay).
+    void SkipImageBrowserIniForTesting() { m_imageBrowserIniInitialized = true; }
+
+    // Measures and arranges the top-level Wnds in the client area, as the
+    // next render's layout pass will, without rendering: for code that needs
+    // arranged bounds while a DeferredRenderScope holds the layout request.
+    void ArrangeChildrenNow() override;
 
 private:
     std::shared_ptr<EventBus> m_eventBus { std::make_shared<EventBus>() };

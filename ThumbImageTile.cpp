@@ -1,4 +1,6 @@
 #include "ThumbImageTile.h"
+
+#include "DeferredRenderScope.h"
 #include "ThumbTileStyle.h"
 #include "FD2D/Backplate.h"
 
@@ -53,6 +55,8 @@ void ThumbImageTile::SetFixedHeight(float height)
         return;
     }
 
+    // The repaint and the relayout render one frame (none in a listing).
+    const DeferredRenderScope batchRender(BackplateRef());
     const bool wasVariableWidth = m_useVariableWidth;
     m_useVariableWidth = true;
     m_fixedHeight = height;
@@ -71,11 +75,7 @@ void ThumbImageTile::SetFixedHeight(float height)
     }
     
     Invalidate();
-    
-    if (BackplateRef() != nullptr)
-    {
-        BackplateRef()->RequestLayout();
-    }
+    DeferredRenderScope::RequestLayout(BackplateRef());
 }
 
 void ThumbImageTile::SetCaption(const std::wstring& text)
@@ -111,11 +111,11 @@ void ThumbImageTile::Recycle()
 
 void ThumbImageTile::SetSelected(bool selected)
 {
+    // The image control shows the selection and invalidates when it changes.
     if (m_image)
     {
         m_image->SetSelected(selected);
     }
-    Invalidate();
 }
 
 void ThumbImageTile::SetOnClick(ClickHandler handler)

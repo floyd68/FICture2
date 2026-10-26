@@ -57,6 +57,7 @@ public:
     // tiles render; OnRender runs it too. Returns true when one was admitted.
     bool AdmitCompletedPayload();
 
+    // Selection, style and spinner setters invalidate only on a change.
     void SetSelected(bool selected);
     bool Selected() const { return m_selected; }
     void SetSelectionStyle(const FD2D::SelectionStyle& style);

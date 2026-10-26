@@ -26,6 +26,7 @@
 #include "Ficture2Backplate.h"
 #include "AppLog.h"
 #include "AppSetup.h"
+#include "DeferredRenderScope.h"
 #include "RecentFiles.h"
 
 #include "FD2D/FD2D.h"
@@ -618,7 +619,7 @@ namespace
             m_thumbArrangePending = true;
             if (BackplateRef() != nullptr)
             {
-                BackplateRef()->RequestLayout();
+                DeferredRenderScope::RequestLayout(BackplateRef());
             }
         }
 
@@ -1265,7 +1266,7 @@ namespace
             ApplySplitRatiosRecursive(m_hHost, m_hPanes, ratios, idx);
             if (BackplateRef() != nullptr)
             {
-                BackplateRef()->RequestLayout();
+                DeferredRenderScope::RequestLayout(BackplateRef());
             }
         }
 
@@ -1483,6 +1484,8 @@ namespace
             }
             const float newHeight = sizing.newThumbSide;
 
+            // Resizing the attached tiles renders one frame (none inside a render).
+            const DeferredRenderScope batchRender(BackplateRef());
             CaptureThumbAnchor();   // the visible anchor stays put while widths scale
             m_thumbW = newHeight; // Keep this for navigation tiles
             m_thumbH = newHeight;
@@ -1507,16 +1510,15 @@ namespace
                 }
                 if (tile.navTile)
                 {
-                    // Navigation tiles remain square
+                    // Navigation tiles remain square (invalidates on a change)
                     tile.navTile->SetFixedSize({ m_thumbW, m_thumbH });
-                    tile.navTile->Invalidate();
                 }
             }
             RebuildThumbLayout();
 
             if (BackplateRef() != nullptr)
             {
-                BackplateRef()->RequestLayout();
+                DeferredRenderScope::RequestLayout(BackplateRef());
             }
             m_lastThumbSizingApplyMs = sizing.updatedApplyMs;
             return true;
@@ -2068,7 +2070,7 @@ namespace
 
             if (BackplateRef() != nullptr)
             {
-                BackplateRef()->RequestLayout();
+                DeferredRenderScope::RequestLayout(BackplateRef());
             }
             return true;
         }
@@ -2445,6 +2447,8 @@ namespace
 
         void ToggleNavItems()
         {
+            // This browser and the browsers it synchronizes render once.
+            const DeferredRenderScope batchRender(BackplateRef());
             m_showNavItems = !m_showNavItems;
             ApplyShowNavItems(m_showNavItems);
 
@@ -2725,6 +2729,11 @@ namespace
                 return;
             }
 
+            // Applying a listing renders one frame when it is done: the tile
+            // setters, the selection and the main image only mark the window
+            // dirty until then (FD2D renders on every Invalidate() otherwise).
+            const DeferredRenderScope batchRender(BackplateRef());
+
             // The anchor and the previous selection refer to the items shown
             // so far, before the model's display order changes.
             CaptureThumbAnchor();
@@ -2815,7 +2824,7 @@ namespace
 
             if (BackplateRef() != nullptr)
             {
-                BackplateRef()->RequestLayout();
+                DeferredRenderScope::RequestLayout(BackplateRef());
                 Invalidate();
             }
         }
@@ -2866,6 +2875,7 @@ namespace
         {
             ImageBrowserThumbStripController::MaterializeContext context {};
             context.panel = (m_thumbPane != nullptr) ? m_thumbPane->Panel() : nullptr;
+            context.backplate = BackplateRef();
             context.tiles = &m_thumbTiles;
             context.thumbW = m_thumbW;
             context.thumbH = m_thumbH;
@@ -3143,7 +3153,7 @@ namespace
         {
             if (BackplateRef() != nullptr)
             {
-                BackplateRef()->RequestLayout();
+                DeferredRenderScope::RequestLayout(BackplateRef());
             }
         }
 

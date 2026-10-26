@@ -217,6 +217,10 @@ void ImageBrowserThumbImage::SetSelected(bool selected)
 
 void ImageBrowserThumbImage::SetSelectionStyle(const FD2D::SelectionStyle& style)
 {
+    if (FD2D::SameSelectionStyle(m_selectionStyle, style))
+    {
+        return;
+    }
     m_selectionStyle = style;
     m_selectionBrush.Reset();
     m_selectionShadowBrush.Reset();
