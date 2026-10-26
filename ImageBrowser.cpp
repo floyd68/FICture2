@@ -400,13 +400,22 @@ namespace
             ThumbIndexRange visible {};        // items in the viewport
         };
 
+        // Which strip viewport the materialized range follows.
+        enum class ThumbViewportBasis
+        {
+            // The one the next layout pass settles on (a list rebuild, before
+            // its pending centering or anchor adjustment is applied).
+            Expected,
+            // The scroll offset the frame being rendered presents.
+            Presented,
+        };
+
         // The model indices that have tiles: the items in the strip viewport
         // plus a prefetch margin of at most ThumbStripLayout::kMaxPrefetchItems
         // items on each side (ThumbStripLayout::MaterializeRange), so
-        // far-offscreen items have neither a tile nor a decode request. The
-        // viewport is the one the next layout pass settles on; before the
-        // first layout pass, the selection and the margin around it.
-        ThumbRanges MaterializedThumbRange(size_t selectedIndex) const
+        // far-offscreen items have neither a tile nor a decode request. Before
+        // the first layout pass: the selection and the margin around it.
+        ThumbRanges MaterializedThumbRange(size_t selectedIndex, ThumbViewportBasis basis) const
         {
             ThumbRanges ranges {};
             if (!ThumbLayoutReady())
@@ -421,7 +430,10 @@ namespace
                 ranges.materialized = { first, last };
                 return ranges;
             }
-            left = ExpectedThumbViewportLeft(left, width, selectedIndex);
+            if (basis == ThumbViewportBasis::Expected)
+            {
+                left = ExpectedThumbViewportLeft(left, width, selectedIndex);
+            }
             const auto [first, last] = m_thumbLayout.MaterializeRange(left, left + width);
             const auto [visibleFirst, visibleLast] = m_thumbLayout.Range(left, left + width);
             ranges.materialized = { first, last };
@@ -452,9 +464,9 @@ namespace
         }
 
         // Binds tiles for MaterializedThumbRange(), highlighting `selectedIndex`.
-        void MaterializeThumbTiles(size_t selectedIndex)
+        void MaterializeThumbTiles(size_t selectedIndex, ThumbViewportBasis basis = ThumbViewportBasis::Expected)
         {
-            auto context = MakeThumbMaterializeContext(selectedIndex);
+            auto context = MakeThumbMaterializeContext(selectedIndex, basis);
             m_thumbStripController.MaterializeTiles(context);
         }
 
@@ -479,17 +491,40 @@ namespace
             {
                 return;
             }
-            if (MaterializedThumbRange(m_selectedIndex).materialized == m_thumbTiles.Range())
+            // The frame's scroll transform is already set: follow the offset it
+            // presents (SettleThumbStripGeometry applied pending adjustments).
+            if (MaterializedThumbRange(m_selectedIndex, ThumbViewportBasis::Presented).materialized == m_thumbTiles.Range())
             {
                 return;
             }
-            MaterializeThumbTiles(m_selectedIndex);
+            MaterializeThumbTiles(m_selectedIndex, ThumbViewportBasis::Presented);
             // This frame's layout pass already ran: place the tiles now (by
             // their model indices), so the frame shows them where they belong.
             if (auto strip = m_thumbPane->StripPanel())
             {
                 strip->ArrangeTiles();
             }
+        }
+
+        // Extents changed during this render (row height from the splitter, a
+        // progressive list update) wait for the next layout pass to re-arrange
+        // the strip and apply the scroll adjustment. Apply both now, before the
+        // scroll view captures this frame's transform, so the frame draws the
+        // tiles at the extents and offset it presents.
+        void SettleThumbStripGeometry()
+        {
+            const auto scroll = m_thumbPane ? m_thumbPane->Scroll() : nullptr;
+            if (!scroll || !(m_thumbArrangePending || m_thumbCenterPending || m_thumbAnchor.valid))
+            {
+                return;
+            }
+            const D2D1_RECT_F rect = scroll->LayoutRect();
+            if (rect.right - rect.left <= 1.0f || rect.bottom - rect.top <= 0.0f)
+            {
+                return;
+            }
+            scroll->Arrange({ rect.left, rect.top, rect.right - rect.left, rect.bottom - rect.top });
+            ApplyThumbScrollAfterArrange();
         }
 
         // The strip viewport in panel coordinates: [left, left + width).
@@ -657,6 +692,7 @@ namespace
             }
             // Throttle progressive UI list updates so large folders don't monopolize the UI thread.
             ApplyThrottledProgressiveUpdate();
+            SettleThumbStripGeometry();
             // Tile materialization and load priorities run when the strip
             // panel renders (OnBeforeRenderStripTiles), after the scroll view
             // advanced this frame's smooth scroll.
@@ -2812,7 +2848,9 @@ namespace
             }
         }
 
-        ImageBrowserThumbStripController::MaterializeContext MakeThumbMaterializeContext(size_t selectedIndex)
+        ImageBrowserThumbStripController::MaterializeContext MakeThumbMaterializeContext(
+            size_t selectedIndex,
+            ThumbViewportBasis basis)
         {
             ImageBrowserThumbStripController::MaterializeContext context {};
             context.panel = (m_thumbPane != nullptr) ? m_thumbPane->Panel() : nullptr;
@@ -2820,7 +2858,7 @@ namespace
             context.thumbW = m_thumbW;
             context.thumbH = m_thumbH;
             context.model = &m_thumbModel;
-            const ThumbRanges ranges = MaterializedThumbRange(selectedIndex);
+            const ThumbRanges ranges = MaterializedThumbRange(selectedIndex, basis);
             context.range = ranges.materialized;
             context.visible = ranges.visible;
             context.selectedIndex = selectedIndex;

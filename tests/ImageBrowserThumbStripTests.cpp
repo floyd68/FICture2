@@ -3,6 +3,7 @@
 #include "CommonUtil.h"
 #include "FD2D/Backplate.h"
 #include "FD2D/ScrollView.h"
+#include "FD2D/SplitPanel.h"
 #include "ImageBrowser.h"
 #include "ImageBrowserThumbImage.h"
 #include "ImageBrowserThumbLayout.h"
@@ -14,6 +15,7 @@
 
 #include <algorithm>
 #include <chrono>
+#include <cmath>
 #include <cstdio>
 #include <filesystem>
 #include <memory>
@@ -311,4 +313,67 @@ FIC2_TEST(ImageBrowserThumbStrip_AnimatedFarJumpKeepsEveryFrameCovered)
     animateTo(1000);   // End
     animateTo(0);      // Home
     animateTo(500);
+}
+
+// Resizing the strip (the splitter) while scrolled deep into the folder
+// changes every extent during the render; the frame presented right then must
+// still draw tiles where its viewport is: the visible items have tiles whose
+// rectangles match the layout and lie in the rendered viewport.
+FIC2_TEST(ImageBrowserThumbStrip_ResizeWhileScrolledKeepsTheFrameCovered)
+{
+    ThumbTestSupport::ComScope com;
+    ThumbTestSupport::ScopedDecodeService decodes;
+    ThumbTestSupport::Canvas canvas;
+    FIC2_REQUIRE(canvas.Create(kWidth, kHeight));
+    const ImageFolder folder(L"StripResize", 1000);
+
+    FD2D::Backplate backplate(L"thumb-strip-resize-test");
+    BrowserStrip strip;
+    strip.browser = CreateImageBrowser(L"strip_resize_browser");
+    strip.decodes = &decodes.service;
+    strip.canvas = &canvas;
+    FIC2_REQUIRE(backplate.AddWnd(strip.browser));
+    auto* ops = dynamic_cast<IImageBrowserOps*>(strip.browser.get());
+    FIC2_REQUIRE(ops != nullptr);
+    ops->BrowserRestoreOpenFolder(folder.dir.wstring());
+    FIC2_REQUIRE(strip.LoadUntil(1000 + 1));
+    const auto it = strip.browser->Children().find(L"rootSplit");
+    FIC2_REQUIRE(it != strip.browser->Children().end());
+    auto split = std::dynamic_pointer_cast<FD2D::SplitPanel>(it->second);
+    FIC2_REQUIRE(split != nullptr);
+
+    strip.ScrollTo(strip.ContentEnd() * 0.5f);
+    float rowHeight = strip.Strip().RowHeight();
+    size_t resized = 0;
+    for (const float ratio : { 0.65f, 0.75f, 0.6f, 0.8f, 0.7f, 0.85f })
+    {
+        split->SetSplitRatio(ratio);
+        strip.Frame();
+        strip.CheckBounds();
+        if (strip.Strip().RowHeight() != rowHeight)
+        {
+            ++resized;
+            rowHeight = strip.Strip().RowHeight();
+        }
+
+        // Physically: each visible item's tile is where the layout puts it,
+        // and inside the viewport the frame was rendered with.
+        const D2D1_RECT_F view = strip.Scroll().LayoutRect();
+        const float scrollX = strip.Scroll().ScrollX();
+        const float panelLeft = strip.Strip().LayoutRect().left;
+        const auto [first, last] = strip.Visible();
+        FIC2_CHECK(first < last);
+        for (size_t index = first; index < last; ++index)
+        {
+            const ThumbTile* tile = strip.Tiles().Find(index);
+            FIC2_REQUIRE(tile != nullptr);
+            const D2D1_RECT_F rect = tile->focus->LayoutRect();
+            FIC2_CHECK(std::fabs(rect.left - (panelLeft + strip.Layout().Start(index))) < 0.5f);
+            FIC2_CHECK(std::fabs(rect.right - (panelLeft + strip.Layout().End(index))) < 0.5f);
+            const float shownLeft = rect.left - scrollX;
+            const float shownRight = rect.right - scrollX;
+            FIC2_CHECK(shownRight > view.left && shownLeft < view.right);
+        }
+    }
+    FIC2_CHECK(resized >= 4);
 }
