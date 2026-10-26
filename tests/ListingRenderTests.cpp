@@ -112,13 +112,32 @@ namespace
         size_t m_layouts { 0 };
     };
 
+    // A plain FD2D backplate that can lay out without rendering, as
+    // Ficture2Backplate can (DeferredLayoutHost).
+    class TestBackplate : public FD2D::Backplate, public DeferredLayoutHost
+    {
+    public:
+        using FD2D::Backplate::Backplate;
+
+        void ArrangeChildrenNow() override
+        {
+            const float width = static_cast<float>(m_size.width);
+            const float height = static_cast<float>(m_size.height);
+            for (const auto& child : m_childrenOrdered)
+            {
+                (void)child->Measure({ width, height });
+                child->Arrange({ 0.0f, 0.0f, width, height });
+            }
+        }
+    };
+
     // A backplate that renders into a hidden window, with a frame probe.
     // Declared before anything attached to it (destroyed after it).
     struct RenderingBackplate
     {
         ThumbTestSupport::ComScope com;
         RenderWindow window;
-        FD2D::Backplate backplate { L"listing-render-test" };
+        TestBackplate backplate { L"listing-render-test" };
         std::shared_ptr<RenderProbe> probe { std::make_shared<RenderProbe>() };
 
         bool Create()
@@ -382,6 +401,54 @@ FIC2_TEST(ListingRender_NestedScopesRenderOnceAtTheOutermost)
     }
     FIC2_CHECK(rendering.Frames() == before + 2);
     FIC2_CHECK(!rendering.backplate.IsDeferringRender());
+}
+
+// A layout request held by a scope that cannot render - nested in a native
+// FD2D deferred-render scope, or ended by an exception - renders no frame:
+// the layout pass runs without rendering, and the next frame (the enclosing
+// scope's, or the queued paint) shows it.
+FIC2_TEST(ListingRender_HeldLayoutRendersNothingInsideAnFD2DScopeOrWhileUnwinding)
+{
+    RenderingBackplate rendering;
+    FIC2_REQUIRE(rendering.Create());
+    auto nav = std::make_shared<ThumbNavTile>(L"nav");
+    FIC2_REQUIRE(rendering.backplate.AddWnd(nav));
+    rendering.backplate.Render();
+
+    // Inside a native batch (as Backplate::HandleFileDragOver opens one).
+    size_t frames = rendering.Frames();
+    size_t layouts = rendering.probe->Layouts();
+    rendering.backplate.BeginDeferredRender();
+    {
+        const DeferredRenderScope scope(&rendering.backplate);
+        DeferredRenderScope::RequestLayout(&rendering.backplate);
+        nav->SetText(L"x");
+    }
+    FIC2_CHECK(rendering.Frames() == frames);
+    FIC2_CHECK(rendering.probe->Layouts() == layouts + 1);
+    FIC2_CHECK(rendering.backplate.IsDeferringRender());
+    rendering.backplate.EndDeferredRender();
+    rendering.backplate.Render();   // the native batch's frame
+    FIC2_CHECK(rendering.Frames() == frames + 1);
+
+    // Ended by an exception.
+    frames = rendering.Frames();
+    layouts = rendering.probe->Layouts();
+    try
+    {
+        const DeferredRenderScope scope(&rendering.backplate);
+        DeferredRenderScope::RequestLayout(&rendering.backplate);
+        nav->SetText(L"y");
+        throw 1;
+    }
+    catch (int)
+    {
+    }
+    FIC2_CHECK(rendering.Frames() == frames);
+    FIC2_CHECK(rendering.probe->Layouts() == layouts + 1);
+    FIC2_CHECK(!rendering.backplate.IsDeferringRender());
+    rendering.backplate.Render();   // the queued paint's frame
+    FIC2_CHECK(rendering.Frames() == frames + 1);
 }
 
 namespace
