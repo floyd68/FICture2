@@ -20,6 +20,12 @@
 // file name, ties by arrival order. Each entry carries its precomputed sort and
 // lookup keys, so merging a chunk sorts only that chunk and merges it linearly
 // into the existing order (no full re-sort, no per-comparison case folding).
+//
+// Staged listing: a progressive listing classifies and de-duplicates chunks as
+// they arrive (Stage) but changes the displayed items only on Commit, which the
+// strip runs when it rebuilds. Display indices therefore stay those of the last
+// rebuild, so the strip's layout, tiles and selection index can refer to the
+// model by index between rebuilds. Reset and Merge are a stage plus a commit.
 struct ThumbModelEntry
 {
     ThumbItemKind kind { ThumbItemKind::Image };
@@ -41,11 +47,20 @@ public:
     // the same folder reuses its tiles, which report an aspect only when their
     // bitmap changes.
     void Reset(const Floar::VirtualPath& folder, bool showNavItems, ImageFilter isImage);
+    // As Reset, but the displayed items (and aspects) are replaced only by the
+    // next Commit; later Stage calls de-duplicate against the new listing.
+    void StageReset(const Floar::VirtualPath& folder, bool showNavItems, ImageFilter isImage);
 
     // Classifies `entries`, drops duplicates and unsupported files, and merges
     // the rest into the order. Returns how many items were added.
     size_t Merge(const std::vector<Floar::VirtualFileEntry>& entries);
+    // As Merge, but the items join the display order only on the next Commit.
+    size_t Stage(const std::vector<Floar::VirtualFileEntry>& entries);
+    // Applies a staged reset and merges the staged items into the display
+    // order. Returns true if the displayed items changed.
+    bool Commit();
 
+    // The displayed (committed) listing.
     const Floar::VirtualPath& Folder() const { return m_folder; }
     bool ShowNavItems() const { return m_showNavItems; }
 
@@ -58,7 +73,9 @@ public:
 
     // Items in the strip: Up + folders (with nav items) + images.
     size_t DisplayCount() const;
-    // Entries merged so far, before filtering (diagnostics).
+    // Item `index` (< DisplayCount()) in display order.
+    const ThumbModelEntry& At(size_t index) const;
+    // Entries staged since the last reset, before filtering (diagnostics).
     size_t ListedCount() const { return m_listed; }
 
     static std::wstring SortKeyFor(const Floar::VirtualPath& path);
@@ -73,15 +90,25 @@ public:
 private:
     static void MergeSorted(std::vector<ThumbModelEntry>& into, std::vector<ThumbModelEntry>&& added);
 
+    // Displayed (committed) items.
     Floar::VirtualPath m_folder {};
     bool m_showNavItems { true };
-    ImageFilter m_isImage {};
     std::optional<ThumbModelEntry> m_up {};
     std::vector<ThumbModelEntry> m_folders {};
     std::vector<ThumbModelEntry> m_images {};
+    std::unordered_map<std::wstring, float> m_aspectByKey {};
+
+    // The listing being staged: classification, de-duplication keys, and what
+    // the next Commit applies.
+    ImageFilter m_isImage {};
     std::unordered_set<std::wstring> m_folderKeys {};
     std::unordered_set<std::wstring> m_imageKeys {};
-    std::unordered_map<std::wstring, float> m_aspectByKey {};
     uint64_t m_nextArrival { 0 };
     size_t m_listed { 0 };
+    bool m_resetPending { false };
+    Floar::VirtualPath m_pendingFolder {};
+    bool m_pendingShowNavItems { true };
+    std::optional<ThumbModelEntry> m_pendingUp {};
+    std::vector<ThumbModelEntry> m_stagedFolders {};
+    std::vector<ThumbModelEntry> m_stagedImages {};
 };

@@ -2362,7 +2362,7 @@ namespace
             FD2D::Backplate* bp = BackplateRef();
             if (bp == nullptr)
             {
-                RebuildThumbListImmediate(preferSelectPath, nullptr);
+                RebuildThumbListImmediate(preferSelectPath, true);
                 return;
             }
 
@@ -2386,7 +2386,9 @@ namespace
             FIC2_LOG_INFO("[ThumbLoad] Started loading folder '{}' (browser={})",
                 AppLog::ToUtf8(folder.wstring()),
                 AppLog::ToUtf8(browserName));
-            ResetThumbModel(folder, showNavItems);
+            // The strip keeps showing the committed items until the first
+            // progressive update commits the new listing.
+            m_thumbModel.StageReset(folder, showNavItems, ImageFilterForThumbModel());
             m_progressivePreferSelectPath = preferSelectPath;
             m_progressiveUiDirty = false;
             m_progressiveLoadCompleted = false;
@@ -2500,7 +2502,7 @@ namespace
             FIC2_TIMER_START(t_apply);
             RebuildThumbListImmediate(
                 m_progressivePreferSelectPath,
-                &m_thumbModel,
+                false,
                 applySelection);
             const auto applyMs = FIC2_ELAPSED_MS(t_apply);
             FIC2_LOG_INFO(
@@ -2518,39 +2520,47 @@ namespace
             }
         }
 
-        void ResetThumbModel(const Floar::VirtualPath& folder, bool showNavItems)
+        static ThumbItemModel::ImageFilter ImageFilterForThumbModel()
         {
-            m_thumbModel.Reset(folder, showNavItems, [](const Floar::VirtualPath& p)
+            return [](const Floar::VirtualPath& p)
             {
                 return ImageAwareVfs::IsImageFile(p);
-            });
+            };
         }
 
-        // `model` holds the (progressively) listed items; without one, the
-        // current folder is listed synchronously into m_thumbModel first.
+        // Rebuilds the strip from m_thumbModel. With `listSynchronously` the
+        // current folder is listed into it first; otherwise the progressively
+        // staged listing is committed.
         void RebuildThumbListImmediate(
             const Floar::VirtualPath& preferSelectPath,
-            const ThumbItemModel* model,
+            bool listSynchronously,
             bool applySelection = true)
         {
             if (!m_thumbPane || !m_thumbPane->Panel())
             {
                 return;
             }
-            if (model == nullptr)
+
+            // The anchor and the previous selection refer to the items shown
+            // so far, before the model's display order changes.
+            CaptureThumbAnchor();
+            const std::wstring previousSelectedKey = ThumbItemKey(m_selectedIndex);
+            if (listSynchronously)
             {
-                ResetThumbModel(m_currentFolder, m_showNavItems);
+                m_thumbModel.Reset(m_currentFolder, m_showNavItems, ImageFilterForThumbModel());
                 if (!m_currentFolder.hostPath.empty())
                 {
                     (void)m_thumbModel.Merge(Floar::VirtualFileSystem::ListDirectory(m_currentFolder));
                 }
-                model = &m_thumbModel;
             }
+            else
+            {
+                (void)m_thumbModel.Commit();
+            }
+            const ThumbItemModel* model = &m_thumbModel;
 
             FIC2_TIMER_START(t_rebuild);
 
-            CaptureThumbAnchor();
-            const std::wstring previousSelectedKey = ThumbItemKey(m_selectedIndex);
             m_items.clear();
             m_typeSelectQuery.clear();
             m_selectedIndex = static_cast<size_t>(-1);
@@ -3119,7 +3129,7 @@ namespace
         std::atomic<unsigned long long> m_thumbListRequestId { 0 };
         bool m_thumbListLoading { false };
         Floar::VirtualPath m_progressivePreferSelectPath {};
-        ThumbItemModel m_thumbModel {};   // listed items of m_currentFolder
+        ThumbItemModel m_thumbModel {};   // the strip's items (committed); a progressive listing is staged in it
         ThumbStripLayout m_thumbLayout {};  // geometry of m_items (see ApplyThumbScrollAfterArrange)
         std::unordered_map<std::wstring, size_t> m_thumbItemIndexByKey {};
         ThumbScrollAnchor m_thumbAnchor {};

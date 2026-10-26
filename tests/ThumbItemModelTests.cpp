@@ -146,6 +146,74 @@ FIC2_TEST(ThumbItemModel_AspectsSurviveASameFolderRebuild)
     FIC2_CHECK(model.AspectOf(key) == 0.0f);
 }
 
+FIC2_TEST(ThumbItemModel_AtFollowsTheDisplayOrder)
+{
+    ThumbItemModel model;
+    model.Reset(kFolder, true, &IsTestImage);
+    (void)model.Merge(Listing());
+    std::vector<std::wstring> names;
+    for (size_t i = 0; i < model.DisplayCount(); ++i)
+    {
+        names.push_back(model.At(i).path.GetFilename());
+    }
+    FIC2_CHECK(model.At(0).kind == ThumbItemKind::Up);
+    FIC2_CHECK(model.At(0).lookupKey == ThumbItemModel::LookupKeyFor(kFolder.GetParent()));
+    FIC2_CHECK(model.At(1).kind == ThumbItemKind::Folder);
+    FIC2_CHECK(model.At(4).kind == ThumbItemKind::Image);
+    names.erase(names.begin());   // the Up item's name is the parent's
+    FIC2_CHECK(names == (std::vector<std::wstring> { L"alpha", L"pack.zip", L"Zeta", L"A.png", L"b.png", L"c.dds" }));
+
+    // Without nav items, index 0 is the first image.
+    ThumbItemModel hidden;
+    hidden.Reset(kFolder, false, &IsTestImage);
+    (void)hidden.Merge(Listing());
+    FIC2_CHECK(hidden.At(0).path.GetFilename() == L"A.png");
+    FIC2_CHECK(hidden.At(2).path.GetFilename() == L"c.dds");
+}
+
+FIC2_TEST(ThumbItemModel_StagedListingIsDisplayedOnCommit)
+{
+    // A progressive listing stages chunks; the displayed items (and their
+    // display indices) change only when the strip commits them.
+    ThumbItemModel model;
+    model.Reset(kFolder, true, &IsTestImage);
+    (void)model.Merge(Listing());
+    const std::wstring key = ThumbItemModel::LookupKeyFor(File(L"b.png").path);
+    FIC2_CHECK(model.SetAspect(key, 2.0f));
+    FIC2_CHECK(!model.Commit());   // nothing staged
+
+    // Staged items in the same folder: de-duplicated now, displayed later.
+    FIC2_CHECK(model.Stage({ File(L"aa.png"), File(L"B.PNG") }) == 1);
+    FIC2_CHECK(model.Stage({ File(L"AA.png") }) == 0);   // duplicate of a staged item
+    FIC2_CHECK(Names(model.Images()) == (std::vector<std::wstring> { L"A.png", L"b.png", L"c.dds" }));
+    FIC2_CHECK(model.Commit());
+    FIC2_CHECK(Names(model.Images()) == (std::vector<std::wstring> { L"A.png", L"aa.png", L"b.png", L"c.dds" }));
+
+    // A staged reset to another folder keeps the displayed items and aspects.
+    const Floar::VirtualPath other(std::filesystem::path(L"C:\\Pictures\\Other"));
+    model.StageReset(other, false, &IsTestImage);
+    FIC2_CHECK(model.Stage({ Floar::VirtualFileEntry(Floar::VirtualPath(other.hostPath / L"z.png"), false, 0, 0) }) == 1);
+    FIC2_CHECK(model.Stage({ File(L"A.png") }) == 1);   // de-duplicated against the new listing only
+    FIC2_CHECK(model.ListedCount() == 2);
+    FIC2_CHECK(model.DisplayCount() == 8);
+    FIC2_CHECK(model.Folder() == kFolder);
+    FIC2_CHECK(model.At(0).kind == ThumbItemKind::Up);
+    FIC2_CHECK(model.AspectOf(key) == 2.0f);
+
+    FIC2_CHECK(model.Commit());
+    FIC2_CHECK(model.Folder() == other);
+    FIC2_CHECK(!model.ShowNavItems());
+    FIC2_CHECK(!model.Up().has_value());
+    FIC2_CHECK(Names(model.Images()) == (std::vector<std::wstring> { L"A.png", L"z.png" }));
+    FIC2_CHECK(model.AspectOf(key) == 0.0f);
+
+    // A staged reset with nothing staged still replaces the display on commit.
+    model.StageReset(kFolder, true, &IsTestImage);
+    FIC2_CHECK(model.DisplayCount() == 2);
+    FIC2_CHECK(model.Commit());
+    FIC2_CHECK(model.DisplayCount() == 1);   // Up only
+}
+
 FIC2_TEST(ThumbItemModel_ImageExtensionLookup)
 {
     // Direct registry lookup, case-insensitive; no extension, unsupported.
