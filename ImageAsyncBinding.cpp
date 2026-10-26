@@ -67,35 +67,28 @@ ImageAsyncBindingRegistry& ImageAsyncBindingRegistry::Instance()
     return instance;
 }
 
-void ImageAsyncBindingRegistry::Register(const std::shared_ptr<ImageAsyncBindingState>& state)
+ImageAsyncBindingRegistry::Handle ImageAsyncBindingRegistry::Register(const std::shared_ptr<ImageAsyncBindingState>& state)
 {
     if (!state)
     {
-        return;
+        return 0;
     }
 
     std::lock_guard<std::mutex> lock(m_mutex);
-    m_entries.push_back(state);
+    const Handle handle = ++m_nextHandle;
+    m_entries.emplace(handle, state);
+    return handle;
 }
 
-void ImageAsyncBindingRegistry::Unregister(const ImageAsyncBindingState* state)
+void ImageAsyncBindingRegistry::Unregister(Handle handle)
 {
-    if (!state)
+    if (handle == 0)
     {
         return;
     }
 
     std::lock_guard<std::mutex> lock(m_mutex);
-    m_entries.erase(
-        std::remove_if(
-            m_entries.begin(),
-            m_entries.end(),
-            [state](const std::weak_ptr<ImageAsyncBindingState>& weak)
-            {
-                auto locked = weak.lock();
-                return !locked || locked.get() == state;
-            }),
-        m_entries.end());
+    m_entries.erase(handle);
 }
 
 void ImageAsyncBindingRegistry::InvalidateAll()
@@ -104,29 +97,37 @@ void ImageAsyncBindingRegistry::InvalidateAll()
     {
         std::lock_guard<std::mutex> lock(m_mutex);
         live.reserve(m_entries.size());
-        for (auto& weak : m_entries)
+        for (auto it = m_entries.begin(); it != m_entries.end();)
         {
-            if (auto locked = weak.lock())
+            if (auto locked = it->second.lock())
             {
                 live.push_back(std::move(locked));
+                ++it;
+            }
+            else
+            {
+                // Drop expired entries while we hold the lock.
+                it = m_entries.erase(it);
             }
         }
-        // Drop expired weak_ptrs while we hold the lock.
-        m_entries.erase(
-            std::remove_if(
-                m_entries.begin(),
-                m_entries.end(),
-                [](const std::weak_ptr<ImageAsyncBindingState>& weak)
-                {
-                    return weak.expired();
-                }),
-            m_entries.end());
     }
 
     for (auto& state : live)
     {
         ImageAsyncBinding::InvalidateState(state);
     }
+}
+
+size_t ImageAsyncBindingRegistry::Count() const
+{
+    std::lock_guard<std::mutex> lock(m_mutex);
+    return m_entries.size();
+}
+
+bool ImageAsyncBindingRegistry::IsRegistered(Handle handle) const
+{
+    std::lock_guard<std::mutex> lock(m_mutex);
+    return m_entries.find(handle) != m_entries.end();
 }
 
 void ImageAsyncBindingRegistry::ShutdownPrepare()
@@ -170,12 +171,12 @@ void ImageAsyncBinding::InvalidateState(const std::shared_ptr<ImageAsyncBindingS
 ImageAsyncBinding::ImageAsyncBinding()
     : m_state(std::make_shared<ImageAsyncBindingState>())
 {
-    ImageAsyncBindingRegistry::Instance().Register(m_state);
+    m_registration = ImageAsyncBindingRegistry::Instance().Register(m_state);
 }
 
 ImageAsyncBinding::~ImageAsyncBinding()
 {
-    ImageAsyncBindingRegistry::Instance().Unregister(m_state.get());
+    ImageAsyncBindingRegistry::Instance().Unregister(m_registration);
     InvalidateState(m_state);
 }
 

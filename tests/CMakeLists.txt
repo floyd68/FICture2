@@ -16,8 +16,10 @@ add_executable(FICture2Tests
     ImageBrowserPathStateTests.cpp
     ThumbItemModelTests.cpp
     ThumbStripLayoutTests.cpp
+    ThumbTestSupport.h
     ThumbStripTilesTests.cpp
     ImageBrowserRoutingTests.cpp
+    ImageBrowserThumbStripTests.cpp
     IpcOpenQueueTests.cpp
     ${PROJECT_SOURCE_DIR}/AppLog.cpp
     ${PROJECT_SOURCE_DIR}/ImageGpuResourceCache.cpp
@@ -109,6 +111,7 @@ add_test(NAME FICture2.ImageBrowserRouting COMMAND FICture2Tests ImageBrowserRou
 add_test(NAME FICture2.ThumbItemModel COMMAND FICture2Tests ThumbItemModel_)
 add_test(NAME FICture2.ThumbStripLayout COMMAND FICture2Tests ThumbStripLayout_)
 add_test(NAME FICture2.ThumbStripTiles COMMAND FICture2Tests ThumbStripTiles_)
+add_test(NAME FICture2.ImageBrowserThumbStrip COMMAND FICture2Tests ImageBrowserThumbStrip_)
 add_test(NAME FICture2.FolderEnumeration COMMAND FICture2Tests FolderEnumeration_)
 add_test(NAME FICture2.FolderEnumerationForcedExit COMMAND FICture2Tests FolderEnumerationForcedExit_)
 add_test(NAME FICture2.ArchiveReadCancel COMMAND FICture2Tests ArchiveReadCancel_)

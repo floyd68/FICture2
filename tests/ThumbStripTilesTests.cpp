@@ -4,12 +4,17 @@
 #include "ImageBrowserThumbImage.h"
 #include "ImageBrowserThumbLayout.h"
 #include "ImageBrowserThumbModel.h"
+#include "ImageBrowserThumbPayloadStore.h"
 #include "ImageBrowserThumbStripController.h"
 #include "ImageBrowserThumbnailPane.h"
 #include "ThumbImageTile.h"
 #include "ThumbNavTile.h"
+#include "ThumbTestSupport.h"
+#include "CommonUtil.h"
 
+#include <algorithm>
 #include <cmath>
+#include <cstdio>
 #include <memory>
 #include <mutex>
 #include <string>
@@ -27,38 +32,6 @@ namespace
     {
         return std::fabs(a - b) < 0.001f;
     }
-
-    // Counts thumbnail decode requests; never completes them.
-    class CountingDecodeService : public IImageDecodeService
-    {
-    public:
-        ImageCore::ImageHandle RequestDecoded(
-            const ImageCore::ImageRequest&,
-            ImageCore::DecodedImageLoadCallback,
-            ImageCore::RequestPriority) override
-        {
-            std::lock_guard<std::mutex> lock(m_mutex);
-            return ++m_requests;
-        }
-
-        void Cancel(ImageCore::ImageHandle) override
-        {
-        }
-
-        void SetPriority(ImageCore::ImageHandle, ImageCore::RequestPriority) override
-        {
-        }
-
-        size_t RequestCount() const
-        {
-            std::lock_guard<std::mutex> lock(m_mutex);
-            return static_cast<size_t>(m_requests);
-        }
-
-    private:
-        mutable std::mutex m_mutex;
-        ImageCore::ImageHandle m_requests { 0 };
-    };
 
     const Floar::VirtualPath kFolder(std::filesystem::path(L"C:\\FICture2Tests\\Strip"));
 
@@ -85,7 +58,8 @@ namespace
     // Up, two folders, then img00.png .. img11.png: 15 items, images from index 3.
     struct Strip
     {
-        CountingDecodeService decodes {};
+        ThumbTestSupport::RecordingDecodeService decodes {};
+        std::shared_ptr<ThumbPayloadStore> payloads { std::make_shared<ThumbPayloadStore>() };
         ThumbItemModel model {};
         ThumbTileSet tiles {};
         std::shared_ptr<ThumbStripPanel> panel { std::make_shared<ThumbStripPanel>() };
@@ -122,6 +96,7 @@ namespace
             context.model = &model;
             context.range = range;
             context.selectedIndex = selected;
+            context.payloads = payloads;
             context.makeStableName = &StableName;
             controller.MaterializeTiles(context);
         }
@@ -159,6 +134,12 @@ namespace
             return tile->image ? tile->image->Selected() : tile->navTile->Selected();
         }
 
+        // The normalized path an image tile of item `index` loads.
+        std::wstring SourceOf(size_t index) const
+        {
+            return CommonUtil::NormalizePath(model.At(index).path.wstring());
+        }
+
         size_t SelectedTileCount() const
         {
             size_t count = 0;
@@ -181,6 +162,7 @@ FIC2_TEST(ThumbStripTiles_PanelPlacesPartialTilesAtTheirModelIndices)
     panel->SetPadding(4.0f);
     panel->SetLayout(&layout);
     panel->SetTiles(&tiles);
+    panel->SetRowHeight(64.0f);
 
     // Tiles for model indices 3..5 only: child 0 is item 3.
     std::vector<ThumbTile> bound;
@@ -219,7 +201,15 @@ FIC2_TEST(ThumbStripTiles_PanelPlacesPartialTilesAtTheirModelIndices)
     FIC2_CHECK(Near(tiles.Find(5)->focus->LayoutRect().left, 10.0f + layout.Start(5)));
     FIC2_CHECK(Near(tiles.Find(4)->focus->LayoutRect().left, 10.0f + 380.0f));   // 366 + 10 + 4
 
-    // An empty strip measures as its padding (as StackPanel did).
+    // Without any materialized tile the panel keeps the layout's extent and
+    // the row height: the strip does not collapse to its padding.
+    tiles.Clear();
+    const FD2D::Size noTilesSize = panel->Measure({ 2000.0f, 200.0f });
+    FIC2_CHECK(Near(noTilesSize.w, layout.ContentWidth()));
+    FIC2_CHECK(Near(noTilesSize.h, 64.0f + 8.0f));
+    panel->ClearChildren();
+
+    // An empty strip without a row height measures as its padding.
     ThumbStripLayout emptyLayout;
     emptyLayout.Reset({}, 4.0f, 4.0f);
     ThumbTileSet noTiles;
@@ -344,4 +334,318 @@ FIC2_TEST(ThumbStripTiles_SelectionByModelIndexWithoutATile)
     strip.controller.SelectItemByIndex(context, 13);
     FIC2_CHECK(strip.TileSelected(13));
     FIC2_CHECK(strip.SelectedTileCount() == 1);
+}
+
+// Recycling releases tiles and their bitmaps, not the decoded payload: an item
+// scrolled out of the materialized range and back is shown from the payload
+// retained for it, without a new decode request.
+FIC2_TEST(ThumbStripTiles_ScrollingBackToALoadedItemIssuesNoNewRequest)
+{
+    ThumbTestSupport::ComScope com;
+    ThumbTestSupport::Canvas canvas;
+    FIC2_REQUIRE(canvas.Create(64, 64));
+    Strip strip;
+
+    strip.Materialize({ 3, 6 });
+    FIC2_REQUIRE(strip.decodes.RequestCount() == 3);
+    for (size_t index = 3; index < 6; ++index)
+    {
+        const ImageCore::ImageHandle handle = strip.decodes.LatestThumbnailFor(strip.SourceOf(index));
+        FIC2_REQUIRE(handle != 0);
+        strip.decodes.Complete(handle, S_OK, ThumbTestSupport::MakeBgraImage(4, 2));
+        auto image = strip.tiles.Find(index)->image;
+        FIC2_REQUIRE(SUCCEEDED(canvas.Render(*image)));   // presents (and retains) the payload
+        FIC2_CHECK(image->GetBitmapSize().width == 4.0f);
+    }
+    FIC2_CHECK(strip.payloads->Count() == 3);
+
+    // A prefetch tile offscreen (never rendered) finishes decoding too.
+    strip.Materialize({ 3, 7 });
+    strip.decodes.Complete(strip.decodes.LatestThumbnailFor(strip.SourceOf(6)), S_OK,
+        ThumbTestSupport::MakeBgraImage(4, 2));
+
+    // Out of the range: the tiles are released ...
+    strip.Materialize({ 9, 12 });
+    FIC2_CHECK(strip.tiles.Find(4) == nullptr);
+    FIC2_CHECK(strip.payloads->Count() == 4);   // item 6's payload is retained, not dropped
+    const size_t requestsAway = strip.decodes.RequestCount();
+    FIC2_CHECK(requestsAway == 7);
+
+    // ... and back: no new request; the next render rebuilds the bitmaps.
+    strip.Materialize({ 3, 7 });
+    FIC2_CHECK(strip.decodes.RequestCount() == requestsAway);
+    for (size_t index = 3; index < 7; ++index)
+    {
+        FIC2_CHECK(strip.decodes.ThumbnailRequestsFor(strip.SourceOf(index)) == 1);
+        auto image = strip.tiles.Find(index)->image;
+        FIC2_REQUIRE(SUCCEEDED(canvas.Render(*image)));
+        FIC2_CHECK(image->GetBitmapSize().width == 4.0f);
+        FIC2_CHECK(image->GetBitmapSize().height == 2.0f);
+    }
+    FIC2_CHECK(strip.decodes.RequestCount() == requestsAway);
+
+    // Another folder's listing drops them.
+    strip.payloads->ResetForFolder(L"elsewhere");
+    FIC2_CHECK(strip.payloads->Count() == 0);
+}
+
+// A tile that leaves the range is recycled: its queued request is canceled, it
+// is rebound to another item under a new request generation, and the late
+// completion of its previous request is never shown (or retained).
+FIC2_TEST(ThumbStripTiles_RecycledTileNeverShowsItsPreviousItem)
+{
+    ThumbTestSupport::ComScope com;
+    ThumbTestSupport::Canvas canvas;
+    FIC2_REQUIRE(canvas.Create(64, 64));
+    Strip strip;
+
+    strip.selected = 4;
+    strip.Materialize({ 3, 7 });
+    FIC2_REQUIRE(strip.decodes.RequestCount() == 4);
+    std::vector<ImageCore::ImageHandle> oldHandles;
+    std::vector<std::shared_ptr<FD2D::Wnd>> oldTiles;
+    for (size_t index = 3; index < 7; ++index)
+    {
+        oldHandles.push_back(strip.decodes.LatestThumbnailFor(strip.SourceOf(index)));
+        oldTiles.push_back(strip.tiles.Find(index)->focus);
+    }
+
+    // The range moves past them: every request is canceled and the same tile
+    // windows are rebound to the new items.
+    strip.Materialize({ 9, 13 });
+    FIC2_CHECK(strip.TilesMatchModel());
+    FIC2_CHECK(strip.controller.RecycledTileCount() == 0);
+    const auto requests = strip.decodes.Requests();
+    for (const ImageCore::ImageHandle handle : oldHandles)
+    {
+        FIC2_REQUIRE(handle != 0);
+        FIC2_CHECK(requests[handle - 1].canceled);
+    }
+    for (size_t index = 9; index < 13; ++index)
+    {
+        const auto focus = strip.tiles.Find(index)->focus;
+        FIC2_CHECK(std::find(oldTiles.begin(), oldTiles.end(), focus) != oldTiles.end());
+        FIC2_CHECK(!strip.TileSelected(index));   // item 4's highlight did not travel
+        FIC2_CHECK(strip.decodes.ThumbnailRequestsFor(strip.SourceOf(index)) == 1);
+    }
+    FIC2_CHECK(strip.decodes.OutstandingThumbnails() == 4);
+
+    // The canceled requests complete anyway (a read that was already running):
+    // nothing reaches the recycled tiles, and nothing is retained for the old items.
+    for (const ImageCore::ImageHandle handle : oldHandles)
+    {
+        strip.decodes.Complete(handle, S_OK, ThumbTestSupport::MakeBgraImage(8, 8));
+    }
+    for (size_t index = 9; index < 13; ++index)
+    {
+        auto image = strip.tiles.Find(index)->image;
+        FIC2_REQUIRE(SUCCEEDED(canvas.Render(*image)));
+        FIC2_CHECK(image->GetBitmapSize().width == 0.0f);
+    }
+    for (size_t index = 3; index < 7; ++index)
+    {
+        FIC2_CHECK(strip.payloads->Find(strip.SourceOf(index)) == nullptr);
+    }
+
+    // The current request's result is shown.
+    const ImageCore::ImageHandle current = strip.decodes.LatestThumbnailFor(strip.SourceOf(10));
+    strip.decodes.Complete(current, S_OK, ThumbTestSupport::MakeBgraImage(4, 2));
+    auto image = strip.tiles.Find(10)->image;
+    FIC2_REQUIRE(SUCCEEDED(canvas.Render(*image)));
+    FIC2_CHECK(image->GetBitmapSize().width == 4.0f);
+    FIC2_CHECK(strip.payloads->Find(strip.SourceOf(10)) != nullptr);
+
+    // Released tiles beyond what the range reuses are kept, up to the cap.
+    strip.Materialize({ 14, 14 });
+    FIC2_CHECK(strip.controller.RecycledTileCount() == 4);
+    FIC2_CHECK(strip.controller.RecycledTileCount() <= ImageBrowserThumbStripController::kMaxRecycledTiles);
+}
+
+// Image tiles on screen request at Visible priority, the prefetch margin at
+// Prefetch, so ImageCore serves on-screen thumbnails first (#35).
+FIC2_TEST(ThumbStripTiles_VisibleTilesRequestAheadOfThePrefetchMargin)
+{
+    using ImageCore::RequestPriority;
+    Strip strip;
+    ImageBrowserThumbStripController::MaterializeContext context {};
+    context.panel = strip.panel;
+    context.tiles = &strip.tiles;
+    context.thumbW = 64.0f;
+    context.thumbH = 64.0f;
+    context.model = &strip.model;
+    context.range = { 3, 12 };
+    context.visible = { 6, 9 };
+    context.payloads = strip.payloads;
+    context.makeStableName = &StableName;
+    strip.controller.MaterializeTiles(context);
+
+    auto priorityOf = [&](size_t index)
+    {
+        const auto requests = strip.decodes.Requests();
+        const ImageCore::ImageHandle handle = strip.decodes.LatestThumbnailFor(strip.SourceOf(index));
+        return requests.at(handle - 1).priority;
+    };
+    for (size_t index = 3; index < 12; ++index)
+    {
+        const bool visible = (index >= 6 && index < 9);
+        FIC2_CHECK(priorityOf(index) == (visible ? RequestPriority::Visible : RequestPriority::Prefetch));
+    }
+
+    // The view moves: the bound tiles follow (queued requests are re-prioritized).
+    context.range = { 4, 13 };
+    context.visible = { 9, 11 };
+    strip.controller.MaterializeTiles(context);
+    FIC2_CHECK(priorityOf(6) == RequestPriority::Prefetch);
+    FIC2_CHECK(priorityOf(9) == RequestPriority::Visible);
+    FIC2_CHECK(priorityOf(10) == RequestPriority::Visible);
+    FIC2_CHECK(priorityOf(12) == RequestPriority::Prefetch);
+}
+
+namespace
+{
+    // A strip whose materialized range is data-driven, as in the browser: the
+    // layout is built from the model, and every view materializes
+    // ThumbStripLayout::MaterializeRange of its viewport.
+    struct VirtualStrip
+    {
+        static constexpr float kRow = 64.0f;
+        static constexpr float kViewport = 1000.0f;
+
+        ThumbTestSupport::RecordingDecodeService decodes {};
+        std::shared_ptr<ThumbPayloadStore> payloads { std::make_shared<ThumbPayloadStore>() };
+        ThumbItemModel model {};
+        ThumbStripLayout layout {};
+        ThumbTileSet tiles {};
+        std::shared_ptr<ThumbStripPanel> panel { std::make_shared<ThumbStripPanel>() };
+        ImageBrowserThumbStripController controller {};
+        size_t views { 0 };
+        size_t maxTiles { 0 };
+
+        VirtualStrip()
+        {
+            ImageAsyncBinding::SetDecodeServiceForTesting(&decodes);
+            panel->SetLayout(&layout);
+            panel->SetTiles(&tiles);
+            panel->SetRowHeight(kRow);
+        }
+
+        ~VirtualStrip()
+        {
+            tiles.Clear();
+            panel->ClearChildren();
+            ImageAsyncBinding::SetDecodeServiceForTesting(nullptr);
+        }
+
+        void Relayout()
+        {
+            std::vector<float> extents;
+            extents.reserve(model.DisplayCount());
+            for (size_t i = 0; i < model.DisplayCount(); ++i)
+            {
+                const ThumbModelEntry& entry = model.At(i);
+                const float aspect = (entry.kind == ThumbItemKind::Image) ? model.AspectOf(entry.lookupKey) : 0.0f;
+                extents.push_back(ThumbStripLayout::ImageExtent(kRow, aspect, 0.0f));
+            }
+            layout.Reset(std::move(extents), 4.0f, 4.0f);
+        }
+
+        // Shows [left, left + kViewport) and checks the bounds.
+        void View(float left)
+        {
+            const auto [first, last] = layout.Range(left, left + kViewport);
+            const auto [mFirst, mLast] = layout.MaterializeRange(left, left + kViewport);
+            ImageBrowserThumbStripController::MaterializeContext context {};
+            context.panel = panel;
+            context.tiles = &tiles;
+            context.thumbW = kRow;
+            context.thumbH = kRow;
+            context.model = &model;
+            context.range = { mFirst, mLast };
+            context.visible = { first, last };
+            context.payloads = payloads;
+            context.makeStableName = &StableName;
+            controller.MaterializeTiles(context);
+
+            const size_t visible = last - first;
+            const size_t bound = visible + 2 * ThumbStripLayout::kMaxPrefetchItems;
+            FIC2_CHECK(tiles.Range().first <= first && last <= tiles.Range().last);
+            FIC2_CHECK(tiles.Range().Size() <= bound);
+            FIC2_CHECK(panel->ChildrenInOrder().size() == tiles.Range().Size());
+            FIC2_CHECK(decodes.OutstandingThumbnails() <= bound);
+            FIC2_CHECK(controller.RecycledTileCount() <= ImageBrowserThumbStripController::kMaxRecycledTiles);
+            maxTiles = (std::max)(maxTiles, tiles.Range().Size());
+            ++views;
+        }
+
+        float LastLeft() const
+        {
+            return (std::max)(0.0f, layout.ContentWidth() - kViewport);
+        }
+    };
+
+    std::wstring ImageName(size_t i)
+    {
+        wchar_t name[32] {};
+        swprintf_s(name, L"img%05zu.png", i);
+        return name;
+    }
+}
+
+// A 10,000-image folder: materialized tiles and outstanding thumbnail requests
+// stay within visible + 2 * M while the listing arrives progressively, while
+// scrolling through it, and when jumping to either end - before and after the
+// decoded aspects change the extents.
+FIC2_TEST(ThumbStripTiles_TenThousandItemsStayBoundedWhileScrolling)
+{
+    constexpr size_t kImages = 10000;
+    VirtualStrip strip;
+
+    // Progressive listing: chunks arrive in arbitrary name order; each commit
+    // rebuilds the layout and rebinds the view.
+    strip.model.StageReset(kFolder, true, &IsTestImage);
+    for (size_t chunk = 0; chunk < 10; ++chunk)
+    {
+        std::vector<Floar::VirtualFileEntry> entries;
+        for (size_t i = chunk; i < kImages; i += 10)
+        {
+            entries.push_back(File(ImageName(i)));
+        }
+        (void)strip.model.Stage(entries);
+        FIC2_CHECK(strip.model.Commit());
+        strip.Relayout();
+        strip.View(0.0f);
+        strip.View(strip.LastLeft() * 0.5f);
+    }
+    FIC2_REQUIRE(strip.model.DisplayCount() == kImages + 1);   // Up + images
+
+    // Scrolling through the folder, then jumping to the end and back.
+    const float last = strip.LastLeft();
+    for (float left = 0.0f; left < last; left += VirtualStrip::kViewport * 0.37f)
+    {
+        strip.View(left);
+    }
+    strip.View(last);
+    FIC2_CHECK(strip.tiles.Find(kImages) != nullptr);   // the last item is bound
+    strip.View(0.0f);
+    FIC2_CHECK(strip.tiles.Find(0) != nullptr);
+
+    // Decoded aspects arrive (wide and narrow images): the same bounds hold.
+    for (size_t i = 1; i <= kImages; ++i)
+    {
+        const float aspect = (i % 3 == 0) ? 4.0f : ((i % 3 == 1) ? 0.25f : 1.5f);
+        (void)strip.model.SetAspect(strip.model.At(i).lookupKey, aspect);
+    }
+    strip.Relayout();
+    const float lastAfterAspects = strip.LastLeft();
+    for (float left = 0.0f; left < lastAfterAspects; left += VirtualStrip::kViewport * 1.7f)
+    {
+        strip.View(left);
+    }
+    strip.View(lastAfterAspects);
+    strip.View(0.0f);
+
+    FIC2_CHECK(strip.views > 100);
+    FIC2_CHECK(strip.maxTiles < 200);   // nowhere near the folder size
+    std::printf("  %zu views, at most %zu tiles, %zu thumbnail requests in total\n",
+        strip.views, strip.maxTiles, strip.decodes.RequestCount());
 }

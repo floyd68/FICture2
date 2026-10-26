@@ -15,9 +15,10 @@ namespace FD2D
     class StackPanel;
 }
 
-// The strip's tile row: its width is the ThumbStripLayout content width, and
-// each materialized tile is placed at its model index's layout position (not
-// by its child position), so the tiles may cover any subset of the model. A
+// The strip's tile row: its width is the ThumbStripLayout content width and
+// its height the row height it is given (not measured from its tiles, which
+// may cover any subset of the model or none), and each materialized tile is
+// placed at its model index's layout position (not by its child position). A
 // tile whose index the layout does not describe is not arranged.
 class ThumbStripPanel : public FD2D::StackPanel
 {
@@ -27,13 +28,28 @@ public:
     void SetLayout(const ThumbStripLayout* layout) { m_layout = layout; }
     // The tiles to place; their windows are this panel's children.
     void SetTiles(const ThumbTileSet* tiles) { m_tiles = tiles; }
+    const ThumbStripLayout* Layout() const { return m_layout; }
+    const ThumbTileSet* Tiles() const { return m_tiles; }
+    // Height of the tile row (the thumbnail height), without padding.
+    void SetRowHeight(float height) { m_rowHeight = height; }
+    float RowHeight() const { return m_rowHeight; }
 
     FD2D::Size Measure(FD2D::Size available) override;
     void Arrange(FD2D::Rect finalRect) override;
+    // Places the tiles again within the bounds of the last Arrange, for a tile
+    // set that changed after the layout pass.
+    void ArrangeTiles() { Arrange(m_bounds); }
+    // Runs at the start of every render of the panel, before its tiles draw.
+    // The scroll view renders the panel after advancing a smooth scroll, so
+    // the scroll offset seen here is the one this frame presents.
+    void SetOnBeforeRenderTiles(std::function<void()> handler) { m_onBeforeRenderTiles = std::move(handler); }
+    void OnRender(ID2D1RenderTarget* target) override;
 
 private:
     const ThumbStripLayout* m_layout { nullptr };
     const ThumbTileSet* m_tiles { nullptr };
+    float m_rowHeight { 0.0f };
+    std::function<void()> m_onBeforeRenderTiles {};
 };
 
 class ImageBrowserThumbnailPane : public FD2D::Wnd

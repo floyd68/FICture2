@@ -9,6 +9,7 @@
 #include "ImageBrowserMainPane.h"
 #include "ImageBrowserThumbnailPane.h"
 #include "ImageBrowserThumbLayout.h"
+#include "ImageBrowserThumbPayloadStore.h"
 #include "ImageBrowserAsyncThumbLoader.h"
 #include "FolderEnumeration.h"
 #include "ImageBrowserSplitCoordinator.h"
@@ -102,6 +103,7 @@ namespace
         }
 
         FolderLoadLane& FolderLane() { return m_folderLane; }
+        ImageBrowserThumbnailPane* ThumbPane() const { return m_thumbPane.get(); }
 
         void OnAttached(FD2D::Backplate& backplate) override
         {
@@ -392,20 +394,137 @@ namespace
             return ThumbItemCount() > 0 && m_thumbLayout.Count() == ThumbItemCount();
         }
 
-        // The model indices that have tiles: the whole model for now. #46
-        // narrows it to the visible range plus a bounded prefetch margin; the
-        // per-item strip paths already work from model indices and touch only
-        // m_thumbTiles.
-        ThumbIndexRange MaterializedThumbRange() const
+        struct ThumbRanges
         {
-            return { 0, ThumbItemCount() };
+            ThumbIndexRange materialized {};   // items that have tiles
+            ThumbIndexRange visible {};        // items in the viewport
+        };
+
+        // Which strip viewport the materialized range follows.
+        enum class ThumbViewportBasis
+        {
+            // The one the next layout pass settles on (a list rebuild, before
+            // its pending centering or anchor adjustment is applied).
+            Expected,
+            // The scroll offset the frame being rendered presents.
+            Presented,
+        };
+
+        // The model indices that have tiles: the items in the strip viewport
+        // plus a prefetch margin of at most ThumbStripLayout::kMaxPrefetchItems
+        // items on each side (ThumbStripLayout::MaterializeRange), so
+        // far-offscreen items have neither a tile nor a decode request. Before
+        // the first layout pass: the selection and the margin around it.
+        ThumbRanges MaterializedThumbRange(size_t selectedIndex, ThumbViewportBasis basis) const
+        {
+            ThumbRanges ranges {};
+            if (!ThumbLayoutReady())
+            {
+                return ranges;
+            }
+            float left = 0.0f;
+            float width = 0.0f;
+            if (!ThumbViewport(left, width))
+            {
+                const auto [first, last] = m_thumbLayout.RangeAround((selectedIndex < ThumbItemCount()) ? selectedIndex : 0);
+                ranges.materialized = { first, last };
+                return ranges;
+            }
+            if (basis == ThumbViewportBasis::Expected)
+            {
+                left = ExpectedThumbViewportLeft(left, width, selectedIndex);
+            }
+            const auto [first, last] = m_thumbLayout.MaterializeRange(left, left + width);
+            const auto [visibleFirst, visibleLast] = m_thumbLayout.Range(left, left + width);
+            ranges.materialized = { first, last };
+            ranges.visible = { visibleFirst, visibleLast };
+            return ranges;
+        }
+
+        // The viewport's left edge after the scroll adjustment the next layout
+        // pass makes (ApplyThumbScrollAfterArrange): a pending centering of the
+        // selection, or the captured anchor keeping its offset.
+        float ExpectedThumbViewportLeft(float left, float width, size_t selectedIndex) const
+        {
+            float expected = left;
+            if (m_thumbCenterPending && selectedIndex < ThumbItemCount())
+            {
+                expected = 0.5f * (m_thumbLayout.Start(selectedIndex) + m_thumbLayout.End(selectedIndex) - width);
+            }
+            else if (m_thumbAnchor.valid)
+            {
+                const auto it = m_thumbItemIndexByKey.find(m_thumbAnchor.key);
+                if (it != m_thumbItemIndexByKey.end())
+                {
+                    expected = m_thumbLayout.Start(it->second) - m_thumbAnchor.offset;
+                }
+            }
+            const float maxLeft = (std::max)(0.0f, m_thumbLayout.ContentWidth() - width);
+            return (std::min)((std::max)(expected, 0.0f), maxLeft);
         }
 
         // Binds tiles for MaterializedThumbRange(), highlighting `selectedIndex`.
-        void MaterializeThumbTiles(size_t selectedIndex)
+        void MaterializeThumbTiles(size_t selectedIndex, ThumbViewportBasis basis = ThumbViewportBasis::Expected)
         {
-            auto context = MakeThumbMaterializeContext(selectedIndex);
+            auto context = MakeThumbMaterializeContext(selectedIndex, basis);
             m_thumbStripController.MaterializeTiles(context);
+        }
+
+        // Runs as the strip panel starts rendering: the scroll view has
+        // advanced any smooth scroll, so the viewport is the one this frame
+        // presents, even when an animated jump moves farther than the
+        // prefetch margin in one frame.
+        void OnBeforeRenderStripTiles()
+        {
+            UpdateMaterializedThumbTiles();
+            UpdateThumbLoadPriorities();
+        }
+
+        // Between rebuilds the viewport moves (scrolling, or extents and the
+        // row height changing): rebind the tiles when the range it needs
+        // changed. Runs during Render, before the tiles render, so a tile
+        // setter's Invalidate() only marks the window dirty (FD2D does not
+        // render re-entrantly) and no frame is rendered per tile.
+        void UpdateMaterializedThumbTiles()
+        {
+            if (!m_thumbPane)
+            {
+                return;
+            }
+            // The frame's scroll transform is already set: follow the offset it
+            // presents (SettleThumbStripGeometry applied pending adjustments).
+            if (MaterializedThumbRange(m_selectedIndex, ThumbViewportBasis::Presented).materialized == m_thumbTiles.Range())
+            {
+                return;
+            }
+            MaterializeThumbTiles(m_selectedIndex, ThumbViewportBasis::Presented);
+            // This frame's layout pass already ran: place the tiles now (by
+            // their model indices), so the frame shows them where they belong.
+            if (auto strip = m_thumbPane->StripPanel())
+            {
+                strip->ArrangeTiles();
+            }
+        }
+
+        // Extents changed during this render (row height from the splitter, a
+        // progressive list update) wait for the next layout pass to re-arrange
+        // the strip and apply the scroll adjustment. Apply both now, before the
+        // scroll view captures this frame's transform, so the frame draws the
+        // tiles at the extents and offset it presents.
+        void SettleThumbStripGeometry()
+        {
+            const auto scroll = m_thumbPane ? m_thumbPane->Scroll() : nullptr;
+            if (!scroll || !(m_thumbArrangePending || m_thumbCenterPending || m_thumbAnchor.valid))
+            {
+                return;
+            }
+            const D2D1_RECT_F rect = scroll->LayoutRect();
+            if (rect.right - rect.left <= 1.0f || rect.bottom - rect.top <= 0.0f)
+            {
+                return;
+            }
+            scroll->Arrange({ rect.left, rect.top, rect.right - rect.left, rect.bottom - rect.top });
+            ApplyThumbScrollAfterArrange();
         }
 
         // The strip viewport in panel coordinates: [left, left + width).
@@ -573,7 +692,10 @@ namespace
             }
             // Throttle progressive UI list updates so large folders don't monopolize the UI thread.
             ApplyThrottledProgressiveUpdate();
-            UpdateThumbLoadPriorities();
+            SettleThumbStripGeometry();
+            // Tile materialization and load priorities run when the strip
+            // panel renders (OnBeforeRenderStripTiles), after the scroll view
+            // advanced this frame's smooth scroll.
             if (m_pendingThumbStripBroadcast && m_rootSplit != nullptr && !m_rootSplit->IsSplitterDragging())
             {
                 m_pendingThumbStripBroadcast = false;
@@ -1361,6 +1483,7 @@ namespace
             CaptureThumbAnchor();   // the visible anchor stays put while widths scale
             m_thumbW = newHeight; // Keep this for navigation tiles
             m_thumbH = newHeight;
+            ApplyThumbRowHeightToStrip();
 
             if (m_thumbPane)
             {
@@ -1394,6 +1517,16 @@ namespace
             }
             m_lastThumbSizingApplyMs = sizing.updatedApplyMs;
             return true;
+        }
+
+        // The strip panel's height is the row height, not its tiles' (the
+        // materialized range can be partial or empty).
+        void ApplyThumbRowHeightToStrip()
+        {
+            if (auto strip = m_thumbPane ? m_thumbPane->StripPanel() : nullptr)
+            {
+                strip->SetRowHeight(m_thumbH);
+            }
         }
 
         void NotifyThumbStripHeightChanged(float height)
@@ -1798,6 +1931,10 @@ namespace
             {
                 strip->SetLayout(&m_thumbLayout);
                 strip->SetTiles(&m_thumbTiles);
+                strip->SetOnBeforeRenderTiles([this]()
+                {
+                    OnBeforeRenderStripTiles();
+                });
             }
 
             rootSplit->OnSplitChanged([this](float)
@@ -1834,6 +1971,7 @@ namespace
             constexpr float thumbH = 128.0f;
             m_thumbW = thumbW;
             m_thumbH = thumbH;
+            ApplyThumbRowHeightToStrip();
             m_thumbLabelDip = 0.0f;
             m_thumbItemSpacing = 0.0f;
             m_thumbOuterSpacing = 8.0f;
@@ -2615,16 +2753,21 @@ namespace
             const bool hasItems = ThumbItemCount() > 0;
             const size_t selectIndex = PreferredThumbIndex(preferSelectPath);
             FIC2_LOG_STEP(t_rebuild, "[RebuildImmediate] RebuildThumbLayout");
-            MaterializeThumbTiles(selectIndex);
-            FIC2_LOG_STEP(t_rebuild, "[RebuildImmediate] MaterializeThumbTiles");
             // The anchor survives a progressive merge by key; a different (or
-            // newly resolved) selection is centered instead.
+            // newly resolved) selection is centered instead. Decided before
+            // materializing: the range follows the viewport that results.
             const bool centerSelection = ThumbStripLayout::CenterAfterRebuild(
                 previousSelectedKey, ThumbItemKey(selectIndex), hasItems);
             if (centerSelection)
             {
                 m_thumbCenterPending = true;
             }
+            MaterializeThumbTiles(selectIndex);
+            FIC2_LOG_STEP(t_rebuild, "[RebuildImmediate] MaterializeThumbTiles");
+            // Retained thumbnail payloads belong to the listed folder; reset
+            // after the previous folder's tiles were released (and retained
+            // what they had decoded).
+            m_thumbPayloads->ResetForFolder(ThumbItemModel::LookupKeyFor(m_thumbModel.Folder()));
 
             // Restore selection without scrolling yet; layout hasn't been updated.
             if (!hasItems)
@@ -2705,7 +2848,9 @@ namespace
             }
         }
 
-        ImageBrowserThumbStripController::MaterializeContext MakeThumbMaterializeContext(size_t selectedIndex)
+        ImageBrowserThumbStripController::MaterializeContext MakeThumbMaterializeContext(
+            size_t selectedIndex,
+            ThumbViewportBasis basis)
         {
             ImageBrowserThumbStripController::MaterializeContext context {};
             context.panel = (m_thumbPane != nullptr) ? m_thumbPane->Panel() : nullptr;
@@ -2713,8 +2858,11 @@ namespace
             context.thumbW = m_thumbW;
             context.thumbH = m_thumbH;
             context.model = &m_thumbModel;
-            context.range = MaterializedThumbRange();
+            const ThumbRanges ranges = MaterializedThumbRange(selectedIndex, basis);
+            context.range = ranges.materialized;
+            context.visible = ranges.visible;
             context.selectedIndex = selectedIndex;
+            context.payloads = m_thumbPayloads;
             context.onSelectIndex = [this](size_t index)
             {
                 RequestFocus();
@@ -3179,6 +3327,8 @@ namespace
         ImageBrowserThumbStripController m_thumbStripController {};
         std::shared_ptr<ImageBrowserThumbnailPane> m_thumbPane {};
         ThumbTileSet m_thumbTiles {};   // tiles of MaterializedThumbRange()
+        // Decoded thumbnails of the listed folder, retained per item (not per tile).
+        std::shared_ptr<ThumbPayloadStore> m_thumbPayloads { std::make_shared<ThumbPayloadStore>() };
         size_t m_selectedIndex { static_cast<size_t>(-1) };   // model index; its tile (if any) is highlighted
         std::wstring m_typeSelectQuery {};
         unsigned long long m_typeSelectLastInputMs { 0 };
@@ -3321,5 +3471,11 @@ FolderLoadLane* ImageBrowserFolderLoadLane(FD2D::Wnd& browser)
 {
     auto* impl = dynamic_cast<ImageBrowserImpl*>(&browser);
     return impl ? &impl->FolderLane() : nullptr;
+}
+
+ImageBrowserThumbnailPane* ImageBrowserThumbPane(FD2D::Wnd& browser)
+{
+    auto* impl = dynamic_cast<ImageBrowserImpl*>(&browser);
+    return impl ? impl->ThumbPane() : nullptr;
 }
 

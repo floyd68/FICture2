@@ -40,6 +40,7 @@
 #include <memory>
 #include <mutex>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 class ImageAsyncBinding;
@@ -63,16 +64,27 @@ public:
 
 // Global registry so app shutdown can invalidate all in-flight bindings
 // before ImageCore::ImageLoader::Shutdown().
+//
+// Registration is handle-based: Register returns a handle and Unregister
+// removes that entry directly, so neither is linear in the number of live
+// bindings (thumbnail tiles register and unregister continuously while the
+// strip scrolls).
 class ImageAsyncBindingRegistry
 {
 public:
+    using Handle = uint64_t;   // 0: not registered
+
     static ImageAsyncBindingRegistry& Instance();
 
+    // Bindings use Instance(); tests may create their own registry.
+    ImageAsyncBindingRegistry() = default;
     ImageAsyncBindingRegistry(const ImageAsyncBindingRegistry&) = delete;
     ImageAsyncBindingRegistry& operator=(const ImageAsyncBindingRegistry&) = delete;
 
-    void Register(const std::shared_ptr<struct ImageAsyncBindingState>& state);
-    void Unregister(const struct ImageAsyncBindingState* state);
+    // Returns the entry's handle (0 for a null state).
+    Handle Register(const std::shared_ptr<struct ImageAsyncBindingState>& state);
+    // Removes the entry of `handle`; unknown or repeated handles are ignored.
+    void Unregister(Handle handle);
 
     // Supersede every live binding (Cancel on each: generation bump, handle cancel, payload drop).
     void InvalidateAll();
@@ -80,11 +92,14 @@ public:
     // Alias for InvalidateAll — call before ImageLoader::Shutdown.
     void ShutdownPrepare();
 
-private:
-    ImageAsyncBindingRegistry() = default;
+    // Registered entries (diagnostics and tests).
+    size_t Count() const;
+    bool IsRegistered(Handle handle) const;
 
+private:
     mutable std::mutex m_mutex;
-    std::vector<std::weak_ptr<struct ImageAsyncBindingState>> m_entries;
+    Handle m_nextHandle { 0 };
+    std::unordered_map<Handle, std::weak_ptr<struct ImageAsyncBindingState>> m_entries;
 };
 
 struct ImageAsyncBindingState
@@ -222,4 +237,5 @@ private:
         ImageCore::DecodedImage image);
 
     std::shared_ptr<ImageAsyncBindingState> m_state {};
+    ImageAsyncBindingRegistry::Handle m_registration { 0 };
 };

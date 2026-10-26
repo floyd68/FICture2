@@ -30,6 +30,20 @@ public:
     // Items overlapping [left, right) in panel coordinates, as [first, last).
     std::pair<size_t, size_t> Range(float left, float right) const;
 
+    // Prefetch margin of the materialized tile range, counted in items: one
+    // viewport's worth (the visible item count) on each side, at most
+    // kMaxPrefetchItems per side. Counting items rather than pixels keeps the
+    // cap whether or not decoded aspects are known yet.
+    static constexpr size_t kMaxPrefetchItems = 32;
+
+    // The items to materialize for the viewport [left, right): Range(left,
+    // right) plus min(visible count, maxMargin) items on each side, clamped to
+    // the model; at most visible + 2 * maxMargin items.
+    std::pair<size_t, size_t> MaterializeRange(float left, float right, size_t maxMargin = kMaxPrefetchItems) const;
+    // Without a viewport (before the first layout pass): `index` and up to
+    // `margin` items on each side, clamped to the model.
+    std::pair<size_t, size_t> RangeAround(size_t index, size_t margin = kMaxPrefetchItems) const;
+
     // The item to keep in place when extents change: the selection when it is
     // at least partly visible, otherwise the first visible item. `offset` is
     // its start relative to the viewport's left edge.

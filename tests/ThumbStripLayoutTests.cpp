@@ -2,7 +2,9 @@
 
 #include "ImageBrowserThumbLayout.h"
 
+#include <algorithm>
 #include <cmath>
+#include <utility>
 #include <vector>
 
 // Thumbnail-strip geometry from item extents: offsets, the item range for a
@@ -130,4 +132,84 @@ FIC2_TEST(ThumbStripLayout_AnchorKeepsTheVisibleItemInPlace)
     // No visible item: no anchor.
     FIC2_CHECK(!layout.AnchorFor(5000.0f, viewportWidth, 0).valid);
     FIC2_CHECK(Near(layout.ScrollKeeping({}), 0.0f));
+}
+
+// The materialized range is the visible range plus a prefetch margin of
+// min(visible count, kMaxPrefetchItems) items on each side.
+FIC2_TEST(ThumbStripLayout_MaterializeRangeAddsAnItemMargin)
+{
+    const ThumbStripLayout layout = Sample();
+    // Items 1..2 visible: one-item margin capped at 1, two visible -> margin 2 (clamped).
+    FIC2_CHECK((layout.MaterializeRange(200.0f, 260.0f, 1) == std::pair<size_t, size_t> { 0, 4 }));
+    FIC2_CHECK((layout.MaterializeRange(200.0f, 260.0f, 0) == std::pair<size_t, size_t> { 1, 3 }));
+    FIC2_CHECK((layout.MaterializeRange(200.0f, 260.0f) == std::pair<size_t, size_t> { 0, 5 }));
+    // Only item 4 visible: one item on each side, clamped at the end.
+    FIC2_CHECK((layout.MaterializeRange(430.0f, 600.0f) == std::pair<size_t, size_t> { 3, 5 }));
+    // Nothing visible (past the content, or an empty viewport): nothing materialized.
+    FIC2_CHECK((layout.MaterializeRange(600.0f, 700.0f).first == layout.MaterializeRange(600.0f, 700.0f).second));
+    FIC2_CHECK((layout.MaterializeRange(100.0f, 100.0f).first == layout.MaterializeRange(100.0f, 100.0f).second));
+
+    // Without a viewport: the index and the margin around it, clamped.
+    FIC2_CHECK((layout.RangeAround(2, 1) == std::pair<size_t, size_t> { 1, 4 }));
+    FIC2_CHECK((layout.RangeAround(0, 3) == std::pair<size_t, size_t> { 0, 4 }));
+    FIC2_CHECK((layout.RangeAround(99, 1) == std::pair<size_t, size_t> { 3, 5 }));   // past the end: the last item
+    ThumbStripLayout empty;
+    empty.Reset({}, 4.0f, 4.0f);
+    FIC2_CHECK((empty.RangeAround(0, 3) == std::pair<size_t, size_t> { 0, 0 }));
+}
+
+// For any folder size and scroll position, the materialized range holds the
+// visible items plus at most kMaxPrefetchItems on each side, both before the
+// decoded aspects arrive (square extents) and after (wide and narrow extents
+// change how many items a viewport shows, not the per-side cap).
+FIC2_TEST(ThumbStripLayout_MaterializeRangeIsBoundedBeforeAndAfterAspects)
+{
+    constexpr size_t kItems = 10000;
+    constexpr size_t kMargin = ThumbStripLayout::kMaxPrefetchItems;
+    constexpr float kRow = 64.0f;
+    ThumbStripLayout layout;
+    layout.Reset(std::vector<float>(kItems, ThumbStripLayout::ImageExtent(kRow, 0.0f, 0.0f)), 4.0f, 4.0f);
+
+    size_t checked = 0;
+    auto checkViewport = [&](float viewport)
+    {
+        const float content = layout.ContentWidth();
+        const float lastLeft = (std::max)(0.0f, content - viewport);
+        std::vector<float> lefts;
+        for (float left = 0.0f; left < lastLeft; left += viewport * 0.37f)
+        {
+            lefts.push_back(left);
+        }
+        lefts.push_back(lastLeft);   // jump to the end
+        for (const float left : lefts)
+        {
+            const auto [first, last] = layout.Range(left, left + viewport);
+            const auto [mFirst, mLast] = layout.MaterializeRange(left, left + viewport);
+            const size_t visible = last - first;
+            FIC2_CHECK(visible > 0);
+            FIC2_CHECK(mFirst <= first && last <= mLast && mLast <= kItems);
+            FIC2_CHECK(mLast - mFirst <= visible + 2 * kMargin);
+            // The margin is the visible count capped at M, unless the model ends first.
+            const size_t margin = (std::min)(visible, kMargin);
+            FIC2_CHECK(first - mFirst == (std::min)(first, margin));
+            FIC2_CHECK(mLast - last == (std::min)(kItems - last, margin));
+            ++checked;
+        }
+    };
+
+    // Before aspects: every image is laid out square.
+    checkViewport(1000.0f);
+    checkViewport(3840.0f);   // many visible items: the cap applies
+    checkViewport(100.0f);    // one or two visible items: one viewport of margin
+
+    // After aspects: very wide and very narrow images.
+    for (size_t i = 0; i < kItems; ++i)
+    {
+        const float aspect = (i % 3 == 0) ? 4.0f : ((i % 3 == 1) ? 0.2f : 1.0f);
+        layout.SetExtent(i, ThumbStripLayout::ImageExtent(kRow, aspect, 0.0f));
+    }
+    checkViewport(1000.0f);
+    checkViewport(3840.0f);
+    checkViewport(100.0f);
+    FIC2_CHECK(checked > 100);
 }

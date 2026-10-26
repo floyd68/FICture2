@@ -498,6 +498,96 @@ FIC2_TEST(ImageAsyncBinding_RegistryInvalidateAllCancelsLiveBindings)
     FIC2_CHECK(second.TakePending().blocks == nullptr);
 }
 
+// The registry is handle-based: entries are found by handle, not by a scan of
+// the live bindings, so registration and removal do not grow with their count.
+FIC2_TEST(ImageAsyncBinding_RegistryUnregistersByHandleInAnyOrder)
+{
+    ImageAsyncBindingRegistry registry;
+    std::vector<std::shared_ptr<ImageAsyncBindingState>> states;
+    std::vector<ImageAsyncBindingRegistry::Handle> handles;
+    for (int i = 0; i < 6; ++i)
+    {
+        states.push_back(std::make_shared<ImageAsyncBindingState>());
+        handles.push_back(registry.Register(states.back()));
+        FIC2_CHECK(handles.back() != 0);
+    }
+    FIC2_CHECK(registry.Register(nullptr) == 0);
+    FIC2_CHECK(registry.Count() == 6);
+    for (size_t i = 0; i < handles.size(); ++i)
+    {
+        for (size_t j = i + 1; j < handles.size(); ++j)
+        {
+            FIC2_CHECK(handles[i] != handles[j]);
+        }
+    }
+
+    // Arbitrary order, including the middle, the ends, a repeat and an unknown
+    // handle; every other entry stays registered.
+    registry.Unregister(handles[3]);
+    registry.Unregister(handles[0]);
+    registry.Unregister(handles[5]);
+    registry.Unregister(handles[3]);
+    registry.Unregister(0);
+    registry.Unregister(handles[5] + 1000);
+    FIC2_CHECK(registry.Count() == 3);
+    FIC2_CHECK(!registry.IsRegistered(handles[0]));
+    FIC2_CHECK(registry.IsRegistered(handles[1]));
+    FIC2_CHECK(registry.IsRegistered(handles[2]));
+    FIC2_CHECK(!registry.IsRegistered(handles[3]));
+    FIC2_CHECK(registry.IsRegistered(handles[4]));
+    FIC2_CHECK(!registry.IsRegistered(handles[5]));
+
+    // Re-registering after removals never reuses a live handle.
+    const ImageAsyncBindingRegistry::Handle again = registry.Register(states[3]);
+    FIC2_CHECK(again != handles[1] && again != handles[2] && again != handles[4]);
+    FIC2_CHECK(registry.Count() == 4);
+    registry.Unregister(again);
+    FIC2_CHECK(registry.Count() == 3);
+}
+
+FIC2_TEST(ImageAsyncBinding_RegistryInvalidateAllReachesOnlyLiveEntries)
+{
+    ImageAsyncBindingRegistry registry;
+    std::vector<std::shared_ptr<ImageAsyncBindingState>> states;
+    std::vector<ImageAsyncBindingRegistry::Handle> handles;
+    for (int i = 0; i < 5; ++i)
+    {
+        states.push_back(std::make_shared<ImageAsyncBindingState>());
+        handles.push_back(registry.Register(states.back()));
+    }
+    registry.Unregister(handles[1]);
+    registry.Unregister(handles[4]);
+
+    // An entry whose binding state is gone is skipped and dropped.
+    auto expired = std::make_shared<ImageAsyncBindingState>();
+    (void)registry.Register(expired);
+    expired.reset();
+    FIC2_CHECK(registry.Count() == 4);
+
+    auto generationOf = [](const ImageAsyncBindingState& state)
+    {
+        std::lock_guard<std::mutex> lock(state.mutex);
+        return state.generation;
+    };
+
+    registry.InvalidateAll();
+    FIC2_CHECK(generationOf(*states[0]) == 1);
+    FIC2_CHECK(generationOf(*states[1]) == 0);   // removed
+    FIC2_CHECK(generationOf(*states[2]) == 1);
+    FIC2_CHECK(generationOf(*states[3]) == 1);
+    FIC2_CHECK(generationOf(*states[4]) == 0);   // removed
+    FIC2_CHECK(registry.Count() == 3);
+
+    // A binding registers with the global registry for its lifetime.
+    const size_t before = ImageAsyncBindingRegistry::Instance().Count();
+    {
+        ImageAsyncBinding first;
+        ImageAsyncBinding second;
+        FIC2_CHECK(ImageAsyncBindingRegistry::Instance().Count() == before + 2);
+    }
+    FIC2_CHECK(ImageAsyncBindingRegistry::Instance().Count() == before);
+}
+
 FIC2_TEST(ImageAsyncBinding_LateCompletionAfterDestructionIsSafe)
 {
     ScopedFakeDecodeService service;

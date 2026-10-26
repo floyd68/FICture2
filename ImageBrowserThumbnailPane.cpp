@@ -11,20 +11,11 @@ ThumbStripPanel::ThumbStripPanel()
 
 FD2D::Size ThumbStripPanel::Measure(FD2D::Size available)
 {
-    // Widths come from the layout; tiles only report their (fixed) height.
-    float cross = 0.0f;
-    if (m_tiles != nullptr)
-    {
-        for (const ThumbTile& tile : m_tiles->Tiles())
-        {
-            if (tile.focus)
-            {
-                cross = (std::max)(cross, tile.focus->Measure(available).h);
-            }
-        }
-    }
+    // The extent comes from the layout and the height from the row height, so
+    // the strip keeps its size whichever tiles (if any) are materialized.
+    UNREFERENCED_PARAMETER(available);
     const float content = (m_layout != nullptr) ? m_layout->ContentWidth() : 2.0f * m_padding;
-    m_desired = { content + 2.0f * m_margin, cross + 2.0f * m_padding + 2.0f * m_margin };
+    m_desired = { content + 2.0f * m_margin, m_rowHeight + 2.0f * m_padding + 2.0f * m_margin };
     return m_desired;
 }
 
@@ -44,6 +35,15 @@ void ThumbStripPanel::Arrange(FD2D::Rect finalRect)
     }
     m_bounds = finalRect;
     m_layoutRect = FD2D::ToD2D(finalRect);
+}
+
+void ThumbStripPanel::OnRender(ID2D1RenderTarget* target)
+{
+    if (target != nullptr && m_onBeforeRenderTiles)
+    {
+        m_onBeforeRenderTiles();
+    }
+    FD2D::StackPanel::OnRender(target);
 }
 
 ImageBrowserThumbnailPane::ImageBrowserThumbnailPane()

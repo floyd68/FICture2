@@ -17,6 +17,7 @@ namespace FD2D
 }
 
 class FolderLoadLane;
+class ImageBrowserThumbnailPane;
 
 class IImageBrowserSync
 {
@@ -127,3 +128,7 @@ std::shared_ptr<FD2D::Wnd> CreateImageBrowser(const std::wstring& name, const st
 // Test seam: the lane that feeds `browser` its folder listing (nullptr if
 // `browser` is not an image browser).
 FolderLoadLane* ImageBrowserFolderLoadLane(FD2D::Wnd& browser);
+
+// Test seam: the thumbnail strip pane of `browser` (nullptr if `browser` is
+// not an image browser).
+ImageBrowserThumbnailPane* ImageBrowserThumbPane(FD2D::Wnd& browser);
