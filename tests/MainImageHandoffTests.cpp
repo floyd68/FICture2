@@ -340,13 +340,19 @@ namespace
         }
 
         // A real file, so the source identity (and with it the GPU cache) works.
-        std::wstring File(const wchar_t* name)
+        // `bytes` sets the file size, and with it the source identity.
+        std::wstring File(const wchar_t* name, size_t bytes = 21)
         {
             const std::filesystem::path file = dir / name;
-            std::ofstream out(file, std::ios::binary | std::ios::trunc);
-            out << "FICture2 handoff test";
-            out.close();
+            Write(file.wstring(), bytes);
             return CommonUtil::NormalizePath(file.wstring());
+        }
+
+        static void Write(const std::wstring& path, size_t bytes)
+        {
+            std::ofstream out(std::filesystem::path(path), std::ios::binary | std::ios::trunc);
+            const std::string data(bytes, 'x');
+            out.write(data.data(), static_cast<std::streamsize>(data.size()));
         }
 
         Frame RenderFrame()
@@ -772,4 +778,63 @@ FIC2_TEST(MainImageHandoff_RapidNavigationShowsOnlyCompletedCurrentImages)
     std::printf("\n");
     const std::vector<int> expected { 0, 0, 0, 0, 0, 0, 3, 3, 3, 4, 0 };
     FIC2_CHECK(shown == expected);
+}
+
+FIC2_TEST(MainImageHandoff_ReselectingPendingImageKeepsPreviousPresentation)
+{
+    // A shown, B (a different file: other size) still loading, B selected
+    // again (for example a repeated open of the same path): an unchanged
+    // request. A stays shown with its metadata and B's decode continues.
+    Scene scene;
+    FIC2_REQUIRE(scene.Create());
+    const std::wstring a = scene.File(L"a.png", 100);
+    const std::wstring b = scene.File(L"b.png", 200);
+    FIC2_REQUIRE(scene.Show(a, Solid(kRed, 32, 8)));
+    const Look lookA = LookOf("a", Solid(kRed, 32, 8));
+    FIC2_CHECK(Matches(scene.Select(b), lookA));
+    const size_t requests = scene.decodes.requests.size();
+
+    const HRESULT again = scene.main->SetSourceFile(b);
+    std::printf("  reselect pending B: 0x%08X, requests %zu -> %zu, shown %ls\n", static_cast<unsigned>(again),
+        requests, scene.decodes.requests.size(), scene.main->GetLoadedInfo().sourcePath.c_str());
+    FIC2_CHECK(again == S_FALSE);
+    FIC2_CHECK(scene.main->GetLoadedInfo().sourcePath == a);
+    FIC2_CHECK(scene.main->GetLoadedInfo().width == 32);
+    FIC2_CHECK(Matches(scene.RenderFrame(), lookA));
+    FIC2_CHECK(scene.main->GetLoadedInfo().sourcePath == a);
+    FIC2_CHECK(scene.decodes.requests.size() == requests);
+
+    // The original decode is still the current one.
+    scene.decodes.Complete(requests - 1, Decoded(Solid(kGreen)));
+    FIC2_CHECK(Matches(scene.RenderFrame(), LookOf("b", Solid(kGreen))));
+    FIC2_CHECK(scene.main->GetLoadedInfo().sourcePath == b);
+}
+
+FIC2_TEST(MainImageHandoff_ReselectingModifiedPendingImageRestartsItsDecode)
+{
+    // As above, but B's file changed after its decode was requested: the
+    // decode restarts, A stays shown until the new result, and the result of
+    // the decode of the old file is never shown.
+    Scene scene;
+    FIC2_REQUIRE(scene.Create());
+    const std::wstring a = scene.File(L"a.png", 100);
+    const std::wstring b = scene.File(L"b.png", 200);
+    FIC2_REQUIRE(scene.Show(a, Solid(kRed, 32, 8)));
+    const Look lookA = LookOf("a", Solid(kRed, 32, 8));
+    scene.Select(b);
+    const size_t staleRequest = scene.decodes.Latest();
+
+    Scene::Write(b, 300);
+    FIC2_CHECK(scene.main->SetSourceFile(b) == S_OK);
+    FIC2_CHECK(scene.main->GetLoadedInfo().sourcePath == a);
+    FIC2_CHECK(Matches(scene.RenderFrame(), lookA));
+    FIC2_REQUIRE(scene.decodes.requests.size() == staleRequest + 2);   // decoded again
+    FIC2_CHECK(scene.decodes.requests.back().request.source == b);
+    FIC2_CHECK(scene.main->GetLoadedInfo().sourcePath == a);
+
+    scene.decodes.Complete(staleRequest, Decoded(Solid(kBlue)));
+    FIC2_CHECK(Matches(scene.RenderFrame(), lookA));
+    scene.decodes.Complete(scene.decodes.Latest(), Decoded(Solid(kGreen)));
+    FIC2_CHECK(Matches(scene.RenderFrame(), LookOf("b", Solid(kGreen))));
+    FIC2_CHECK(scene.main->GetLoadedInfo().sourcePath == b);
 }

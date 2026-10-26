@@ -823,12 +823,32 @@ HRESULT ImageBrowserMainImage::SetSourceFile(const std::wstring& filePath)
 
     if (!normalized.empty() && normalized == m_filePath)
     {
+        const ImageSourceIdentity current = ImageSourceIdentity::ForPath(normalized);
+
         // The file (or its host archive) was replaced since it was decoded:
-        // reload instead of keeping the stale presentation.
+        // reload instead of keeping the stale presentation. Only the shown
+        // presentation of this path is checked: a previous source may still be
+        // shown while this one loads.
         if (m_presentationKind != PresentationKind::None &&
-            m_presentationIdentity != ImageSourceIdentity::ForPath(normalized))
+            m_loadedFilePath == normalized &&
+            m_presentationIdentity != current)
         {
             ReloadSource();
+            return S_OK;
+        }
+
+        // This path is still loading (decode in flight or staged), and the file
+        // changed since that decode was requested: restart the decode. The
+        // previous source stays on screen until the new result is handed off.
+        const bool requestIdentityChanged = (m_requestIdentity.known || current.known) &&
+            m_requestIdentity != current;
+        if (m_loadedFilePath != normalized && m_binding.IsLoading() && requestIdentityChanged)
+        {
+            ImageGpuResourceCache::Instance().InvalidatePath(normalized);
+            m_binding.Cancel();
+            m_binding.MarkSettled();
+            m_stagedCacheHit.reset();
+            Invalidate();   // the next render requests the decode again
             return S_OK;
         }
 
