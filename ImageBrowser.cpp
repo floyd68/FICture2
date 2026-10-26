@@ -9,7 +9,7 @@
 #include "ImageBrowserMainPane.h"
 #include "ImageBrowserThumbnailPane.h"
 #include "ImageBrowserThumbLayout.h"
-#include "ImageBrowserThumbPayloadStore.h"
+#include "ImageBrowserThumbPayloadCache.h"
 #include "ImageBrowserAsyncThumbLoader.h"
 #include "FolderEnumeration.h"
 #include "ImageBrowserSplitCoordinator.h"
@@ -693,6 +693,9 @@ namespace
             // Throttle progressive UI list updates so large folders don't monopolize the UI thread.
             ApplyThrottledProgressiveUpdate();
             SettleThumbStripGeometry();
+            // Decodes completed since the last frame are cached and accounted
+            // now, also for prefetch tiles that will not render (offscreen).
+            ImageBrowserThumbStripController::AdmitCompletedPayloads(m_thumbTiles);
             // Tile materialization and load priorities run when the strip
             // panel renders (OnBeforeRenderStripTiles), after the scroll view
             // advanced this frame's smooth scroll.
@@ -2732,9 +2735,22 @@ namespace
                 m_thumbPreferKey.clear();
                 if (!m_currentFolder.hostPath.empty())
                 {
-                    const auto listing = Floar::VirtualFileSystem::ListDirectory(m_currentFolder);
+                    // The same listing (and identity capture) as the
+                    // progressive path, run on this thread without a stop.
+                    std::vector<Floar::VirtualFileEntry> listing {};
+                    std::vector<ImageSourceIdentity> identities {};
+                    FilesystemFolderEnumerationBackend().Enumerate(m_currentFolder, std::stop_token {},
+                        [&](std::vector<Floar::VirtualFileEntry>&& batch,
+                            std::vector<ImageSourceIdentity>&& batchIdentities,
+                            bool)
+                        {
+                            identities.resize(listing.size());
+                            listing.insert(listing.end(),
+                                std::make_move_iterator(batch.begin()), std::make_move_iterator(batch.end()));
+                            identities.insert(identities.end(), batchIdentities.begin(), batchIdentities.end());
+                        });
                     ResolveThumbPreferKey(preferSelectPath, listing);
-                    (void)m_thumbModel.Merge(listing);
+                    (void)m_thumbModel.Merge(listing, identities);
                 }
             }
             else
@@ -2764,10 +2780,6 @@ namespace
             }
             MaterializeThumbTiles(selectIndex);
             FIC2_LOG_STEP(t_rebuild, "[RebuildImmediate] MaterializeThumbTiles");
-            // Retained thumbnail payloads belong to the listed folder; reset
-            // after the previous folder's tiles were released (and retained
-            // what they had decoded).
-            m_thumbPayloads->ResetForFolder(ThumbItemModel::LookupKeyFor(m_thumbModel.Folder()));
 
             // Restore selection without scrolling yet; layout hasn't been updated.
             if (!hasItems)
@@ -3327,8 +3339,9 @@ namespace
         ImageBrowserThumbStripController m_thumbStripController {};
         std::shared_ptr<ImageBrowserThumbnailPane> m_thumbPane {};
         ThumbTileSet m_thumbTiles {};   // tiles of MaterializedThumbRange()
-        // Decoded thumbnails of the listed folder, retained per item (not per tile).
-        std::shared_ptr<ThumbPayloadStore> m_thumbPayloads { std::make_shared<ThumbPayloadStore>() };
+        // Decoded thumbnails, bounded and shared by every browser; a previous
+        // folder's entries age out instead of being dropped on navigation.
+        std::shared_ptr<ThumbPayloadCache> m_thumbPayloads { ThumbPayloadCache::Shared() };
         size_t m_selectedIndex { static_cast<size_t>(-1) };   // model index; its tile (if any) is highlighted
         std::wstring m_typeSelectQuery {};
         unsigned long long m_typeSelectLastInputMs { 0 };

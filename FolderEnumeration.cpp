@@ -81,7 +81,10 @@ namespace FolderEnumerationDetail
             const FolderLoadRequest& request,
             std::stop_token stop)
         {
-            const auto sink = [&](std::vector<Floar::VirtualFileEntry>&& batch, bool completed)
+            const auto sink = [&](
+                std::vector<Floar::VirtualFileEntry>&& batch,
+                std::vector<ImageSourceIdentity>&& identities,
+                bool completed)
             {
                 if (stop.stop_requested())
                 {
@@ -94,6 +97,7 @@ namespace FolderEnumerationDetail
                 chunk.showNavItems = request.showNavItems;
                 chunk.completed = completed;
                 chunk.batch = std::move(batch);
+                chunk.identities = std::move(identities);
                 PostChunk(service, *lane, std::move(chunk));
             };
 
@@ -104,12 +108,12 @@ namespace FolderEnumerationDetail
             catch (const std::exception& ex)
             {
                 FIC2_LOG_WARN("[FolderEnum] Enumeration of '{}' failed: {}", AppLog::ToUtf8(request.folder.wstring()), ex.what());
-                sink({}, true);
+                sink({}, {}, true);
             }
             catch (...)
             {
                 FIC2_LOG_WARN("[FolderEnum] Enumeration of '{}' failed.", AppLog::ToUtf8(request.folder.wstring()));
-                sink({}, true);
+                sink({}, {}, true);
             }
         }
 
@@ -221,6 +225,29 @@ bool FilesystemFolderEnumerationBackend::EntryIsDirectory(const std::filesystem:
     return entry.is_directory(ec);
 }
 
+ImageSourceIdentity FilesystemFolderEnumerationBackend::EntryIdentity(const std::filesystem::directory_entry& entry)
+{
+    // Both come from the enumeration data the iterator already holds (the
+    // MSVC directory_entry caches them; a reparse point is read once).
+    ImageSourceIdentity identity {};
+    std::error_code ec;
+    const uintmax_t size = entry.file_size(ec);
+    if (ec)
+    {
+        return identity;
+    }
+    const auto writeTime = entry.last_write_time(ec);
+    if (ec)
+    {
+        return identity;
+    }
+    identity.size = static_cast<uint64_t>(size);
+    // file_time_type counts 100 ns ticks since 1601, as FILETIME does.
+    identity.writeTime = static_cast<uint64_t>(writeTime.time_since_epoch().count());
+    identity.known = true;
+    return identity;
+}
+
 bool FilesystemFolderEnumerationBackend::EnumerateArchive(
     const Floar::VirtualPath& folder,
     std::stop_token stop,
@@ -244,23 +271,38 @@ void FilesystemFolderEnumerationBackend::Enumerate(
     // Fewer, larger chunks reduce progressive UI rebuild overhead on large folders.
     constexpr size_t kBatchSize = 256;
     std::vector<Floar::VirtualFileEntry> batch {};
+    std::vector<ImageSourceIdentity> identities {};
     batch.reserve(kBatchSize);
+    identities.reserve(kBatchSize);
+    const auto flush = [&](bool completed)
+    {
+        sink(std::move(batch), std::move(identities), completed);
+        batch.clear();
+        identities.clear();
+        batch.reserve(kBatchSize);
+        identities.reserve(kBatchSize);
+    };
 
     if (folder.IsInArchive() || folder.IsArchiveFile())
     {
+        // Every entry is identified by its host archive: one read per listing.
+        const ImageSourceIdentity host = ImageSourceIdentity::ForFile(folder.hostPath.wstring());
+        if (stop.stop_requested())
+        {
+            return;
+        }
         const bool completed = EnumerateArchive(folder, stop, [&](Floar::VirtualFileEntry&& entry)
         {
             batch.push_back(std::move(entry));
+            identities.push_back(host);
             if (batch.size() >= kBatchSize)
             {
-                sink(std::move(batch), false);
-                batch.clear();
-                batch.reserve(kBatchSize);
+                flush(false);
             }
         });
         if (completed && !stop.stop_requested())
         {
-            sink(std::move(batch), true);
+            flush(true);
         }
         return;
     }
@@ -273,7 +315,7 @@ void FilesystemFolderEnumerationBackend::Enumerate(
     }
     if (!isDirectory)
     {
-        sink({}, true);
+        flush(true);
         return;
     }
     std::error_code ec;
@@ -285,7 +327,7 @@ void FilesystemFolderEnumerationBackend::Enumerate(
     }
     if (ec)
     {
-        sink({}, true);
+        flush(true);
         return;
     }
 
@@ -307,12 +349,16 @@ void FilesystemFolderEnumerationBackend::Enumerate(
             const bool isDir = EntryIsDirectory(entry, typeEc);
             if (!typeEc)
             {
+                // The identity query may read a reparse point's target too.
+                if (stop.stop_requested())
+                {
+                    return;
+                }
                 batch.emplace_back(Floar::VirtualPath(entry.path()), isDir, 0, 0);
+                identities.push_back(isDir ? ImageSourceIdentity {} : EntryIdentity(entry));
                 if (batch.size() >= kBatchSize)
                 {
-                    sink(std::move(batch), false);
-                    batch.clear();
-                    batch.reserve(kBatchSize);
+                    flush(false);
                 }
             }
         }
@@ -331,7 +377,7 @@ void FilesystemFolderEnumerationBackend::Enumerate(
     if (!stop.stop_requested())
     {
         // Empty (failed / no entries) or the final partial batch either way.
-        sink(std::move(batch), true);
+        flush(true);
     }
 }
 

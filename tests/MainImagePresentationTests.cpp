@@ -5,6 +5,8 @@
 #include "FD2D/Core.h"
 #include "ImageAsyncBinding.h"
 #include "ImageBrowserMainImage.h"
+#include "ImageBrowserThumbImage.h"
+#include "ImageBrowserThumbPayloadCache.h"
 #include "ImageGpuResourceCache.h"
 #include "ImageSourceIdentity.h"
 #include "ThumbImageTile.h"
@@ -96,6 +98,21 @@ namespace
             image.sourceMipLevels = mipLevels;
             image.sourceMipIndex = mipIndex;
             requests.back().callback(S_OK, std::move(image));
+        }
+
+        // Completes request `index` with a size x size BGRA image whose bytes
+        // are all `fill`.
+        void CompleteFilled(size_t index, uint32_t size, uint8_t fill)
+        {
+            ImageCore::DecodedImage image {};
+            image.width = size;
+            image.height = size;
+            image.rowPitchBytes = size * 4u;
+            image.dxgiFormat = DXGI_FORMAT_B8G8R8A8_UNORM;
+            image.blocks = std::make_shared<std::vector<uint8_t>>(static_cast<size_t>(size) * size * 4u, fill);
+            image.blockBytes = static_cast<uint32_t>(image.blocks->size());
+            image.sourceMipLevels = 1;
+            requests.at(index).callback(S_OK, std::move(image));
         }
 
         std::vector<Request> requests;
@@ -404,4 +421,149 @@ FIC2_TEST(MainImage_ThumbnailTilesRebuildBrushesAfterTargetChange)
         FIC2_CHECK(FAILED(otherDomainSameGeneration));   // resources are cached ...
         FIC2_CHECK(SUCCEEDED(afterTargetBump));          // ... and rebuilt for the new target
     }
+}
+
+FIC2_TEST(MainImage_ThumbnailRestoresFromCachedPayloadAfterGraphicsChanges)
+{
+    // Target recreation and device loss rebuild a thumbnail's D2D bitmap from
+    // its pinned CPU payload (#6) without a new decode, and keep the cache
+    // entries: CPU payloads do not depend on graphics generations.
+    ComScope com;
+    ComPtr<IWICImagingFactory> wic;
+    FIC2_REQUIRE(SUCCEEDED(CoCreateInstance(CLSID_WICImagingFactory, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&wic))));
+    DomainCanvas a;
+    DomainCanvas b;
+    FIC2_REQUIRE(a.Create(wic.Get()));
+    FIC2_REQUIRE(b.Create(wic.Get()));
+
+    RecordingDecodeService decodes;
+    ImageAsyncBinding::SetDecodeServiceForTesting(&decodes);
+    {
+        const std::wstring path = CommonUtil::NormalizePath(L"C:\\FICture2Tests\\Thumb\\thumb.png");
+        ImageSourceIdentity identity {};
+        identity.size = 1234;
+        identity.writeTime = 5678;
+        identity.known = true;
+        auto cache = std::make_shared<ThumbPayloadCache>();
+
+        FD2D::Backplate backplate(L"thumb-recovery-test");
+        auto thumb = std::make_shared<ImageBrowserThumbImage>(L"thumb");
+        FIC2_REQUIRE(backplate.AddWnd(thumb));
+        thumb->SetLayoutRect(D2D1::RectF(0.0f, 0.0f, 96.0f, 96.0f));
+        thumb->SetThumbnailSize({ 64.0f, 64.0f });
+        thumb->SetPayloadCache(cache);
+        FIC2_REQUIRE(SUCCEEDED(thumb->SetSourceFile(path, identity)));
+        FIC2_REQUIRE(decodes.requests.size() == 1);
+        decodes.CompleteLatest(8, 1, 0);
+        FIC2_CHECK(SUCCEEDED(a.Draw(*thumb)));
+        FIC2_CHECK(thumb->GetBitmapSize().width == 8.0f);
+        FIC2_CHECK(cache->EntryCount() == 1);
+        FIC2_CHECK(cache->GetStats().pinnedEntries == 1);
+
+        const auto cachedAfter = [&](const char* step)
+        {
+            const HRESULT hr = (std::string(step) == "target") ? b.Draw(*thumb) : a.Draw(*thumb);
+            std::printf("  after %s change: draw 0x%08X, bitmap %.0f px, %zu requests, %zu entries\n",
+                step, static_cast<unsigned>(hr), thumb->GetBitmapSize().width, decodes.requests.size(),
+                cache->EntryCount());
+            FIC2_CHECK(SUCCEEDED(hr));
+            FIC2_CHECK(thumb->GetBitmapSize().width == 8.0f);
+            FIC2_CHECK(decodes.requests.size() == 1);   // no new decode
+            FIC2_CHECK(cache->EntryCount() == 1);       // no entry dropped
+            FIC2_CHECK(cache->GetStats().pinnedEntries == 1);
+            FIC2_CHECK(cache->Find(path, identity, ThumbDecodeOptions {}).size() == 1);
+        };
+
+        // The bitmap belongs to the old target (domain a): drawing it into
+        // domain b works only once it was rebuilt from the CPU payload.
+        FD2D::BackplateTestAccess::TargetRecreated(backplate);
+        cachedAfter("target");
+        FD2D::BackplateTestAccess::DeviceLost(backplate);
+        cachedAfter("device");
+    }
+    ImageAsyncBinding::SetDecodeServiceForTesting(nullptr);
+}
+
+namespace
+{
+    // Blue channel of the canvas's center pixel.
+    int CenterBlue(IWICBitmap* bitmap)
+    {
+        const WICRect rect { 48, 48, 1, 1 };
+        ComPtr<IWICBitmapLock> lock;
+        if (FAILED(bitmap->Lock(&rect, WICBitmapLockRead, &lock)))
+        {
+            return -1;
+        }
+        UINT size = 0;
+        BYTE* data = nullptr;
+        if (FAILED(lock->GetDataPointer(&size, &data)) || data == nullptr || size < 4)
+        {
+            return -1;
+        }
+        return data[0];
+    }
+}
+
+FIC2_TEST(MainImage_ThumbnailRecoveryShowsThePictureItShowed)
+{
+    // Two panes decode the same item (same path, identity, size and options)
+    // before either result is cached, and the file changed between the reads:
+    // the results differ. The second pane is shown from the cached entry it
+    // pins, so what it shows and what a target or device change restores
+    // from are the same picture.
+    ComScope com;
+    ComPtr<IWICImagingFactory> wic;
+    FIC2_REQUIRE(SUCCEEDED(CoCreateInstance(CLSID_WICImagingFactory, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&wic))));
+    DomainCanvas a;
+    DomainCanvas b;
+    FIC2_REQUIRE(a.Create(wic.Get()));
+    FIC2_REQUIRE(b.Create(wic.Get()));
+
+    RecordingDecodeService decodes;
+    ImageAsyncBinding::SetDecodeServiceForTesting(&decodes);
+    {
+        const std::wstring path = CommonUtil::NormalizePath(L"C:\\FICture2Tests\\Thumb\\shared.png");
+        ImageSourceIdentity identity {};
+        identity.size = 4321;
+        identity.writeTime = 8765;
+        identity.known = true;
+        auto cache = std::make_shared<ThumbPayloadCache>();
+
+        FD2D::Backplate backplate(L"thumb-two-panes-test");
+        std::shared_ptr<ImageBrowserThumbImage> panes[2];
+        for (int i = 0; i < 2; ++i)
+        {
+            panes[i] = std::make_shared<ImageBrowserThumbImage>(L"pane" + std::to_wstring(i));
+            FIC2_REQUIRE(backplate.AddWnd(panes[i]));
+            panes[i]->Arrange({ 0.0f, 0.0f, 96.0f, 96.0f });   // places the texture child too
+            panes[i]->SetThumbnailSize({ 64.0f, 64.0f });
+            panes[i]->SetPayloadCache(cache);
+            FIC2_REQUIRE(SUCCEEDED(panes[i]->SetSourceFile(path, identity)));
+        }
+        FIC2_REQUIRE(decodes.requests.size() == 2);   // both requested before either result
+
+        decodes.CompleteFilled(0, 8, 30);
+        FIC2_REQUIRE(SUCCEEDED(a.Draw(*panes[0])));
+        FIC2_CHECK(CenterBlue(a.bitmap.Get()) == 30);
+        decodes.CompleteFilled(1, 8, 200);
+        FIC2_REQUIRE(SUCCEEDED(a.Draw(*panes[1])));
+        const int shown = CenterBlue(a.bitmap.Get());
+
+        FD2D::BackplateTestAccess::TargetRecreated(backplate);
+        FIC2_REQUIRE(SUCCEEDED(b.Draw(*panes[1])));
+        const int afterTarget = CenterBlue(b.bitmap.Get());
+        FD2D::BackplateTestAccess::DeviceLost(backplate);
+        FIC2_REQUIRE(SUCCEEDED(a.Draw(*panes[1])));
+        const int afterDevice = CenterBlue(a.bitmap.Get());
+
+        std::printf("  second pane: shown %d, after target change %d, after device loss %d\n",
+            shown, afterTarget, afterDevice);
+        FIC2_CHECK(shown == 30);   // the cached entry's picture
+        FIC2_CHECK(afterTarget == shown);
+        FIC2_CHECK(afterDevice == shown);
+        FIC2_CHECK(decodes.requests.size() == 2);
+        FIC2_CHECK(cache->EntryCount() == 1);
+    }
+    ImageAsyncBinding::SetDecodeServiceForTesting(nullptr);
 }

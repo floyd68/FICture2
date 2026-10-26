@@ -16,7 +16,7 @@ namespace FD2D
     class Wnd;
 }
 
-class ThumbPayloadStore;
+class ThumbPayloadCache;
 class ThumbImageTile;
 
 // Strip tiles over model indices. ThumbItemModel holds the items; only the
@@ -41,9 +41,9 @@ public:
         ThumbIndexRange visible {};
         // The selected model index: its tile is highlighted when bound.
         size_t selectedIndex { static_cast<size_t>(-1) };
-        // Decoded payloads retained per item: an image tile bound to an item
-        // with a retained payload shows it without a new decode request.
-        std::shared_ptr<ThumbPayloadStore> payloads {};
+        // Decoded payloads (bounded CPU cache): an image tile bound to an item
+        // with a cached payload shows it without a new decode request.
+        std::shared_ptr<ThumbPayloadCache> payloads {};
         std::function<void(size_t)> onSelectIndex {};
         std::function<void(size_t)> onActivateIndex {};
         // An image tile's decoded aspect ratio became known (lookup key, aspect).
@@ -70,11 +70,13 @@ public:
     // tiles), and updates and reorders the existing ones. Work is proportional
     // to the range (and the tiles it replaces), not to the model size.
     //
-    // A released image tile's request is canceled and its bitmap dropped; the
-    // tile is kept for reuse (up to kMaxRecycledTiles) and rebound to another
-    // item under a new request generation, so the late completion of its
-    // previous request is never shown. Decoded payloads stay in the payload
-    // store.
+    // A released image tile's request is canceled, and its bitmap and its pin
+    // on the payload are dropped; the tile is kept for reuse (up to
+    // kMaxRecycledTiles) and rebound to another item under a new request
+    // generation, so the late completion of its previous request is never
+    // shown. Decoded payloads stay in the payload cache, within its bounds.
+    // A tile that stays bound to its item is told the item's listed identity,
+    // so a file replaced at the same path is decoded again.
     void MaterializeTiles(const MaterializeContext& context);
 
     // Selects model item `index` (clamped to the model) whether or not it has
@@ -83,6 +85,11 @@ public:
     void SelectItemByIndex(const SelectItemContext& context, size_t index) const;
 
     static void SetTileSelected(const ThumbTile& tile, bool selected);
+
+    // Admits every bound image tile's completed decode into the payload cache
+    // (ImageBrowserThumbImage::AdmitCompletedPayload), rendered or not, so
+    // decoded payloads are accounted from the first frame after they arrive.
+    static void AdmitCompletedPayloads(const ThumbTileSet& tiles);
 
     // Released image tiles kept for reuse, at most this many.
     static constexpr size_t kMaxRecycledTiles = 32;

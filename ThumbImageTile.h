@@ -28,7 +28,7 @@ public:
     void SetFixedHeight(float height);
     void SetCaption(const std::wstring& text);
 
-    void SetSourceFile(const std::wstring& path);
+    void SetSourceFile(const std::wstring& path, const ImageSourceIdentity& identity = {});
     // Releases the bound item (see ImageBrowserThumbImage::Recycle) and the
     // handlers, so the tile can be bound to another item.
     void Recycle();

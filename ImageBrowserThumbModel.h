@@ -1,6 +1,7 @@
 #pragma once
 
 #include "ImageBrowserThumbTypes.h"
+#include "ImageSourceIdentity.h"
 #include "VirtualFileSystem.h"
 #include "VirtualPath.h"
 
@@ -34,6 +35,11 @@ struct ThumbModelEntry
     std::wstring sortKey {};    // lower-cased file name
     std::wstring lookupKey {};  // lower-cased display path (de-duplication)
     uint64_t arrival { 0 };     // tie-break: listing order
+    // What the item was listed as (file size and write time, or the host
+    // archive's), captured once while listing; unknown when the listing had
+    // none. Thumbnail cache lookups use it and never read the file system, so
+    // a file replaced at the same path is noticed when it is listed again.
+    ImageSourceIdentity identity {};
 };
 
 class ThumbItemModel
@@ -52,10 +58,16 @@ public:
     void StageReset(const Floar::VirtualPath& folder, bool showNavItems, ImageFilter isImage);
 
     // Classifies `entries`, drops duplicates and unsupported files, and merges
-    // the rest into the order. Returns how many items were added.
-    size_t Merge(const std::vector<Floar::VirtualFileEntry>& entries);
+    // the rest into the order. `identities` holds each entry's source identity
+    // as listed (same order); entries without one get an unknown identity.
+    // Returns how many items were added.
+    size_t Merge(
+        const std::vector<Floar::VirtualFileEntry>& entries,
+        const std::vector<ImageSourceIdentity>& identities = {});
     // As Merge, but the items join the display order only on the next Commit.
-    size_t Stage(const std::vector<Floar::VirtualFileEntry>& entries);
+    size_t Stage(
+        const std::vector<Floar::VirtualFileEntry>& entries,
+        const std::vector<ImageSourceIdentity>& identities = {});
     // Applies a staged reset and merges the staged items into the display
     // order. Returns true if the displayed items changed.
     bool Commit();

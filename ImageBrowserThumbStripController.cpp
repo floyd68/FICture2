@@ -52,6 +52,17 @@ void ImageBrowserThumbStripController::SetTileSelected(const ThumbTile& tile, bo
     }
 }
 
+void ImageBrowserThumbStripController::AdmitCompletedPayloads(const ThumbTileSet& tiles)
+{
+    for (const ThumbTile& tile : tiles.Tiles())
+    {
+        if (tile.image)
+        {
+            (void)tile.image->AdmitCompletedPayload();
+        }
+    }
+}
+
 void ImageBrowserThumbStripController::MaterializeTiles(const MaterializeContext& context)
 {
     if (!context.panel || context.tiles == nullptr || context.model == nullptr)
@@ -155,11 +166,11 @@ void ImageBrowserThumbStripController::MaterializeTiles(const MaterializeContext
                     thumbTile = std::make_shared<ThumbImageTile>(name);
                 }
                 // Set before the source, so the request goes out at this priority
-                // (or not at all, when a retained payload is shown).
-                thumbTile->ImageWnd()->SetPayloadStore(context.payloads);
+                // (or not at all, when a cached payload is shown).
+                thumbTile->ImageWnd()->SetPayloadCache(context.payloads);
                 thumbTile->ImageWnd()->SetLoadPriority(priority);
                 thumbTile->SetFixedHeight(thumbH);
-                thumbTile->SetSourceFile(p.wstring());
+                thumbTile->SetSourceFile(p.wstring(), entry.identity);
                 thumbTile->SetCaption(p.filename().wstring());
                 (void)panel->AddChild(thumbTile);
             }
@@ -167,6 +178,7 @@ void ImageBrowserThumbStripController::MaterializeTiles(const MaterializeContext
             {
                 thumbTile->ImageWnd()->SetLoadPriority(priority);
                 thumbTile->SetFixedHeight(thumbH);
+                thumbTile->ImageWnd()->SetSourceIdentity(entry.identity);
             }
 
             thumbTile->SetOnClick([onSelectIndex, index]()
