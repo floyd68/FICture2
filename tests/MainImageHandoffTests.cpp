@@ -842,6 +842,83 @@ FIC2_TEST(MainImageHandoff_ReselectingModifiedPendingImageRestartsItsDecode)
 
 namespace
 {
+    // B (green, cached) then A (red) are shown; B is selected again between
+    // a frame's passes, so its cache hit is staged for the next handoff. The
+    // frame keeps A.
+    struct StagedCacheHit
+    {
+        Scene scene;
+        std::wstring a;
+        std::wstring b;
+        const TestImage imageA = Solid(kRed, 32, 8);
+        const TestImage imageB = Solid(kGreen, 8, 32);
+        size_t requests { 0 };
+
+        bool Create()
+        {
+            if (!scene.Create())
+            {
+                return false;
+            }
+            a = scene.File(L"a.png", 100);
+            b = scene.File(L"b.png", 200);
+            if (!scene.Show(b, imageB) || !scene.Show(a, imageA))
+            {
+                return false;
+            }
+            requests = scene.decodes.requests.size();
+            HRESULT staged = E_FAIL;
+            scene.At(Timing::BetweenPasses, [&]() { staged = scene.main->SetSourceFile(b); });
+            return Matches(scene.RenderFrame(), LookOf("a", imageA)) && staged == S_OK &&
+                scene.main->GetLoadedInfo().sourcePath == a && scene.decodes.requests.size() == requests;
+        }
+    };
+}
+
+FIC2_TEST(MainImageHandoff_ReselectingStagedCacheHitKeepsIt)
+{
+    // Unchanged file: an unchanged request; the staged hit is shown by the
+    // next handoff, without a decode.
+    StagedCacheHit staged;
+    FIC2_REQUIRE(staged.Create());
+    Scene& scene = staged.scene;
+    FIC2_CHECK(scene.main->SetSourceFile(staged.b) == S_FALSE);
+    FIC2_CHECK(scene.main->GetLoadedInfo().sourcePath == staged.a);
+    FIC2_CHECK(Matches(scene.RenderFrame(), LookOf("b", staged.imageB)));
+    FIC2_CHECK(scene.main->GetLoadedInfo().sourcePath == staged.b);
+    FIC2_CHECK(scene.decodes.requests.size() == staged.requests);
+}
+
+FIC2_TEST(MainImageHandoff_ReselectingModifiedStagedCacheHitReloads)
+{
+    // B's file changed while its cache hit waits for the handoff: the stale
+    // cached picture is never shown, B is decoded again, and A stays shown
+    // until the new result is handed off.
+    StagedCacheHit staged;
+    FIC2_REQUIRE(staged.Create());
+    Scene& scene = staged.scene;
+    Scene::Write(staged.b, 300);
+    const HRESULT reselect = scene.main->SetSourceFile(staged.b);
+    const Frame next = scene.RenderFrame();
+    const bool showsA = Matches(next, LookOf("a", staged.imageA));
+    const bool showsStaleB = Matches(next, LookOf("b", staged.imageB));
+    std::printf("  modified staged B: 0x%08X, next frame %s, requests %zu -> %zu\n", static_cast<unsigned>(reselect),
+        showsA ? "a" : (showsStaleB ? "stale b" : "other"), staged.requests, scene.decodes.requests.size());
+    FIC2_CHECK(reselect == S_OK);
+    FIC2_CHECK(showsA);
+    FIC2_CHECK(scene.main->GetLoadedInfo().sourcePath == staged.a);
+    FIC2_REQUIRE(scene.decodes.requests.size() == staged.requests + 1);   // decoded again
+    FIC2_CHECK(scene.decodes.requests.back().request.source == staged.b);
+
+    const TestImage fresh = Solid(kBlue, 16, 16);
+    scene.decodes.Complete(scene.decodes.Latest(), Decoded(fresh));
+    FIC2_CHECK(Matches(scene.RenderFrame(), LookOf("fresh b", fresh)));
+    FIC2_CHECK(scene.main->GetLoadedInfo().sourcePath == staged.b);
+    FIC2_CHECK(scene.main->GetLoadedInfo().width == fresh.width);
+}
+
+namespace
+{
     // A hidden window handle given to the scene's windowless backplate, so
     // Wnd::Invalidate() renders synchronously as in the app.
     struct SynchronousInvalidation

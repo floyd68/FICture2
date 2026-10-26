@@ -843,12 +843,20 @@ HRESULT ImageBrowserMainImage::SetSourceFile(const std::wstring& filePath)
             return S_OK;
         }
 
-        // This path is still loading (decode in flight or staged), and the file
-        // changed since that decode was requested: restart the decode. The
+        // This path is still loading (decode in flight or staged, or a cache hit
+        // staged for the next handoff), and the file changed since that content
+        // was made: drop it and decode the path again. The
         // previous source stays on screen until the new result is handed off.
-        const bool requestIdentityChanged = (m_requestIdentity.known || current.known) &&
-            m_requestIdentity != current;
-        if (m_loadedFilePath != normalized && m_binding.IsLoading() && requestIdentityChanged)
+        // A cache hit staged for the next handoff (the binding is already
+        // settled) is checked against the identity it was cached with.
+        const auto identityChanged = [&current](const ImageSourceIdentity& known)
+        {
+            return (known.known || current.known) && known != current;
+        };
+        const bool loadingChanged = m_binding.IsLoading() && identityChanged(m_requestIdentity);
+        const bool stagedChanged = m_stagedCacheHit && m_stagedCacheHit->path == normalized &&
+            identityChanged(m_stagedCacheHit->identity);
+        if (m_loadedFilePath != normalized && (loadingChanged || stagedChanged))
         {
             ImageGpuResourceCache::Instance().InvalidatePath(normalized);
             m_binding.Cancel();
