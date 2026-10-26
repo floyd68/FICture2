@@ -214,6 +214,56 @@ FIC2_TEST(ThumbItemModel_StagedListingIsDisplayedOnCommit)
     FIC2_CHECK(model.DisplayCount() == 1);   // Up only
 }
 
+FIC2_TEST(ThumbItemModel_KeepsTheListedSourceIdentity)
+{
+    // Each item keeps the identity it was listed with; a relisting of the same
+    // folder (refresh) replaces it, so a file replaced at the same path is
+    // noticed then. Entries listed without one are unknown.
+    const auto identity = [](uint64_t size, uint64_t writeTime)
+    {
+        ImageSourceIdentity id {};
+        id.size = size;
+        id.writeTime = writeTime;
+        id.known = true;
+        return id;
+    };
+    const std::wstring key = ThumbItemModel::LookupKeyFor(File(L"b.png").path);
+    const auto itemIdentity = [&](const ThumbItemModel& model) -> ImageSourceIdentity
+    {
+        for (const ThumbModelEntry& entry : model.Images())
+        {
+            if (entry.lookupKey == key)
+            {
+                return entry.identity;
+            }
+        }
+        return {};
+    };
+
+    ThumbItemModel model;
+    model.Reset(kFolder, true, &IsTestImage);
+    FIC2_CHECK(model.Merge({ File(L"a.png"), File(L"b.png") }, { identity(10, 100), identity(20, 200) }) == 2);
+    FIC2_CHECK(itemIdentity(model) == identity(20, 200));
+    FIC2_CHECK(model.Images()[0].identity == identity(10, 100));
+
+    // A duplicate keeps the identity it was first listed with.
+    FIC2_CHECK(model.Merge({ File(L"B.png") }, { identity(30, 300) }) == 0);
+    FIC2_CHECK(itemIdentity(model) == identity(20, 200));
+
+    // Listed again after the file was replaced: the new identity.
+    model.StageReset(kFolder, true, &IsTestImage);
+    FIC2_CHECK(model.Stage({ File(L"b.png") }, { identity(21, 201) }) == 1);
+    FIC2_CHECK(itemIdentity(model) == identity(20, 200));   // displayed until the commit
+    FIC2_CHECK(model.Commit());
+    FIC2_CHECK(itemIdentity(model) == identity(21, 201));
+
+    // Without identities (or fewer than entries) the rest are unknown.
+    model.Reset(kFolder, true, &IsTestImage);
+    FIC2_CHECK(model.Merge({ File(L"a.png"), File(L"b.png") }, { identity(10, 100) }) == 2);
+    FIC2_CHECK(model.Images()[0].identity == identity(10, 100));
+    FIC2_CHECK(!itemIdentity(model).known);
+}
+
 FIC2_TEST(ThumbItemModel_ImageExtensionLookup)
 {
     // Direct registry lookup, case-insensitive; no extension, unsupported.

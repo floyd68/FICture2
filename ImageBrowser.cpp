@@ -2732,9 +2732,22 @@ namespace
                 m_thumbPreferKey.clear();
                 if (!m_currentFolder.hostPath.empty())
                 {
-                    const auto listing = Floar::VirtualFileSystem::ListDirectory(m_currentFolder);
+                    // The same listing (and identity capture) as the
+                    // progressive path, run on this thread without a stop.
+                    std::vector<Floar::VirtualFileEntry> listing {};
+                    std::vector<ImageSourceIdentity> identities {};
+                    FilesystemFolderEnumerationBackend().Enumerate(m_currentFolder, std::stop_token {},
+                        [&](std::vector<Floar::VirtualFileEntry>&& batch,
+                            std::vector<ImageSourceIdentity>&& batchIdentities,
+                            bool)
+                        {
+                            identities.resize(listing.size());
+                            listing.insert(listing.end(),
+                                std::make_move_iterator(batch.begin()), std::make_move_iterator(batch.end()));
+                            identities.insert(identities.end(), batchIdentities.begin(), batchIdentities.end());
+                        });
                     ResolveThumbPreferKey(preferSelectPath, listing);
-                    (void)m_thumbModel.Merge(listing);
+                    (void)m_thumbModel.Merge(listing, identities);
                 }
             }
             else

@@ -51,7 +51,7 @@ namespace
             }
             std::vector<Floar::VirtualFileEntry> entries {};
             entries.emplace_back(Floar::VirtualPath(folder.hostPath / L"a.png"), false, 0, 0);
-            sink(std::move(entries), true);
+            sink(std::move(entries), {}, true);
         }
 
         void Release()
@@ -334,12 +334,16 @@ FIC2_TEST(FolderEnumeration_FilesystemBackendStartsNoOperationAfterStop)
     size_t total = 0;
     int calls = 0;
     bool completed = false;
-    const auto reset = [&] { total = 0; calls = 0; completed = false; };
-    const auto count = [&](std::vector<Floar::VirtualFileEntry>&& batch, bool done)
+    std::vector<Floar::VirtualFileEntry> listed {};
+    std::vector<ImageSourceIdentity> listedIdentities {};
+    const auto reset = [&] { total = 0; calls = 0; completed = false; listed.clear(); listedIdentities.clear(); };
+    const auto count = [&](std::vector<Floar::VirtualFileEntry>&& batch, std::vector<ImageSourceIdentity>&& identities, bool done)
     {
         total += batch.size();
         ++calls;
         completed = done;
+        listed.insert(listed.end(), batch.begin(), batch.end());
+        listedIdentities.insert(listedIdentities.end(), identities.begin(), identities.end());
     };
 
     // Full listing: 256-entry batches, the last one completed; one advance per entry.
@@ -350,6 +354,16 @@ FIC2_TEST(FolderEnumeration_FilesystemBackendStartsNoOperationAfterStop)
         FIC2_CHECK(backend.isDirectoryCalls == 1 && backend.openCalls == 1);
         FIC2_CHECK(backend.advanceCalls == 600);
         FIC2_CHECK(backend.entryQueryCalls == 600);
+
+        // Each file's identity comes with its entry, equal to a stat of it.
+        FIC2_REQUIRE(listedIdentities.size() == listed.size());
+        size_t matching = 0;
+        for (size_t i = 0; i < listed.size(); ++i)
+        {
+            const ImageSourceIdentity stat = ImageSourceIdentity::ForFile(listed[i].path.hostPath.wstring());
+            matching += (listedIdentities[i].known && listedIdentities[i] == stat && stat.size == 1) ? 1 : 0;
+        }
+        FIC2_CHECK(matching == 600);
     }
 
     // Stop arriving while an advance blocks (the 10th): the entry it lands on
@@ -373,9 +387,9 @@ FIC2_TEST(FolderEnumeration_FilesystemBackendStartsNoOperationAfterStop)
         reset();
         std::stop_source stop {};
         CountingFilesystemBackend backend {};
-        backend.Enumerate(folder, stop.get_token(), [&](std::vector<Floar::VirtualFileEntry>&& batch, bool done)
+        backend.Enumerate(folder, stop.get_token(), [&](std::vector<Floar::VirtualFileEntry>&& batch, std::vector<ImageSourceIdentity>&& identities, bool done)
         {
-            count(std::move(batch), done);
+            count(std::move(batch), std::move(identities), done);
             stop.request_stop();
         });
         FIC2_CHECK(calls == 1 && total == 256 && !completed);
@@ -446,14 +460,24 @@ FIC2_TEST(FolderEnumeration_ArchiveListingStopsBetweenEntries)
 
     // Full listing: the same 256-entry batches as folders, the last completed.
     {
+        // Every entry carries the host archive's identity (read once per listing).
+        const ImageSourceIdentity host = ImageSourceIdentity::ForFile(zip.wstring());
+        FIC2_REQUIRE(host.known);
+        size_t hostIdentities = 0;
         CountingFilesystemBackend backend {};
-        backend.Enumerate(folder, std::stop_token {}, [&](std::vector<Floar::VirtualFileEntry>&& batch, bool done)
+        backend.Enumerate(folder, std::stop_token {}, [&](std::vector<Floar::VirtualFileEntry>&& batch, std::vector<ImageSourceIdentity>&& identities, bool done)
         {
             total += batch.size();
             ++calls;
             completed = done;
+            FIC2_CHECK(identities.size() == batch.size());
+            for (const ImageSourceIdentity& identity : identities)
+            {
+                hostIdentities += (identity == host) ? 1 : 0;
+            }
         });
         FIC2_CHECK(total == 600 && calls == 3 && completed);
+        FIC2_CHECK(hostIdentities == 600);
         FIC2_CHECK(backend.archiveCalls == 1 && backend.archiveEntries == 600);
     }
 
@@ -465,7 +489,7 @@ FIC2_TEST(FolderEnumeration_ArchiveListingStopsBetweenEntries)
         completed = false;
         std::stop_source stop {};
         CountingFilesystemBackend backend {};
-        backend.Enumerate(folder, stop.get_token(), [&](std::vector<Floar::VirtualFileEntry>&& batch, bool done)
+        backend.Enumerate(folder, stop.get_token(), [&](std::vector<Floar::VirtualFileEntry>&& batch, std::vector<ImageSourceIdentity>&&, bool done)
         {
             total += batch.size();
             ++calls;
@@ -507,7 +531,7 @@ namespace
             {
                 std::vector<Floar::VirtualFileEntry> entries {};
                 entries.emplace_back(Floar::VirtualPath(folder.hostPath / L"a.png"), false, 0, 0);
-                sink(std::move(entries), false);
+                sink(std::move(entries), {}, false);
                 ++chunks;
             }
         }

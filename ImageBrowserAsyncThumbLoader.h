@@ -1,6 +1,7 @@
 #pragma once
 
 #include "ImageBrowserThumbModel.h"
+#include "ImageSourceIdentity.h"
 #include "VirtualFileSystem.h"
 #include "VirtualPath.h"
 
@@ -14,6 +15,9 @@ struct AsyncThumbListChunkPayload
     bool showNavItems { true };
     bool completed { false };
     std::vector<Floar::VirtualFileEntry> batch {};
+    // Source identity of each batch entry, captured while listing (same order;
+    // empty when none was captured).
+    std::vector<ImageSourceIdentity> identities {};
 };
 
 // Folder-listing chunks (produced by FolderEnumeration.h) and how the browser

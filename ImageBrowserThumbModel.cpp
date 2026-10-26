@@ -113,22 +113,27 @@ bool ThumbItemModel::Commit()
     return changed;
 }
 
-size_t ThumbItemModel::Merge(const std::vector<Floar::VirtualFileEntry>& entries)
+size_t ThumbItemModel::Merge(
+    const std::vector<Floar::VirtualFileEntry>& entries,
+    const std::vector<ImageSourceIdentity>& identities)
 {
-    const size_t added = Stage(entries);
+    const size_t added = Stage(entries, identities);
     (void)Commit();
     return added;
 }
 
-size_t ThumbItemModel::Stage(const std::vector<Floar::VirtualFileEntry>& entries)
+size_t ThumbItemModel::Stage(
+    const std::vector<Floar::VirtualFileEntry>& entries,
+    const std::vector<ImageSourceIdentity>& identities)
 {
     m_listed += entries.size();
     auto& folders = m_stagedFolders;
     auto& images = m_stagedImages;
     const size_t stagedBefore = folders.size() + images.size();
 
-    for (const auto& entry : entries)
+    for (size_t i = 0; i < entries.size(); ++i)
     {
+        const Floar::VirtualFileEntry& entry = entries[i];
         bool isFolder = entry.isDirectory;
         bool isArchive = false;
         if (!isFolder && entry.path.IsFilesystemPath() &&
@@ -156,6 +161,10 @@ size_t ThumbItemModel::Stage(const std::vector<Floar::VirtualFileEntry>& entries
         item.sortKey = SortKeyFor(entry.path);
         item.lookupKey = std::move(lookupKey);
         item.arrival = m_nextArrival++;
+        if (i < identities.size())
+        {
+            item.identity = identities[i];
+        }
         (isFolder ? folders : images).push_back(std::move(item));
     }
 

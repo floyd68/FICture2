@@ -1,6 +1,7 @@
 #pragma once
 
 #include "ImageBrowserAsyncThumbLoader.h"
+#include "ImageSourceIdentity.h"
 #include "VirtualFileSystem.h"
 #include "VirtualPath.h"
 
@@ -62,7 +63,11 @@
 class FolderEnumerationBackend
 {
 public:
-    using ChunkSink = std::function<void(std::vector<Floar::VirtualFileEntry>&&, bool completed)>;
+    // A batch of entries, the source identity of each (same order; empty when
+    // the backend captured none, which leaves every identity unknown), and
+    // whether the listing is complete.
+    using ChunkSink = std::function<void(
+        std::vector<Floar::VirtualFileEntry>&&, std::vector<ImageSourceIdentity>&&, bool completed)>;
 
     virtual ~FolderEnumerationBackend() = default;
 
@@ -76,6 +81,11 @@ public:
 // before every directory operation, so no new (possibly blocking) call starts
 // once stop is requested; archive listings stop between entries, and an
 // archive scan in progress stops between headers (Floar EnumerateDirectory).
+//
+// Source identities are captured while listing: a disk file's size and write
+// time come from the directory enumeration data (no extra call, except for a
+// reparse point, which is read once), and every entry of an archive listing
+// gets the host archive's identity, read once per listing.
 class FilesystemFolderEnumerationBackend : public FolderEnumerationBackend
 {
 public:
@@ -87,6 +97,8 @@ protected:
     virtual void OpenDirectory(const std::filesystem::path& path, std::filesystem::directory_iterator& it, std::error_code& ec);
     virtual void Advance(std::filesystem::directory_iterator& it, std::error_code& ec);
     virtual bool EntryIsDirectory(const std::filesystem::directory_entry& entry, std::error_code& ec);
+    // Size and last-write time of a listed file (unknown when unreadable).
+    virtual ImageSourceIdentity EntryIdentity(const std::filesystem::directory_entry& entry);
     // Streams an archive (folder) listing; false once stopped.
     virtual bool EnumerateArchive(
         const Floar::VirtualPath& folder,
