@@ -125,7 +125,16 @@ public:
     bool TryRestoreImageBrowserSession(const std::wstring& iniFile);
     void UpdateTitleBarInfo() override;
 
+    // Test seam: the browsers attached from now on do not load the user's
+    // INI settings (the defaults stay).
+    void SkipImageBrowserIniForTesting() { m_imageBrowserIniInitialized = true; }
+
 private:
+    // Measures and arranges the top-level Wnds in the client area, as the
+    // next render's layout pass will, without rendering: for code that needs
+    // arranged bounds while a DeferredRenderScope holds the layout request.
+    void ArrangeChildrenNow();
+
     std::shared_ptr<EventBus> m_eventBus { std::make_shared<EventBus>() };
     float m_syncedThumbStripHeight { 0.0f };
     bool m_hasSyncedThumbStripHeight { false };
