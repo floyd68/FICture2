@@ -161,6 +161,10 @@ private:
         {
             return;   // cannot lay out without rendering: the WM_PAINT frame shows the old layout
         }
+        // Controls invalidate while they are arranged (a split panel's
+        // splitter takes its new ratio): keep those invalidations deferred
+        // for the whole pass, also when no enclosing scope remains (unwinding).
+        backplate.BeginDeferredRender();
         try
         {
             host->ArrangeChildrenNow();
@@ -168,6 +172,7 @@ private:
         catch (...)
         {
         }
+        backplate.EndDeferredRender();
     }
 
     struct OpenScope
