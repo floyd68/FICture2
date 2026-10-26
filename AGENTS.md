@@ -24,7 +24,7 @@
 | `blocked` | Waiting on another issue or PR; skip when picking work |
 | `changes-requested` | Review found problems; fix on the same PR branch |
 | `approved` | Review passed; ready to merge |
-| `needs-manual-test` | Requires running the app; local build/tests cannot verify it |
+| `needs-manual-test` | Needs a manual check that automated tests and scripted app runs cannot cover |
 | `submodule` | Needs a change in FD2D, ImageCore, Floar or ThumbnailProvider |
 | `ci` | Build / CI infrastructure |
 
@@ -90,7 +90,24 @@
   Debug and MinSizeRel builds above stay required and the reviewer re-runs
   them; after that, the required CI checks replace this rule.
 - GUI behaviour (rendering, input, device loss, drag & drop, IPC between
-  instances, file associations) needs `needs-manual-test` with concrete steps.
+  instances, file associations) is verified by automated checks first:
+  - unit tests, including the windowless/software-target fixtures with pixel
+    readback;
+  - scripted runs of the real app on synthetic data generated in a temp
+    folder (log timing, UI-latency probes, input sent only while FICture2 is
+    the foreground topmost window, frame captures of synthetic content).
+
+  Scripted runs back up and restore the user's INI and never use the user's
+  files. Add `needs-manual-test` only for what automation cannot reach, for
+  example:
+  - a real GPU device loss;
+  - Explorer/shell integration;
+  - a physical display;
+  - behaviour that depends on user-specific data.
+
+  When it is added, list only those steps. The PR states which acceptance
+  criteria were verified automatically and how, and which remain manual and
+  why.
 
 ## Command: "진행" (implement)
 
@@ -113,8 +130,8 @@
    `Fixes floyd68/<repo>#N` in the FICture2 PR that pins it), a summary,
    verification results (commands and outcomes), submodule commits and pin
    changes if any, and any
-   remaining risks. Add `needs-manual-test` with concrete manual steps when the
-   change cannot be verified without running the app.
+   remaining risks. Add `needs-manual-test` with concrete manual steps only for
+   what the automated checks in "Building and verification" cannot cover.
 6. Record progress / verification on the issue. Do not merge your own PR in
    this step.
 
