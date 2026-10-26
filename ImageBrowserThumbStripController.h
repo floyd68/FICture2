@@ -16,6 +16,8 @@ namespace FD2D
     class Wnd;
 }
 
+class ThumbPayloadStore;
+
 // Strip tiles over model indices. ThumbItemModel holds the items; only the
 // materialized index range has tiles (ThumbTileSet), and selection is a model
 // index that is applied to a tile when the tile is bound.
@@ -35,6 +37,9 @@ public:
         ThumbIndexRange range {};
         // The selected model index: its tile is highlighted when bound.
         size_t selectedIndex { static_cast<size_t>(-1) };
+        // Decoded payloads retained per item: an image tile bound to an item
+        // with a retained payload shows it without a new decode request.
+        std::shared_ptr<ThumbPayloadStore> payloads {};
         std::function<void(size_t)> onSelectIndex {};
         std::function<void(size_t)> onActivateIndex {};
         // An image tile's decoded aspect ratio became known (lookup key, aspect).

@@ -4,10 +4,13 @@
 #include "ImageBrowserThumbImage.h"
 #include "ImageBrowserThumbLayout.h"
 #include "ImageBrowserThumbModel.h"
+#include "ImageBrowserThumbPayloadStore.h"
 #include "ImageBrowserThumbStripController.h"
 #include "ImageBrowserThumbnailPane.h"
 #include "ThumbImageTile.h"
 #include "ThumbNavTile.h"
+#include "ThumbTestSupport.h"
+#include "CommonUtil.h"
 
 #include <cmath>
 #include <memory>
@@ -27,38 +30,6 @@ namespace
     {
         return std::fabs(a - b) < 0.001f;
     }
-
-    // Counts thumbnail decode requests; never completes them.
-    class CountingDecodeService : public IImageDecodeService
-    {
-    public:
-        ImageCore::ImageHandle RequestDecoded(
-            const ImageCore::ImageRequest&,
-            ImageCore::DecodedImageLoadCallback,
-            ImageCore::RequestPriority) override
-        {
-            std::lock_guard<std::mutex> lock(m_mutex);
-            return ++m_requests;
-        }
-
-        void Cancel(ImageCore::ImageHandle) override
-        {
-        }
-
-        void SetPriority(ImageCore::ImageHandle, ImageCore::RequestPriority) override
-        {
-        }
-
-        size_t RequestCount() const
-        {
-            std::lock_guard<std::mutex> lock(m_mutex);
-            return static_cast<size_t>(m_requests);
-        }
-
-    private:
-        mutable std::mutex m_mutex;
-        ImageCore::ImageHandle m_requests { 0 };
-    };
 
     const Floar::VirtualPath kFolder(std::filesystem::path(L"C:\\FICture2Tests\\Strip"));
 
@@ -85,7 +56,8 @@ namespace
     // Up, two folders, then img00.png .. img11.png: 15 items, images from index 3.
     struct Strip
     {
-        CountingDecodeService decodes {};
+        ThumbTestSupport::RecordingDecodeService decodes {};
+        std::shared_ptr<ThumbPayloadStore> payloads { std::make_shared<ThumbPayloadStore>() };
         ThumbItemModel model {};
         ThumbTileSet tiles {};
         std::shared_ptr<ThumbStripPanel> panel { std::make_shared<ThumbStripPanel>() };
@@ -122,6 +94,7 @@ namespace
             context.model = &model;
             context.range = range;
             context.selectedIndex = selected;
+            context.payloads = payloads;
             context.makeStableName = &StableName;
             controller.MaterializeTiles(context);
         }
@@ -157,6 +130,12 @@ namespace
                 return false;
             }
             return tile->image ? tile->image->Selected() : tile->navTile->Selected();
+        }
+
+        // The normalized path an image tile of item `index` loads.
+        std::wstring SourceOf(size_t index) const
+        {
+            return CommonUtil::NormalizePath(model.At(index).path.wstring());
         }
 
         size_t SelectedTileCount() const
@@ -353,4 +332,51 @@ FIC2_TEST(ThumbStripTiles_SelectionByModelIndexWithoutATile)
     strip.controller.SelectItemByIndex(context, 13);
     FIC2_CHECK(strip.TileSelected(13));
     FIC2_CHECK(strip.SelectedTileCount() == 1);
+}
+
+// Recycling releases tiles and their bitmaps, not the decoded payload: an item
+// scrolled out of the materialized range and back is shown from the payload
+// retained for it, without a new decode request.
+FIC2_TEST(ThumbStripTiles_ScrollingBackToALoadedItemIssuesNoNewRequest)
+{
+    ThumbTestSupport::ComScope com;
+    ThumbTestSupport::Canvas canvas;
+    FIC2_REQUIRE(canvas.Create(64, 64));
+    Strip strip;
+
+    strip.Materialize({ 3, 6 });
+    FIC2_REQUIRE(strip.decodes.RequestCount() == 3);
+    for (size_t index = 3; index < 6; ++index)
+    {
+        const ImageCore::ImageHandle handle = strip.decodes.LatestThumbnailFor(strip.SourceOf(index));
+        FIC2_REQUIRE(handle != 0);
+        strip.decodes.Complete(handle, S_OK, ThumbTestSupport::MakeBgraImage(4, 2));
+        auto image = strip.tiles.Find(index)->image;
+        FIC2_REQUIRE(SUCCEEDED(canvas.Render(*image)));   // presents (and retains) the payload
+        FIC2_CHECK(image->GetBitmapSize().width == 4.0f);
+    }
+    FIC2_CHECK(strip.payloads->Count() == 3);
+
+    // Out of the range: the tiles are released ...
+    strip.Materialize({ 9, 12 });
+    FIC2_CHECK(strip.tiles.Find(4) == nullptr);
+    const size_t requestsAway = strip.decodes.RequestCount();
+    FIC2_CHECK(requestsAway == 6);
+
+    // ... and back: no new request; the next render rebuilds the bitmaps.
+    strip.Materialize({ 3, 6 });
+    FIC2_CHECK(strip.decodes.RequestCount() == requestsAway);
+    for (size_t index = 3; index < 6; ++index)
+    {
+        FIC2_CHECK(strip.decodes.ThumbnailRequestsFor(strip.SourceOf(index)) == 1);
+        auto image = strip.tiles.Find(index)->image;
+        FIC2_REQUIRE(SUCCEEDED(canvas.Render(*image)));
+        FIC2_CHECK(image->GetBitmapSize().width == 4.0f);
+        FIC2_CHECK(image->GetBitmapSize().height == 2.0f);
+    }
+    FIC2_CHECK(strip.decodes.RequestCount() == requestsAway);
+
+    // Another folder's listing drops them.
+    strip.payloads->ResetForFolder(L"elsewhere");
+    FIC2_CHECK(strip.payloads->Count() == 0);
 }

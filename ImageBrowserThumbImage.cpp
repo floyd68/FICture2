@@ -1,6 +1,7 @@
 #include "ImageBrowserThumbImage.h"
 
 #include "CommonUtil.h"
+#include "ImageBrowserThumbPayloadStore.h"
 #include "FD2D/Backplate.h"
 #include "FD2D/Util.h"
 
@@ -125,6 +126,14 @@ HRESULT ImageBrowserThumbImage::SetSourceFile(const std::wstring& filePath)
     m_cpuPayload = {};
     m_needsCpuReupload = false;
 
+    // An item decoded before (by this or an earlier tile) is shown from its
+    // retained payload; only the bitmap is rebuilt, on the next render.
+    if (AdoptRetainedPayload())
+    {
+        Invalidate();
+        return S_OK;
+    }
+
     // Keep previous texture content while loading (avoid blank flash).
     RequestImageLoad();
     Invalidate();
@@ -193,9 +202,27 @@ D2D1_SIZE_F ImageBrowserThumbImage::GetBitmapSize() const
     return D2D1::SizeF(0.0f, 0.0f);
 }
 
+bool ImageBrowserThumbImage::AdoptRetainedPayload()
+{
+    const ImageAsyncBinding::Payload* retained = m_payloadStore ? m_payloadStore->Find(m_filePath) : nullptr;
+    if (retained == nullptr)
+    {
+        return false;
+    }
+    m_cpuPayload = *retained;
+    m_needsCpuReupload = true;
+    return true;
+}
+
 void ImageBrowserThumbImage::RequestImageLoad()
 {
     if (m_filePath.empty() || m_binding.IsLoading())
+    {
+        return;
+    }
+
+    // A retained payload waits for its upload (deferred during a size move).
+    if (m_needsCpuReupload && m_cpuPayload.blocks && m_cpuPayload.sourcePath == m_filePath)
     {
         return;
     }
@@ -285,6 +312,10 @@ void ImageBrowserThumbImage::ApplyPendingPayload(ID2D1RenderTarget* target)
         m_loadedFilePath = pending.sourcePath;
         m_cpuPayload = pending;
         m_needsCpuReupload = false;
+        if (m_payloadStore)
+        {
+            m_payloadStore->Retain(pending);
+        }
         m_binding.MarkSettled();
     }
     else

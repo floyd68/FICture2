@@ -108,6 +108,7 @@ void ImageBrowserThumbStripController::MaterializeTiles(const MaterializeContext
             {
                 (void)panel->RemoveChild(name);
                 thumbTile = std::make_shared<ThumbImageTile>(name);
+                thumbTile->ImageWnd()->SetPayloadStore(context.payloads);
                 thumbTile->SetFixedHeight(thumbH);
                 thumbTile->SetSourceFile(p.wstring());
                 thumbTile->SetCaption(p.filename().wstring());

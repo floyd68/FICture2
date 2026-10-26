@@ -9,6 +9,7 @@
 #include "ImageBrowserMainPane.h"
 #include "ImageBrowserThumbnailPane.h"
 #include "ImageBrowserThumbLayout.h"
+#include "ImageBrowserThumbPayloadStore.h"
 #include "ImageBrowserAsyncThumbLoader.h"
 #include "FolderEnumeration.h"
 #include "ImageBrowserSplitCoordinator.h"
@@ -2615,6 +2616,8 @@ namespace
             {
                 (void)m_thumbModel.Commit();
             }
+            // Retained thumbnail payloads belong to the listed folder.
+            m_thumbPayloads->ResetForFolder(ThumbItemModel::LookupKeyFor(m_thumbModel.Folder()));
 
             FIC2_TIMER_START(t_rebuild);
 
@@ -2727,6 +2730,7 @@ namespace
             context.model = &m_thumbModel;
             context.range = MaterializedThumbRange();
             context.selectedIndex = selectedIndex;
+            context.payloads = m_thumbPayloads;
             context.onSelectIndex = [this](size_t index)
             {
                 RequestFocus();
@@ -3191,6 +3195,8 @@ namespace
         ImageBrowserThumbStripController m_thumbStripController {};
         std::shared_ptr<ImageBrowserThumbnailPane> m_thumbPane {};
         ThumbTileSet m_thumbTiles {};   // tiles of MaterializedThumbRange()
+        // Decoded thumbnails of the listed folder, retained per item (not per tile).
+        std::shared_ptr<ThumbPayloadStore> m_thumbPayloads { std::make_shared<ThumbPayloadStore>() };
         size_t m_selectedIndex { static_cast<size_t>(-1) };   // model index; its tile (if any) is highlighted
         std::wstring m_typeSelectQuery {};
         unsigned long long m_typeSelectLastInputMs { 0 };

@@ -16,6 +16,7 @@ add_executable(FICture2Tests
     ImageBrowserPathStateTests.cpp
     ThumbItemModelTests.cpp
     ThumbStripLayoutTests.cpp
+    ThumbTestSupport.h
     ThumbStripTilesTests.cpp
     ImageBrowserRoutingTests.cpp
     IpcOpenQueueTests.cpp

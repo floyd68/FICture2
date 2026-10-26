@@ -12,6 +12,8 @@
 #include <string>
 #include <wrl/client.h>
 
+class ThumbPayloadStore;
+
 // FICture2 thumbnail image control: owns FD2D::Image + Spinner + ImageAsyncBinding.
 // Ports FD2D::ThumbImage behavior with path-gated pending apply.
 class ImageBrowserThumbImage : public FD2D::Wnd
@@ -27,6 +29,10 @@ public:
     void Arrange(FD2D::Rect finalRect) override;
 
     void SetThumbnailSize(const FD2D::Size& size);
+    // Where decoded payloads are retained per item: a presented payload is
+    // retained there, and a newly bound file with a retained payload is shown
+    // from it instead of being requested again. Set before SetSourceFile.
+    void SetPayloadStore(std::shared_ptr<ThumbPayloadStore> store) { m_payloadStore = std::move(store); }
     HRESULT SetSourceFile(const std::wstring& filePath);
 
     void SetSelected(bool selected);
@@ -52,6 +58,7 @@ public:
 private:
     void InitChildren();
     void RequestImageLoad();
+    bool AdoptRetainedPayload();
     void SyncTextureDrawState();
     void ApplyPendingPayload(ID2D1RenderTarget* target);
     void TryReuploadCpuPayload(ID2D1RenderTarget* target);
@@ -68,6 +75,7 @@ private:
 
     ImageAsyncBinding::Payload m_cpuPayload {};
     bool m_needsCpuReupload { false };
+    std::shared_ptr<ThumbPayloadStore> m_payloadStore {};
 
     bool m_selected { false };
     FD2D::SelectionStyle m_selectionStyle {};
