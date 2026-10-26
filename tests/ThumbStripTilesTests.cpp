@@ -181,6 +181,7 @@ FIC2_TEST(ThumbStripTiles_PanelPlacesPartialTilesAtTheirModelIndices)
     panel->SetPadding(4.0f);
     panel->SetLayout(&layout);
     panel->SetTiles(&tiles);
+    panel->SetRowHeight(64.0f);
 
     // Tiles for model indices 3..5 only: child 0 is item 3.
     std::vector<ThumbTile> bound;
@@ -219,7 +220,15 @@ FIC2_TEST(ThumbStripTiles_PanelPlacesPartialTilesAtTheirModelIndices)
     FIC2_CHECK(Near(tiles.Find(5)->focus->LayoutRect().left, 10.0f + layout.Start(5)));
     FIC2_CHECK(Near(tiles.Find(4)->focus->LayoutRect().left, 10.0f + 380.0f));   // 366 + 10 + 4
 
-    // An empty strip measures as its padding (as StackPanel did).
+    // Without any materialized tile the panel keeps the layout's extent and
+    // the row height: the strip does not collapse to its padding.
+    tiles.Clear();
+    const FD2D::Size noTilesSize = panel->Measure({ 2000.0f, 200.0f });
+    FIC2_CHECK(Near(noTilesSize.w, layout.ContentWidth()));
+    FIC2_CHECK(Near(noTilesSize.h, 64.0f + 8.0f));
+    panel->ClearChildren();
+
+    // An empty strip without a row height measures as its padding.
     ThumbStripLayout emptyLayout;
     emptyLayout.Reset({}, 4.0f, 4.0f);
     ThumbTileSet noTiles;

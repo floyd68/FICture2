@@ -1361,6 +1361,7 @@ namespace
             CaptureThumbAnchor();   // the visible anchor stays put while widths scale
             m_thumbW = newHeight; // Keep this for navigation tiles
             m_thumbH = newHeight;
+            ApplyThumbRowHeightToStrip();
 
             if (m_thumbPane)
             {
@@ -1394,6 +1395,16 @@ namespace
             }
             m_lastThumbSizingApplyMs = sizing.updatedApplyMs;
             return true;
+        }
+
+        // The strip panel's height is the row height, not its tiles' (the
+        // materialized range can be partial or empty).
+        void ApplyThumbRowHeightToStrip()
+        {
+            if (auto strip = m_thumbPane ? m_thumbPane->StripPanel() : nullptr)
+            {
+                strip->SetRowHeight(m_thumbH);
+            }
         }
 
         void NotifyThumbStripHeightChanged(float height)
@@ -1834,6 +1845,7 @@ namespace
             constexpr float thumbH = 128.0f;
             m_thumbW = thumbW;
             m_thumbH = thumbH;
+            ApplyThumbRowHeightToStrip();
             m_thumbLabelDip = 0.0f;
             m_thumbItemSpacing = 0.0f;
             m_thumbOuterSpacing = 8.0f;
