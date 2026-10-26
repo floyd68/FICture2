@@ -205,11 +205,15 @@ void ImageBrowserThumbStripController::MaterializeTiles(const MaterializeContext
             const bool isUp = (entry.kind == ThumbItemKind::Up);
             const Floar::VirtualPath& dir = entry.path;
             auto tile = std::dynamic_pointer_cast<ThumbNavTile>(getExistingChild(name));
+            // A new tile is configured before it is attached, so its setters
+            // invalidate nothing; an attached tile is invalidated only by the
+            // values that change.
+            bool attach = false;
             if (!tile)
             {
                 (void)panel->RemoveChild(name);
                 tile = std::make_shared<ThumbNavTile>(name);
-                (void)panel->AddChild(tile);
+                attach = true;
             }
 
             tile->SetFixedSize({ thumbW, thumbH });
@@ -252,6 +256,10 @@ void ImageBrowserThumbStripController::MaterializeTiles(const MaterializeContext
                     onActivateIndex(index);
                 }
             });
+            if (attach)
+            {
+                (void)panel->AddChild(tile);
+            }
 
             bound.focus = tile;
             bound.navTile = tile;
