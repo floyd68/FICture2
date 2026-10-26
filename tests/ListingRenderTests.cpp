@@ -3,6 +3,7 @@
 #include "BackplateTestAccess.h"
 #include "DeferredRenderScope.h"
 #include "FD2D/Backplate.h"
+#include "FD2D/SplitPanel.h"
 #include "Ficture2Backplate.h"
 #include "FolderEnumeration.h"
 #include "IniStore.h"
@@ -449,6 +450,64 @@ FIC2_TEST(ListingRender_HeldLayoutRendersNothingInsideAnFD2DScopeOrWhileUnwindin
     FIC2_CHECK(!rendering.backplate.IsDeferringRender());
     rendering.backplate.Render();   // the queued paint's frame
     FIC2_CHECK(rendering.Frames() == frames + 1);
+}
+
+// The held layout's pass arranges controls that invalidate while they are
+// arranged (a split panel's splitter takes the new ratio): those
+// invalidations stay deferred too, when no enclosing scope remains (an
+// exception) and inside a native batch, and the bounds are arranged.
+FIC2_TEST(ListingRender_HeldLayoutPassInvalidationsRenderNothing)
+{
+    RenderingBackplate rendering;
+    FIC2_REQUIRE(rendering.Create());
+    auto split = std::make_shared<FD2D::SplitPanel>(L"split", FD2D::SplitterOrientation::Horizontal);
+    auto first = std::make_shared<FD2D::Wnd>(L"first");
+    auto second = std::make_shared<FD2D::Wnd>(L"second");
+    split->SetFirstChild(first);
+    split->SetSecondChild(second);
+    FIC2_REQUIRE(rendering.backplate.AddWnd(split));
+    rendering.backplate.Render();
+    const auto firstWidth = [&] { return first->LayoutRect().right - first->LayoutRect().left; };
+    const float half = firstWidth();
+    FIC2_REQUIRE(half > 0.0f);
+
+    // Ended by an exception.
+    size_t frames = rendering.Frames();
+    try
+    {
+        const DeferredRenderScope scope(&rendering.backplate);
+        split->SetSplitRatio(0.7f);
+        DeferredRenderScope::RequestLayout(&rendering.backplate);
+        throw 1;
+    }
+    catch (int)
+    {
+    }
+    FIC2_CHECK(rendering.Frames() == frames);
+    FIC2_CHECK(!rendering.backplate.IsDeferringRender());
+    const float wide = firstWidth();
+    std::printf("  first pane %.0f -> %.0f after the unwound scope\n", half, wide);
+    FIC2_CHECK(wide > half + 50.0f);
+    rendering.backplate.Render();   // the queued paint's frame
+    FIC2_CHECK(rendering.Frames() == frames + 1);
+    FIC2_CHECK(std::fabs(firstWidth() - wide) < 1.0f);
+
+    // Inside a native batch.
+    frames = rendering.Frames();
+    rendering.backplate.BeginDeferredRender();
+    {
+        const DeferredRenderScope scope(&rendering.backplate);
+        split->SetSplitRatio(0.3f);
+        DeferredRenderScope::RequestLayout(&rendering.backplate);
+    }
+    FIC2_CHECK(rendering.Frames() == frames);
+    const float narrow = firstWidth();
+    std::printf("  first pane %.0f -> %.0f inside the native batch\n", wide, narrow);
+    FIC2_CHECK(narrow < half - 50.0f);
+    rendering.backplate.EndDeferredRender();
+    rendering.backplate.Render();   // the native batch's frame
+    FIC2_CHECK(rendering.Frames() == frames + 1);
+    FIC2_CHECK(std::fabs(firstWidth() - narrow) < 1.0f);
 }
 
 namespace
