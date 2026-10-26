@@ -1,6 +1,7 @@
 #include "Ficture2Backplate.h"
 
 #include "AppLog.h"
+#include "DeferredRenderScope.h"
 #include "FolderEnumeration.h"
 #include "CommonUtil.h"
 #include "IniStore.h"
@@ -2059,6 +2060,9 @@ bool Ficture2Backplate::TryRestoreImageBrowserSession(const std::wstring& iniFil
             valid.size(),
             payload.viewers.size());
     }
+
+    // Restoring the viewers (and their settings) renders one frame in all.
+    const DeferredRenderScope batchRender(this);
 
     payload.viewers = std::move(valid);
     payload.clampedViewerCount = static_cast<int>(

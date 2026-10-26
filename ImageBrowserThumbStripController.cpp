@@ -1,6 +1,7 @@
 ﻿#include "ImageBrowserThumbStripController.h"
 
 #include "ArchiveBadge.h"
+#include "DeferredRenderScope.h"
 #include "ArchiveTypes.h"
 #include "CommonUtil.h"
 #include "AppLog.h"
@@ -71,6 +72,10 @@ void ImageBrowserThumbStripController::MaterializeTiles(const MaterializeContext
     }
 
     const auto t_materialize = std::chrono::steady_clock::now();
+
+    // Attached tiles' setters, removals and the selection render one frame
+    // in all (or none, inside an enclosing scope or a render).
+    const DeferredRenderScope batchRender(context.backplate);
 
     const auto& panel = context.panel;
     const ThumbItemModel& model = *context.model;

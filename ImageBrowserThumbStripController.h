@@ -12,6 +12,7 @@
 
 namespace FD2D
 {
+    class Backplate;
     class StackPanel;
     class Wnd;
 }
@@ -28,6 +29,9 @@ public:
     struct MaterializeContext
     {
         std::shared_ptr<FD2D::StackPanel> panel {};
+        // The panel's backplate: the update renders one frame in all
+        // (DeferredRenderScope). Null renders per invalidation.
+        FD2D::Backplate* backplate { nullptr };
         ThumbTileSet* tiles { nullptr };
         float thumbW { 0.0f };
         float thumbH { 0.0f };
