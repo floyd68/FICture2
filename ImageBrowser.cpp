@@ -9,7 +9,7 @@
 #include "ImageBrowserMainPane.h"
 #include "ImageBrowserThumbnailPane.h"
 #include "ImageBrowserThumbLayout.h"
-#include "ImageBrowserThumbPayloadStore.h"
+#include "ImageBrowserThumbPayloadCache.h"
 #include "ImageBrowserAsyncThumbLoader.h"
 #include "FolderEnumeration.h"
 #include "ImageBrowserSplitCoordinator.h"
@@ -2777,10 +2777,6 @@ namespace
             }
             MaterializeThumbTiles(selectIndex);
             FIC2_LOG_STEP(t_rebuild, "[RebuildImmediate] MaterializeThumbTiles");
-            // Retained thumbnail payloads belong to the listed folder; reset
-            // after the previous folder's tiles were released (and retained
-            // what they had decoded).
-            m_thumbPayloads->ResetForFolder(ThumbItemModel::LookupKeyFor(m_thumbModel.Folder()));
 
             // Restore selection without scrolling yet; layout hasn't been updated.
             if (!hasItems)
@@ -3340,8 +3336,9 @@ namespace
         ImageBrowserThumbStripController m_thumbStripController {};
         std::shared_ptr<ImageBrowserThumbnailPane> m_thumbPane {};
         ThumbTileSet m_thumbTiles {};   // tiles of MaterializedThumbRange()
-        // Decoded thumbnails of the listed folder, retained per item (not per tile).
-        std::shared_ptr<ThumbPayloadStore> m_thumbPayloads { std::make_shared<ThumbPayloadStore>() };
+        // Decoded thumbnails, bounded and shared by every browser; a previous
+        // folder's entries age out instead of being dropped on navigation.
+        std::shared_ptr<ThumbPayloadCache> m_thumbPayloads { ThumbPayloadCache::Shared() };
         size_t m_selectedIndex { static_cast<size_t>(-1) };   // model index; its tile (if any) is highlighted
         std::wstring m_typeSelectQuery {};
         unsigned long long m_typeSelectLastInputMs { 0 };

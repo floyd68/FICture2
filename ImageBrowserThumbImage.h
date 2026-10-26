@@ -4,15 +4,15 @@
 #include "FD2D/Image.h"
 #include "FD2D/Spinner.h"
 #include "ImageAsyncBinding.h"
+#include "ImageBrowserThumbPayloadCache.h"
 #include "ImageCore/ImageRequest.h"
+#include "ImageSourceIdentity.h"
 #include "SelectionStyle.h"
 
 #include <functional>
 #include <memory>
 #include <string>
 #include <wrl/client.h>
-
-class ThumbPayloadStore;
 
 // FICture2 thumbnail image control: owns FD2D::Image + Spinner + ImageAsyncBinding.
 // Ports FD2D::ThumbImage behavior with path-gated pending apply.
@@ -29,16 +29,24 @@ public:
     void Arrange(FD2D::Rect finalRect) override;
 
     void SetThumbnailSize(const FD2D::Size& size);
-    // Where decoded payloads are retained per item: a presented payload is
-    // retained there, and a newly bound file with a retained payload is shown
-    // from it instead of being requested again. Set before SetSourceFile.
-    void SetPayloadStore(std::shared_ptr<ThumbPayloadStore> store) { m_payloadStore = std::move(store); }
-    HRESULT SetSourceFile(const std::wstring& filePath);
+    // The cache of decoded payloads: a presented payload is stored there (and
+    // pinned while this control shows it), and a newly bound file with a
+    // cached payload is shown from it instead of being requested again. Set
+    // before SetSourceFile. Without one, the control holds its payload alone.
+    void SetPayloadCache(std::shared_ptr<ThumbPayloadCache> cache) { m_payloadCache = std::move(cache); }
+    // Binds `filePath`, listed with `identity` (ThumbModelEntry::identity).
+    // Cache lookups use that identity and never read the file; an unknown
+    // identity is neither looked up nor cached.
+    HRESULT SetSourceFile(const std::wstring& filePath, const ImageSourceIdentity& identity = {});
+    // The bound file was listed again with `identity`. When that differs from
+    // the identity it was bound with (the file was replaced), the control
+    // rebinds: the current thumbnail stays until the new one is shown.
+    void SetSourceIdentity(const ImageSourceIdentity& identity);
     // Prepares the control for another file (tile recycling): cancels the
     // request in flight (the binding's generation drops its late completion),
-    // and releases the bitmap, the CPU payload reference and the selection. A
-    // payload decoded but not yet presented is retained in the payload store
-    // first; retained payloads are kept.
+    // and releases the bitmap, its pin on the CPU payload and the selection. A
+    // payload decoded but not yet presented is stored in the payload cache
+    // first (unpinned); cached payloads are kept, subject to the cache bounds.
     void Recycle();
 
     void SetSelected(bool selected);
@@ -64,7 +72,11 @@ public:
 private:
     void InitChildren();
     void RequestImageLoad();
-    bool AdoptRetainedPayload();
+    bool AdoptCachedPayload();
+    // Pins `payload` (decoded for m_requestedBox) in the cache, or holds it
+    // alone without one.
+    ThumbPayloadCache::Pin StorePayload(const ImageAsyncBinding::Payload& payload);
+    static bool SameListing(const ImageSourceIdentity& a, const ImageSourceIdentity& b);
     void SyncTextureDrawState();
     void ApplyPendingPayload(ID2D1RenderTarget* target);
     void TryReuploadCpuPayload(ID2D1RenderTarget* target);
@@ -77,11 +89,16 @@ private:
     ImageCore::ImageRequest m_request {};
 
     std::wstring m_filePath {};
+    ImageSourceIdentity m_identity {};   // of m_filePath, as listed
     std::wstring m_loadedFilePath {};
+    // The box of the request in flight (recorded with its cache entry).
+    ImageCore::Size m_requestedBox { 0.0f, 0.0f };
 
-    ImageAsyncBinding::Payload m_cpuPayload {};
+    // The CPU payload shown (or about to be uploaded): the tile's only copy,
+    // kept for device-loss and target recovery, pinned in the cache.
+    ThumbPayloadCache::Pin m_payload {};
     bool m_needsCpuReupload { false };
-    std::shared_ptr<ThumbPayloadStore> m_payloadStore {};
+    std::shared_ptr<ThumbPayloadCache> m_payloadCache {};
 
     bool m_selected { false };
     FD2D::SelectionStyle m_selectionStyle {};

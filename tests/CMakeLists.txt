@@ -16,6 +16,7 @@ add_executable(FICture2Tests
     ImageBrowserPathStateTests.cpp
     ThumbItemModelTests.cpp
     ThumbStripLayoutTests.cpp
+    ThumbPayloadCacheTests.cpp
     ThumbTestSupport.h
     ThumbStripTilesTests.cpp
     ImageBrowserRoutingTests.cpp
@@ -27,6 +28,7 @@ add_executable(FICture2Tests
     ${PROJECT_SOURCE_DIR}/ImageBrowserMainImage.cpp
     ${PROJECT_SOURCE_DIR}/ImageBrowserThumbImage.cpp
     ${PROJECT_SOURCE_DIR}/ImageBrowserThumbModel.cpp
+    ${PROJECT_SOURCE_DIR}/ImageBrowserThumbPayloadCache.cpp
     ${PROJECT_SOURCE_DIR}/ImageBrowserThumbLayout.cpp
     ${PROJECT_SOURCE_DIR}/ImageBrowserAssets.cpp
     ${PROJECT_SOURCE_DIR}/ThumbImageTile.cpp
@@ -110,6 +112,7 @@ add_test(NAME FICture2.IdleRendering COMMAND FICture2Tests IdleRendering_)
 add_test(NAME FICture2.ImageBrowserRouting COMMAND FICture2Tests ImageBrowserRouting_)
 add_test(NAME FICture2.ThumbItemModel COMMAND FICture2Tests ThumbItemModel_)
 add_test(NAME FICture2.ThumbStripLayout COMMAND FICture2Tests ThumbStripLayout_)
+add_test(NAME FICture2.ThumbPayloadCache COMMAND FICture2Tests ThumbPayloadCache_)
 add_test(NAME FICture2.ThumbStripTiles COMMAND FICture2Tests ThumbStripTiles_)
 add_test(NAME FICture2.ImageBrowserThumbStrip COMMAND FICture2Tests ImageBrowserThumbStrip_)
 add_test(NAME FICture2.FolderEnumeration COMMAND FICture2Tests FolderEnumeration_)

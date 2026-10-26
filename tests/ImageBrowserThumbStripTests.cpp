@@ -220,7 +220,7 @@ FIC2_TEST(ImageBrowserThumbStrip_TenThousandImagesStayBoundedAndScrollBackIsFree
         }
     }
     FIC2_REQUIRE(!loaded.empty());
-    strip.Frame();   // presents (and retains) them
+    strip.Frame();   // presents (and caches) them
     const size_t requestsBefore = decodes.service.RequestCount();
     std::vector<size_t> requestsPerItem;
     for (const std::wstring& source : loaded)

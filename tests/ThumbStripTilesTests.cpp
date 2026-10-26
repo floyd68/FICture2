@@ -4,7 +4,7 @@
 #include "ImageBrowserThumbImage.h"
 #include "ImageBrowserThumbLayout.h"
 #include "ImageBrowserThumbModel.h"
-#include "ImageBrowserThumbPayloadStore.h"
+#include "ImageBrowserThumbPayloadCache.h"
 #include "ImageBrowserThumbStripController.h"
 #include "ImageBrowserThumbnailPane.h"
 #include "ThumbImageTile.h"
@@ -55,28 +55,56 @@ namespace
         return std::wstring(prefix) + L"|" + ThumbItemModel::LookupKeyFor(path);
     }
 
+    ImageSourceIdentity KnownIdentity(uint64_t size, uint64_t writeTime = 1)
+    {
+        ImageSourceIdentity identity {};
+        identity.size = size;
+        identity.writeTime = writeTime;
+        identity.known = true;
+        return identity;
+    }
+
+    // A known identity per listed entry, as the folder enumeration captures.
+    std::vector<ImageSourceIdentity> ListedIdentities(const std::vector<Floar::VirtualFileEntry>& listing)
+    {
+        std::vector<ImageSourceIdentity> identities;
+        for (size_t i = 0; i < listing.size(); ++i)
+        {
+            identities.push_back(KnownIdentity(1000 + i));
+        }
+        return identities;
+    }
+
     // Up, two folders, then img00.png .. img11.png: 15 items, images from index 3.
     struct Strip
     {
         ThumbTestSupport::RecordingDecodeService decodes {};
-        std::shared_ptr<ThumbPayloadStore> payloads { std::make_shared<ThumbPayloadStore>() };
+        std::shared_ptr<ThumbPayloadCache> payloads {};
         ThumbItemModel model {};
         ThumbTileSet tiles {};
         std::shared_ptr<ThumbStripPanel> panel { std::make_shared<ThumbStripPanel>() };
         ImageBrowserThumbStripController controller {};
         size_t selected { static_cast<size_t>(-1) };
 
-        Strip()
+        // Listed with identities unless `withIdentities` is false.
+        explicit Strip(ThumbPayloadCache::Limits limits = ThumbPayloadCache::kDefaultLimits, bool withIdentities = true)
+            : payloads(std::make_shared<ThumbPayloadCache>(limits))
         {
             ImageAsyncBinding::SetDecodeServiceForTesting(&decodes);
             model.Reset(kFolder, true, &IsTestImage);
+            const std::vector<Floar::VirtualFileEntry> listing = Listing();
+            (void)model.Merge(listing, withIdentities ? ListedIdentities(listing) : std::vector<ImageSourceIdentity> {});
+            panel->SetTiles(&tiles);
+        }
+
+        static std::vector<Floar::VirtualFileEntry> Listing()
+        {
             std::vector<Floar::VirtualFileEntry> listing { Dir(L"sub1"), Dir(L"sub2") };
             for (int i = 0; i < 12; ++i)
             {
                 listing.push_back(File(L"img" + std::wstring(i < 10 ? L"0" : L"") + std::to_wstring(i) + L".png"));
             }
-            (void)model.Merge(listing);
-            panel->SetTiles(&tiles);
+            return listing;
         }
 
         ~Strip()
@@ -138,6 +166,26 @@ namespace
         std::wstring SourceOf(size_t index) const
         {
             return CommonUtil::NormalizePath(model.At(index).path.wstring());
+        }
+
+        // Decoded sizes cached for item `index` under its listed identity.
+        size_t CachedSizes(size_t index) const
+        {
+            return payloads->Find(SourceOf(index), model.At(index).identity, ThumbDecodeOptions {}).size();
+        }
+
+        // Completes the latest request of item `index` and presents it.
+        void CompleteAndRender(ThumbTestSupport::Canvas& canvas, size_t index, uint32_t width, uint32_t height)
+        {
+            const ImageCore::ImageHandle handle = decodes.LatestThumbnailFor(SourceOf(index));
+            FIC2_REQUIRE(handle != 0);
+            decodes.Complete(handle, S_OK, ThumbTestSupport::MakeBgraImage(width, height));
+            FIC2_REQUIRE(SUCCEEDED(canvas.Render(*tiles.Find(index)->image)));
+        }
+
+        float BitmapWidth(size_t index) const
+        {
+            return tiles.Find(index)->image->GetBitmapSize().width;
         }
 
         size_t SelectedTileCount() const
@@ -338,7 +386,7 @@ FIC2_TEST(ThumbStripTiles_SelectionByModelIndexWithoutATile)
 
 // Recycling releases tiles and their bitmaps, not the decoded payload: an item
 // scrolled out of the materialized range and back is shown from the payload
-// retained for it, without a new decode request.
+// cached for it, without a new decode request.
 FIC2_TEST(ThumbStripTiles_ScrollingBackToALoadedItemIssuesNoNewRequest)
 {
     ThumbTestSupport::ComScope com;
@@ -354,10 +402,11 @@ FIC2_TEST(ThumbStripTiles_ScrollingBackToALoadedItemIssuesNoNewRequest)
         FIC2_REQUIRE(handle != 0);
         strip.decodes.Complete(handle, S_OK, ThumbTestSupport::MakeBgraImage(4, 2));
         auto image = strip.tiles.Find(index)->image;
-        FIC2_REQUIRE(SUCCEEDED(canvas.Render(*image)));   // presents (and retains) the payload
+        FIC2_REQUIRE(SUCCEEDED(canvas.Render(*image)));   // presents (and caches) the payload
         FIC2_CHECK(image->GetBitmapSize().width == 4.0f);
     }
-    FIC2_CHECK(strip.payloads->Count() == 3);
+    FIC2_CHECK(strip.payloads->EntryCount() == 3);
+    FIC2_CHECK(strip.payloads->GetStats().pinnedEntries == 3);   // shown by their tiles
 
     // A prefetch tile offscreen (never rendered) finishes decoding too.
     strip.Materialize({ 3, 7 });
@@ -367,7 +416,8 @@ FIC2_TEST(ThumbStripTiles_ScrollingBackToALoadedItemIssuesNoNewRequest)
     // Out of the range: the tiles are released ...
     strip.Materialize({ 9, 12 });
     FIC2_CHECK(strip.tiles.Find(4) == nullptr);
-    FIC2_CHECK(strip.payloads->Count() == 4);   // item 6's payload is retained, not dropped
+    FIC2_CHECK(strip.payloads->EntryCount() == 4);   // item 6's payload is cached, not dropped
+    FIC2_CHECK(strip.payloads->GetStats().pinnedEntries == 0);
     const size_t requestsAway = strip.decodes.RequestCount();
     FIC2_CHECK(requestsAway == 7);
 
@@ -383,10 +433,7 @@ FIC2_TEST(ThumbStripTiles_ScrollingBackToALoadedItemIssuesNoNewRequest)
         FIC2_CHECK(image->GetBitmapSize().height == 2.0f);
     }
     FIC2_CHECK(strip.decodes.RequestCount() == requestsAway);
-
-    // Another folder's listing drops them.
-    strip.payloads->ResetForFolder(L"elsewhere");
-    FIC2_CHECK(strip.payloads->Count() == 0);
+    FIC2_CHECK(strip.payloads->GetStats().pinnedEntries == 4);
 }
 
 // A tile that leaves the range is recycled: its queued request is canceled, it
@@ -444,7 +491,7 @@ FIC2_TEST(ThumbStripTiles_RecycledTileNeverShowsItsPreviousItem)
     }
     for (size_t index = 3; index < 7; ++index)
     {
-        FIC2_CHECK(strip.payloads->Find(strip.SourceOf(index)) == nullptr);
+        FIC2_CHECK(strip.CachedSizes(index) == 0);
     }
 
     // The current request's result is shown.
@@ -453,7 +500,7 @@ FIC2_TEST(ThumbStripTiles_RecycledTileNeverShowsItsPreviousItem)
     auto image = strip.tiles.Find(10)->image;
     FIC2_REQUIRE(SUCCEEDED(canvas.Render(*image)));
     FIC2_CHECK(image->GetBitmapSize().width == 4.0f);
-    FIC2_CHECK(strip.payloads->Find(strip.SourceOf(10)) != nullptr);
+    FIC2_CHECK(strip.CachedSizes(10) == 1);
 
     // Released tiles beyond what the range reuses are kept, up to the cap.
     strip.Materialize({ 14, 14 });
@@ -512,7 +559,7 @@ namespace
         static constexpr float kViewport = 1000.0f;
 
         ThumbTestSupport::RecordingDecodeService decodes {};
-        std::shared_ptr<ThumbPayloadStore> payloads { std::make_shared<ThumbPayloadStore>() };
+        std::shared_ptr<ThumbPayloadCache> payloads {};
         ThumbItemModel model {};
         ThumbStripLayout layout {};
         ThumbTileSet tiles {};
@@ -521,7 +568,8 @@ namespace
         size_t views { 0 };
         size_t maxTiles { 0 };
 
-        VirtualStrip()
+        explicit VirtualStrip(ThumbPayloadCache::Limits limits = ThumbPayloadCache::kDefaultLimits)
+            : payloads(std::make_shared<ThumbPayloadCache>(limits))
         {
             ImageAsyncBinding::SetDecodeServiceForTesting(&decodes);
             panel->SetLayout(&layout);
@@ -648,4 +696,246 @@ FIC2_TEST(ThumbStripTiles_TenThousandItemsStayBoundedWhileScrolling)
     FIC2_CHECK(strip.maxTiles < 200);   // nowhere near the folder size
     std::printf("  %zu views, at most %zu tiles, %zu thumbnail requests in total\n",
         strip.views, strip.maxTiles, strip.decodes.RequestCount());
+}
+
+// CPU payload memory while scrolling a folder much larger than the cache: the
+// accounted total (cache entries plus pinned payloads) stays within the
+// configured bounds, pinned payloads stay within one per bound tile, only
+// bound tiles have a D2D bitmap, and scrolling back to recently seen items
+// reuses their cached payloads without a new decode.
+FIC2_TEST(ThumbStripTiles_PayloadMemoryStaysBoundedWhileScrolling)
+{
+    ThumbTestSupport::ComScope com;
+    ThumbTestSupport::Canvas canvas;
+    FIC2_REQUIRE(canvas.Create(64, 64));
+
+    constexpr size_t kImages = 2000;
+    constexpr uint32_t kSide = 16;
+    constexpr size_t kPayloadBytes = kSide * kSide * 4;
+    // Room for 200 thumbnails: more than the tiles, a tenth of the folder.
+    const ThumbPayloadCache::Limits limits { 200 * kPayloadBytes, 200, 64 * kPayloadBytes };
+    VirtualStrip strip(limits);
+    strip.model.Reset(kFolder, true, &IsTestImage);
+    std::vector<Floar::VirtualFileEntry> entries;
+    for (size_t i = 0; i < kImages; ++i)
+    {
+        entries.push_back(File(ImageName(i)));
+    }
+    (void)strip.model.Merge(entries, ListedIdentities(entries));
+    strip.Relayout();
+
+    size_t maxTotal = 0;
+    size_t maxPinned = 0;
+    // Shows the view, completes every outstanding request and presents every
+    // bound tile, then checks the bounds.
+    const auto settle = [&](float left)
+    {
+        strip.View(left);
+        for (const auto& request : strip.decodes.Requests())
+        {
+            if (!request.canceled && !request.completed)
+            {
+                strip.decodes.Complete(request.handle, S_OK, ThumbTestSupport::MakeBgraImage(kSide, kSide));
+            }
+        }
+        size_t bitmaps = 0;
+        for (const ThumbTile& tile : strip.tiles.Tiles())
+        {
+            if (tile.image)
+            {
+                FIC2_REQUIRE(SUCCEEDED(canvas.Render(*tile.image)));
+                bitmaps += (tile.image->GetBitmapSize().width > 0.0f) ? 1 : 0;
+            }
+        }
+        const ThumbPayloadCache::Stats stats = strip.payloads->GetStats();
+        const size_t tiles = strip.tiles.Range().Size();
+        const size_t pinned = stats.pinnedBytes + stats.heldBytes;
+        FIC2_CHECK(bitmaps <= tiles);
+        FIC2_CHECK(pinned <= tiles * kPayloadBytes);
+        FIC2_CHECK(strip.payloads->TotalBytes() <= (std::max)(limits.maxBytes, pinned));
+        FIC2_CHECK(strip.payloads->EntryCount() <= (std::max)(limits.maxEntries, stats.pinnedEntries));
+        maxTotal = (std::max)(maxTotal, strip.payloads->TotalBytes());
+        maxPinned = (std::max)(maxPinned, pinned);
+    };
+
+    const float last = strip.LastLeft();
+    for (float left = 0.0f; left < last; left += VirtualStrip::kViewport * 0.8f)
+    {
+        settle(left);
+    }
+    settle(last);
+    FIC2_CHECK(strip.payloads->GetStats().evictions > kImages / 2);   // the folder did not fit
+    FIC2_CHECK(maxTotal <= limits.maxBytes);
+
+    // A step forward and back: the items that left the range were seen just
+    // now, so they are shown from the cache without a new decode.
+    const float back = last * 0.5f;
+    settle(back);
+    settle(back + VirtualStrip::kViewport * 0.8f);
+    const size_t requestsBefore = strip.decodes.RequestCount();
+    strip.View(back);
+    FIC2_CHECK(strip.decodes.RequestCount() == requestsBefore);
+    for (const ThumbTile& tile : strip.tiles.Tiles())
+    {
+        FIC2_REQUIRE(SUCCEEDED(canvas.Render(*tile.image)));
+        FIC2_CHECK(tile.image->GetBitmapSize().width == static_cast<float>(kSide));
+    }
+    std::printf("  at most %zu bytes accounted (%zu pinned), %zu evictions, %zu requests\n",
+        maxTotal, maxPinned, strip.payloads->GetStats().evictions, strip.decodes.RequestCount());
+}
+
+// A saturated cache (every byte pinned) and oversize payloads never make a
+// bound tile decode its item again: the tile keeps its pinned payload until it
+// is recycled. After recycling the item is decoded once more, not in a loop.
+FIC2_TEST(ThumbStripTiles_SaturatedOrOversizeCacheCausesNoReloadLoop)
+{
+    ThumbTestSupport::ComScope com;
+    ThumbTestSupport::Canvas canvas;
+    FIC2_REQUIRE(canvas.Create(64, 64));
+
+    const ThumbPayloadCache::Limits saturated { 64, 1, 1u << 20 };   // smaller than one payload
+    const ThumbPayloadCache::Limits oversize { 1u << 20, 100, 16 };  // every payload is oversize
+    for (const ThumbPayloadCache::Limits& limits : { saturated, oversize })
+    {
+        Strip strip(limits);
+        strip.Materialize({ 3, 7 });
+        for (size_t index = 3; index < 7; ++index)
+        {
+            strip.CompleteAndRender(canvas, index, 8, 8);
+        }
+        for (int frame = 0; frame < 5; ++frame)
+        {
+            for (size_t index = 3; index < 7; ++index)
+            {
+                FIC2_REQUIRE(SUCCEEDED(canvas.Render(*strip.tiles.Find(index)->image)));
+                FIC2_CHECK(strip.BitmapWidth(index) == 8.0f);
+            }
+        }
+        FIC2_CHECK(strip.decodes.RequestCount() == 4);
+        // Held by the tiles, and accounted.
+        const ThumbPayloadCache::Stats stats = strip.payloads->GetStats();
+        FIC2_CHECK(stats.pinnedBytes + stats.heldBytes == 4 * 8 * 8 * 4);
+
+        // Away and back: nothing could be kept, so one new request each.
+        strip.Materialize({ 9, 12 });
+        FIC2_CHECK(strip.payloads->TotalBytes() <= limits.maxBytes);
+        strip.Materialize({ 3, 7 });
+        for (size_t index = 3; index < 7; ++index)
+        {
+            strip.CompleteAndRender(canvas, index, 8, 8);
+            FIC2_REQUIRE(SUCCEEDED(canvas.Render(*strip.tiles.Find(index)->image)));
+            FIC2_CHECK(strip.decodes.ThumbnailRequestsFor(strip.SourceOf(index)) == 2);
+        }
+    }
+}
+
+// Eviction only removes payloads no tile pins, and a recycled tile drops its
+// bitmap and pin first: once its previous item's payload is evicted, the tile
+// shows nothing of it - neither for its new item nor when the old item comes
+// back (that item is decoded again).
+FIC2_TEST(ThumbStripTiles_EvictionNeverLeavesARecycledTileWithOldPixels)
+{
+    ThumbTestSupport::ComScope com;
+    ThumbTestSupport::Canvas canvas;
+    FIC2_REQUIRE(canvas.Create(64, 64));
+    Strip strip({ 1u << 20, 1, 1u << 20 });   // one entry
+
+    strip.Materialize({ 3, 4 });
+    strip.CompleteAndRender(canvas, 3, 8, 8);
+    FIC2_REQUIRE(strip.BitmapWidth(3) == 8.0f);
+    const auto tileWindow = strip.tiles.Find(3)->focus;
+
+    // The tile is recycled to item 9; item 3's payload is then evicted.
+    strip.Materialize({ 9, 10 });
+    FIC2_REQUIRE(strip.tiles.Find(9)->focus == tileWindow);
+    FIC2_CHECK(strip.CachedSizes(3) == 1);
+    const std::wstring other = L"c:\\elsewhere\\x.png";
+    ThumbPayloadCache::Payload otherPayload {};
+    otherPayload.blocks = std::make_shared<std::vector<uint8_t>>(16, uint8_t(0));
+    otherPayload.width = 2;
+    otherPayload.height = 2;
+    otherPayload.rowPitch = 8;
+    otherPayload.format = DXGI_FORMAT_B8G8R8A8_UNORM;
+    otherPayload.sourcePath = other;
+    (void)strip.payloads->Insert(other, KnownIdentity(1), ThumbDecodeOptions {}, { 64.0f, 64.0f }, otherPayload);
+    FIC2_CHECK(strip.CachedSizes(3) == 0);
+
+    FIC2_REQUIRE(SUCCEEDED(canvas.Render(*strip.tiles.Find(9)->image)));
+    FIC2_CHECK(strip.BitmapWidth(9) == 0.0f);   // nothing of item 3
+    strip.CompleteAndRender(canvas, 9, 4, 2);
+    FIC2_CHECK(strip.BitmapWidth(9) == 4.0f);
+
+    // Item 3 comes back: no stale pixels, a new decode.
+    strip.Materialize({ 3, 4 });
+    FIC2_REQUIRE(SUCCEEDED(canvas.Render(*strip.tiles.Find(3)->image)));
+    FIC2_CHECK(strip.BitmapWidth(3) == 0.0f);
+    FIC2_CHECK(strip.decodes.ThumbnailRequestsFor(strip.SourceOf(3)) == 2);
+}
+
+// A file replaced at the same path is noticed when its folder is listed again:
+// the bound tile keeps its thumbnail until the new decode arrives, the old
+// identity's entry is never served for it, and the new one is reused later.
+FIC2_TEST(ThumbStripTiles_ReplacedFileIsDecodedAgainWhenListedAgain)
+{
+    ThumbTestSupport::ComScope com;
+    ThumbTestSupport::Canvas canvas;
+    FIC2_REQUIRE(canvas.Create(64, 64));
+    Strip strip;
+
+    strip.Materialize({ 3, 5 });
+    strip.CompleteAndRender(canvas, 3, 4, 2);
+    strip.CompleteAndRender(canvas, 4, 4, 2);
+    const ImageSourceIdentity before = strip.model.At(3).identity;
+
+    // Relisted (refresh): img00 was rewritten, img01 was not.
+    std::vector<Floar::VirtualFileEntry> listing = Strip::Listing();
+    std::vector<ImageSourceIdentity> identities = ListedIdentities(listing);
+    identities[2] = KnownIdentity(identities[2].size, 2);   // img00.png: new write time
+    strip.model.StageReset(kFolder, true, &IsTestImage);
+    (void)strip.model.Stage(listing, identities);
+    FIC2_REQUIRE(strip.model.Commit());
+    FIC2_REQUIRE(!(strip.model.At(3).identity == before));
+    const auto keptTile = strip.tiles.Find(3)->focus;
+    strip.Materialize({ 3, 5 });
+    FIC2_CHECK(strip.tiles.Find(3)->focus == keptTile);
+    FIC2_CHECK(strip.decodes.ThumbnailRequestsFor(strip.SourceOf(3)) == 2);
+    FIC2_CHECK(strip.decodes.ThumbnailRequestsFor(strip.SourceOf(4)) == 1);
+    FIC2_CHECK(strip.CachedSizes(3) == 0);   // nothing under the new identity yet
+
+    // The old thumbnail stays until the new one is shown.
+    FIC2_REQUIRE(SUCCEEDED(canvas.Render(*strip.tiles.Find(3)->image)));
+    FIC2_CHECK(strip.BitmapWidth(3) == 4.0f);
+    strip.CompleteAndRender(canvas, 3, 8, 8);
+    FIC2_CHECK(strip.BitmapWidth(3) == 8.0f);
+    FIC2_CHECK(strip.CachedSizes(3) == 1);
+
+    // Away and back: the new identity's payload, no request.
+    strip.Materialize({ 9, 11 });
+    strip.Materialize({ 3, 5 });
+    FIC2_REQUIRE(SUCCEEDED(canvas.Render(*strip.tiles.Find(3)->image)));
+    FIC2_CHECK(strip.BitmapWidth(3) == 8.0f);
+    FIC2_CHECK(strip.decodes.ThumbnailRequestsFor(strip.SourceOf(3)) == 2);
+}
+
+// Items listed without a known identity are decoded on demand as before:
+// their payloads are held (and accounted) while shown, but never cached.
+FIC2_TEST(ThumbStripTiles_UnknownIdentityItemsAreNeverCached)
+{
+    ThumbTestSupport::ComScope com;
+    ThumbTestSupport::Canvas canvas;
+    FIC2_REQUIRE(canvas.Create(64, 64));
+    Strip strip(ThumbPayloadCache::kDefaultLimits, false);
+
+    strip.Materialize({ 3, 5 });
+    strip.CompleteAndRender(canvas, 3, 4, 2);
+    strip.CompleteAndRender(canvas, 4, 4, 2);
+    FIC2_CHECK(strip.BitmapWidth(3) == 4.0f);
+    FIC2_CHECK(strip.payloads->EntryCount() == 0);
+    FIC2_CHECK(strip.payloads->GetStats().heldBytes == 2 * 4 * 2 * 4);
+
+    strip.Materialize({ 9, 11 });
+    FIC2_CHECK(strip.payloads->GetStats().heldBytes == 0);
+    strip.Materialize({ 3, 5 });
+    FIC2_CHECK(strip.decodes.ThumbnailRequestsFor(strip.SourceOf(3)) == 2);
+    FIC2_CHECK(strip.decodes.ThumbnailRequestsFor(strip.SourceOf(4)) == 2);
 }

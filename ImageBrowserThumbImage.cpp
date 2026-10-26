@@ -1,7 +1,6 @@
 #include "ImageBrowserThumbImage.h"
 
 #include "CommonUtil.h"
-#include "ImageBrowserThumbPayloadStore.h"
 #include "FD2D/Backplate.h"
 #include "FD2D/Util.h"
 
@@ -95,10 +94,18 @@ void ImageBrowserThumbImage::SetThumbnailSize(const FD2D::Size& size)
     m_request.purpose = ImageCore::ImagePurpose::Thumbnail;
 }
 
-HRESULT ImageBrowserThumbImage::SetSourceFile(const std::wstring& filePath)
+bool ImageBrowserThumbImage::SameListing(const ImageSourceIdentity& a, const ImageSourceIdentity& b)
+{
+    // Field-wise: two unknown identities are the same listing here (operator==
+    // never matches an unknown identity).
+    return a.known == b.known && a.size == b.size && a.writeTime == b.writeTime;
+}
+
+HRESULT ImageBrowserThumbImage::SetSourceFile(const std::wstring& filePath, const ImageSourceIdentity& identity)
 {
     const std::wstring normalized = CommonUtil::NormalizePath(filePath);
-    if (!normalized.empty() && normalized == m_filePath)
+    const bool samePath = !normalized.empty() && normalized == m_filePath;
+    if (samePath && SameListing(identity, m_identity))
     {
         const bool hadFailure = m_binding.ClearFailureIfMatches(normalized);
 
@@ -120,15 +127,21 @@ HRESULT ImageBrowserThumbImage::SetSourceFile(const std::wstring& filePath)
     m_binding.Cancel();
 
     m_filePath = normalized;
+    m_identity = identity;
     m_binding.ClearFailure();
     m_binding.MarkSettled();
     m_request.source = m_filePath;
-    m_cpuPayload = {};
+    m_payload.Release();
     m_needsCpuReupload = false;
+    if (samePath)
+    {
+        // The file was replaced: what is shown is the old file's thumbnail.
+        m_loadedFilePath.clear();
+    }
 
     // An item decoded before (by this or an earlier tile) is shown from its
-    // retained payload; only the bitmap is rebuilt, on the next render.
-    if (AdoptRetainedPayload())
+    // cached payload; only the bitmap is rebuilt, on the next render.
+    if (AdoptCachedPayload())
     {
         Invalidate();
         return S_OK;
@@ -140,24 +153,37 @@ HRESULT ImageBrowserThumbImage::SetSourceFile(const std::wstring& filePath)
     return S_OK;
 }
 
+void ImageBrowserThumbImage::SetSourceIdentity(const ImageSourceIdentity& identity)
+{
+    if (m_filePath.empty() || SameListing(identity, m_identity))
+    {
+        return;
+    }
+    (void)SetSourceFile(m_filePath, identity);
+}
+
 void ImageBrowserThumbImage::Recycle()
 {
     // A payload decoded while the tile was never rendered (an offscreen
-    // prefetch tile) is retained instead of being dropped with the request.
-    if (m_payloadStore)
+    // prefetch tile) is cached, unpinned, instead of being dropped with the
+    // request.
+    if (m_payloadCache)
     {
         const ImageAsyncBinding::Payload staged = m_binding.TakePending();
         if (!m_filePath.empty() && staged.sourcePath == m_filePath)
         {
-            m_payloadStore->Retain(staged);
+            (void)StorePayload(staged);
         }
     }
     m_binding.Cancel();
     m_binding.ClearFailure();
     m_filePath.clear();
+    m_identity = {};
     m_loadedFilePath.clear();
     m_request.source.clear();
-    m_cpuPayload = {};
+    m_requestedBox = { 0.0f, 0.0f };
+    // The payload becomes evictable, and nothing of this item stays on the tile.
+    m_payload.Release();
     m_needsCpuReupload = false;
     if (m_texture)
     {
@@ -234,16 +260,32 @@ D2D1_SIZE_F ImageBrowserThumbImage::GetBitmapSize() const
     return D2D1::SizeF(0.0f, 0.0f);
 }
 
-bool ImageBrowserThumbImage::AdoptRetainedPayload()
+bool ImageBrowserThumbImage::AdoptCachedPayload()
 {
-    const ImageAsyncBinding::Payload* retained = m_payloadStore ? m_payloadStore->Find(m_filePath) : nullptr;
-    if (retained == nullptr)
+    if (!m_payloadCache || !ThumbPayloadCache::IsCacheable(m_identity))
     {
         return false;
     }
-    m_cpuPayload = *retained;
+    // Looked up by the identity the item was listed with: no file access.
+    ThumbPayloadCache::Pin cached = m_payloadCache->AcquireLargest(
+        m_filePath, m_identity, ThumbDecodeOptions::Of(m_request));
+    if (!cached)
+    {
+        return false;
+    }
+    m_payload = std::move(cached);
     m_needsCpuReupload = true;
     return true;
+}
+
+ThumbPayloadCache::Pin ImageBrowserThumbImage::StorePayload(const ImageAsyncBinding::Payload& payload)
+{
+    if (!m_payloadCache)
+    {
+        return ThumbPayloadCache::Pin::Detached(payload);
+    }
+    return m_payloadCache->Insert(
+        payload.sourcePath, m_identity, ThumbDecodeOptions::Of(m_request), m_requestedBox, payload);
 }
 
 void ImageBrowserThumbImage::RequestImageLoad()
@@ -253,8 +295,8 @@ void ImageBrowserThumbImage::RequestImageLoad()
         return;
     }
 
-    // A retained payload waits for its upload (deferred during a size move).
-    if (m_needsCpuReupload && m_cpuPayload.blocks && m_cpuPayload.sourcePath == m_filePath)
+    // A cached payload waits for its upload (deferred during a size move).
+    if (m_needsCpuReupload && m_payload && m_payload.Get().sourcePath == m_filePath)
     {
         return;
     }
@@ -276,6 +318,7 @@ void ImageBrowserThumbImage::RequestImageLoad()
     m_request.source = m_filePath;
     m_request.purpose = ImageCore::ImagePurpose::Thumbnail;
     m_request.allowGpuCompressedDDS = false;
+    m_requestedBox = m_request.targetSize;
 
     m_binding.RequestLoad(m_request, m_filePath, m_loadPriority);
 }
@@ -287,7 +330,8 @@ void ImageBrowserThumbImage::TryReuploadCpuPayload(ID2D1RenderTarget* target)
         return;
     }
 
-    if (!m_cpuPayload.blocks || m_cpuPayload.sourcePath.empty() || m_cpuPayload.sourcePath != m_filePath)
+    const ImageAsyncBinding::Payload& payload = m_payload.Get();
+    if (!payload.blocks || payload.sourcePath.empty() || payload.sourcePath != m_filePath)
     {
         m_needsCpuReupload = false;
         return;
@@ -295,18 +339,20 @@ void ImageBrowserThumbImage::TryReuploadCpuPayload(ID2D1RenderTarget* target)
 
     Microsoft::WRL::ComPtr<ID2D1Bitmap> d2dBitmap;
     const HRESULT hrBmp = ImageAsyncBinding::CreateD2DBitmap(
-        target, m_cpuPayload, D2D1_ALPHA_MODE_IGNORE, d2dBitmap);
+        target, payload, D2D1_ALPHA_MODE_IGNORE, d2dBitmap);
     if (SUCCEEDED(hrBmp) && d2dBitmap)
     {
         m_texture->SetBitmap(d2dBitmap);
         m_bitmapStamp = CurrentTargetStamp();
-        m_loadedFilePath = m_cpuPayload.sourcePath;
+        m_loadedFilePath = payload.sourcePath;
         m_needsCpuReupload = false;
     }
     else
     {
+        // A new decode replaces it (RequestImageLoad on the next render).
         m_needsCpuReupload = false;
         m_loadedFilePath.clear();
+        m_payload.Release();
     }
 }
 
@@ -342,12 +388,9 @@ void ImageBrowserThumbImage::ApplyPendingPayload(ID2D1RenderTarget* target)
         }
         m_bitmapStamp = CurrentTargetStamp();
         m_loadedFilePath = pending.sourcePath;
-        m_cpuPayload = pending;
+        // The cache entry is the tile's CPU copy, pinned while it is shown.
+        m_payload = StorePayload(pending);
         m_needsCpuReupload = false;
-        if (m_payloadStore)
-        {
-            m_payloadStore->Retain(pending);
-        }
         m_binding.MarkSettled();
     }
     else
@@ -491,7 +534,9 @@ void ImageBrowserThumbImage::OnGraphicsInvalidated(
         !(m_bitmapStamp == CurrentTargetStamp());
     if (bitmapLost)
     {
-        if (m_cpuPayload.blocks && !m_cpuPayload.sourcePath.empty())
+        // CPU payloads do not depend on graphics generations: the pinned one
+        // rebuilds the bitmap, and no cache entry is dropped.
+        if (m_payload && !m_payload.Get().sourcePath.empty())
         {
             m_needsCpuReupload = true;
         }

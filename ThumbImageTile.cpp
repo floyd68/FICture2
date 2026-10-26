@@ -90,11 +90,11 @@ void ThumbImageTile::SetCaption(const std::wstring& text)
     Invalidate();
 }
 
-void ThumbImageTile::SetSourceFile(const std::wstring& path)
+void ThumbImageTile::SetSourceFile(const std::wstring& path, const ImageSourceIdentity& identity)
 {
     if (m_image)
     {
-        m_image->SetSourceFile(path);
+        m_image->SetSourceFile(path, identity);
     }
 }
 
