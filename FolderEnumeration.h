@@ -39,6 +39,25 @@
 //    caller's callback), flushes the log and ends the process with
 //    kFolderEnumerationForcedExitCode without running static destructors, so
 //    no destructor races a worker that still uses process-wide state.
+//
+// The host runs this as one stage of its post-UI cleanup (RunAppShutdown in
+// AppShutdown.h), on normal exit and on the startup failure paths alike:
+//   1. IPC server stop (placeholder until the IPC server can be stopped);
+//   2. folder enumeration: FolderEnumerationService::Shared().Shutdown(2 s);
+//   3. ImageCore: binding invalidation, then the bounded, non-constructing
+//      ImageLoader::ShutdownIfCreated(2 s), which requests stop on every
+//      request token (also releasing ImageCore threads that wait for a shared
+//      Floar archive open) and joins the decode and prefetch threads;
+//   4. Floar shared-open service: ArchiveReaderCache::Shared().Shutdown(2 s),
+//      which joins the archive open workers (none start if no open ran);
+//   5. GPU cache clear, FD2D shutdown, log shutdown, OLE uninitialize.
+// Enumeration and ImageCore both read through the archive cache, so both stop
+// before it. Each bounded stage makes the same decision: normal when its
+// workers joined within the bound, otherwise the forced path through
+// EndProcessAfterShutdownTimeout() with that stage's exit code below, before
+// any later stage, dependency teardown or static destruction runs. The
+// cleanup never persists the session or the window placement (the window's
+// before-destroy callback does, once startup handed off).
 
 class FolderEnumerationBackend
 {
@@ -182,8 +201,21 @@ private:
     std::shared_ptr<FolderEnumerationDetail::ServiceState> m_state {};
 };
 
-// Exit code of the forced shutdown path.
-constexpr UINT kFolderEnumerationForcedExitCode = 0xF1C2;
+// Exit codes of the forced shutdown path, one per bounded shutdown stage.
+constexpr UINT kFolderEnumerationForcedExitCode = 0xF1C2;   // folder enumeration workers
+constexpr UINT kImageCoreForcedExitCode = 0xF1C3;           // ImageCore decode/prefetch threads
+constexpr UINT kArchiveOpenForcedExitCode = 0xF1C4;         // Floar archive open workers
+
+// The forced shutdown path shared by every bounded stage: logs that `stage` is
+// still running `bound` after its shutdown began, runs `beforeForcedExit`
+// (persist state; may be empty), flushes the log and ends the process with
+// `exitCode` through TerminateProcess, so no static destructor runs while the
+// stage's worker is still alive. Does not return.
+void EndProcessAfterShutdownTimeout(
+    const char* stage,
+    std::chrono::milliseconds bound,
+    UINT exitCode,
+    const std::function<void()>& beforeForcedExit);
 
 // Normal shutdown when every worker joins within `bound`; otherwise the forced
 // path: logs, runs `beforeForcedExit` (persist state), flushes the log and ends
