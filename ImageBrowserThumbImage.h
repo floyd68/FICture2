@@ -78,7 +78,13 @@ private:
     ThumbPayloadCache::Pin StorePayload(const ImageAsyncBinding::Payload& payload);
     static bool SameListing(const ImageSourceIdentity& a, const ImageSourceIdentity& b);
     void SyncTextureDrawState();
-    void ApplyPendingPayload(ID2D1RenderTarget* target);
+    // Takes a completed decode off the binding and pins it in the payload
+    // cache; the bitmap is then created from the pinned payload, which is the
+    // cached entry's when one with the same key already exists. Returns true
+    // when one was admitted.
+    bool AdmitCompletedPayload();
+    // Creates the bitmap from the pinned payload (a newly admitted decode, a
+    // cached payload, or recovery after a device or target change).
     void TryReuploadCpuPayload(ID2D1RenderTarget* target);
     void DrawSelectionOverlay(ID2D1RenderTarget* target);
 
@@ -98,6 +104,9 @@ private:
     // kept for device-loss and target recovery, pinned in the cache.
     ThumbPayloadCache::Pin m_payload {};
     bool m_needsCpuReupload { false };
+    // m_payload is a decode not yet presented: an upload failure is recorded
+    // as the item's failure instead of requesting it again.
+    bool m_payloadFromDecode { false };
     std::shared_ptr<ThumbPayloadCache> m_payloadCache {};
 
     bool m_selected { false };

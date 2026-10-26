@@ -133,6 +133,7 @@ HRESULT ImageBrowserThumbImage::SetSourceFile(const std::wstring& filePath, cons
     m_request.source = m_filePath;
     m_payload.Release();
     m_needsCpuReupload = false;
+    m_payloadFromDecode = false;
     if (samePath)
     {
         // The file was replaced: what is shown is the old file's thumbnail.
@@ -185,6 +186,7 @@ void ImageBrowserThumbImage::Recycle()
     // The payload becomes evictable, and nothing of this item stays on the tile.
     m_payload.Release();
     m_needsCpuReupload = false;
+    m_payloadFromDecode = false;
     if (m_texture)
     {
         m_texture->Clear();
@@ -346,58 +348,48 @@ void ImageBrowserThumbImage::TryReuploadCpuPayload(ID2D1RenderTarget* target)
         m_bitmapStamp = CurrentTargetStamp();
         m_loadedFilePath = payload.sourcePath;
         m_needsCpuReupload = false;
+        m_payloadFromDecode = false;
     }
     else
     {
-        // A new decode replaces it (RequestImageLoad on the next render).
+        // A fresh decode that cannot be presented is a failure (no retry
+        // loop); a cached or recovered payload is replaced by a new decode
+        // (RequestImageLoad on the next render).
+        if (m_payloadFromDecode)
+        {
+            m_binding.RecordFailure(payload.sourcePath, hrBmp);
+        }
         m_needsCpuReupload = false;
+        m_payloadFromDecode = false;
         m_loadedFilePath.clear();
         m_payload.Release();
     }
 }
 
-void ImageBrowserThumbImage::ApplyPendingPayload(ID2D1RenderTarget* target)
+bool ImageBrowserThumbImage::AdmitCompletedPayload()
 {
-    if (!target)
-    {
-        return;
-    }
-
     const ImageAsyncBinding::Payload pending = m_binding.TakePending();
     if (!pending.blocks || pending.sourcePath.empty() ||
         pending.width == 0 || pending.height == 0 || pending.rowPitch == 0)
     {
-        return;
+        return false;
     }
 
     // Path gate (fixes FD2D::ThumbImage gap that applied stale pending without checking path).
     if (pending.sourcePath != m_filePath)
     {
-        return;
+        return false;
     }
 
-    Microsoft::WRL::ComPtr<ID2D1Bitmap> d2dBitmap;
-    const HRESULT hrBmp = ImageAsyncBinding::CreateD2DBitmap(
-        target, pending, D2D1_ALPHA_MODE_IGNORE, d2dBitmap);
-
-    if (SUCCEEDED(hrBmp) && d2dBitmap)
-    {
-        if (m_texture)
-        {
-            m_texture->SetBitmap(d2dBitmap);
-        }
-        m_bitmapStamp = CurrentTargetStamp();
-        m_loadedFilePath = pending.sourcePath;
-        // The cache entry is the tile's CPU copy, pinned while it is shown.
-        m_payload = StorePayload(pending);
-        m_needsCpuReupload = false;
-        m_binding.MarkSettled();
-    }
-    else
-    {
-        m_binding.RecordFailure(pending.sourcePath, hrBmp);
-        m_binding.MarkSettled();
-    }
+    // The cache entry is the tile's CPU copy, pinned until the tile is
+    // recycled. The bitmap is created from the pinned payload, which is the
+    // cached entry's when one with the same key already exists, so the
+    // picture shown and the one restored after a device loss are the same.
+    m_payload = StorePayload(pending);
+    m_needsCpuReupload = static_cast<bool>(m_payload);
+    m_payloadFromDecode = m_needsCpuReupload;
+    m_binding.MarkSettled();
+    return m_needsCpuReupload;
 }
 
 void ImageBrowserThumbImage::DrawSelectionOverlay(ID2D1RenderTarget* target)
@@ -561,7 +553,7 @@ void ImageBrowserThumbImage::OnRender(ID2D1RenderTarget* target)
 
     if (!deferBitmapUpload)
     {
-        ApplyPendingPayload(target);
+        (void)AdmitCompletedPayload();
         TryReuploadCpuPayload(target);
     }
 
