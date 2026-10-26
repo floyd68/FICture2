@@ -30,11 +30,27 @@
 //   renders were;
 // - inside a render or a size-move, every change already queued a WM_PAINT
 //   (FD2D does not render re-entrantly): nothing more;
-// - when the scope ends by an exception, no frame is rendered while
-//   unwinding; the queued WM_PAINT is kept, and a held layout request is
-//   passed on (best effort).
+// - inside an enclosing FD2D deferred-render scope, or when the scope ends by
+//   an exception, no frame is rendered: the queued WM_PAINT (or the enclosing
+//   scope's render) shows the update, and a held layout request is run
+//   without rendering (DeferredLayoutHost).
 // A null backplate (a control not attached yet) makes the scope a no-op.
 // UI thread only.
+//
+// A backplate that implements DeferredLayoutHost (Ficture2Backplate) can run
+// its layout pass without rendering; a scope that cannot render its held
+// layout request (inside an FD2D scope, or while unwinding) runs it that way.
+class DeferredLayoutHost
+{
+public:
+    // Measures and arranges the top-level Wnds in the client area, as the
+    // next render's layout pass does, without rendering.
+    virtual void ArrangeChildrenNow() = 0;
+
+protected:
+    ~DeferredLayoutHost() = default;
+};
+
 class DeferredRenderScope
 {
 public:
@@ -81,17 +97,14 @@ public:
         const bool unwinding = std::uncaught_exceptions() > m_uncaughtExceptions;
         if (m_backplate->IsDeferringRender() || unwinding)
         {
-            // An enclosing FD2D scope renders, without a layout pass; or no
-            // frame is rendered while unwinding.
+            // An enclosing FD2D scope renders (without a layout pass), or no
+            // frame is rendered while unwinding. Backplate::RequestLayout()
+            // would render now: run the held layout pass without rendering
+            // instead, so the next frame (the enclosing scope's, or the
+            // queued WM_PAINT) shows the arranged tree.
             if (layoutPending)
             {
-                try
-                {
-                    m_backplate->RequestLayout();
-                }
-                catch (...)
-                {
-                }
+                ArrangeWithoutRender(*m_backplate);
             }
             return;
         }
@@ -141,6 +154,22 @@ public:
     DeferredRenderScope& operator=(const DeferredRenderScope&) = delete;
 
 private:
+    static void ArrangeWithoutRender(FD2D::Backplate& backplate) noexcept
+    {
+        auto* host = dynamic_cast<DeferredLayoutHost*>(&backplate);
+        if (host == nullptr)
+        {
+            return;   // cannot lay out without rendering: the WM_PAINT frame shows the old layout
+        }
+        try
+        {
+            host->ArrangeChildrenNow();
+        }
+        catch (...)
+        {
+        }
+    }
+
     struct OpenScope
     {
         const FD2D::Backplate* backplate { nullptr };
