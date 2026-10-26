@@ -19,6 +19,7 @@ FICture2 is available on NexusMods: [https://www.nexusmods.com/fallout4/mods/100
 
 ## What's New in v1.7
 
+- **Improved:** Large folders no longer make the thumbnail strip heavier: only the thumbnails on screen plus a short prefetch margin (up to 32 on each side) have tiles, bitmaps and decode requests, so UI objects and queued decodes stay the same for 100 or 10,000 images, during and after folder loading. Thumbnails that leave the margin cancel their pending loads, and thumbnails already loaded come back on scroll without being decoded (or extracted from an archive) again
 - **Fixed:** Leaving a folder inside a large (for example solid 7z) archive no longer stalls the next folder's thumbnails: the archive read still in progress is canceled (while the archive is opening, waiting for it, or extracting), so the new folder's thumbnails load at once instead of after the old extraction finishes; canceling a full-resolution image inside an archive stops its read the same way
 - **Fixed:** Exit no longer hangs on a stuck image or archive read: folder listing, image decoding and archive opening each get a bounded time (2 s) to stop, and a service that does not stop in time ends the process without further cleanup (logged when logging is on)
 - **Improved:** Thumbnails on screen load before offscreen ones, and thumbnails that scroll into view while a large folder is still loading move ahead of the queue (the main image still loads first)

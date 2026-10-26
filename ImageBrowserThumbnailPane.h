@@ -28,12 +28,17 @@ public:
     void SetLayout(const ThumbStripLayout* layout) { m_layout = layout; }
     // The tiles to place; their windows are this panel's children.
     void SetTiles(const ThumbTileSet* tiles) { m_tiles = tiles; }
+    const ThumbStripLayout* Layout() const { return m_layout; }
+    const ThumbTileSet* Tiles() const { return m_tiles; }
     // Height of the tile row (the thumbnail height), without padding.
     void SetRowHeight(float height) { m_rowHeight = height; }
     float RowHeight() const { return m_rowHeight; }
 
     FD2D::Size Measure(FD2D::Size available) override;
     void Arrange(FD2D::Rect finalRect) override;
+    // Places the tiles again within the bounds of the last Arrange, for a tile
+    // set that changed after the layout pass.
+    void ArrangeTiles() { Arrange(m_bounds); }
 
 private:
     const ThumbStripLayout* m_layout { nullptr };
