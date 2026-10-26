@@ -82,6 +82,24 @@ std::pair<size_t, size_t> ThumbStripLayout::Range(float left, float right) const
     return { first, (std::max)(first, last) };
 }
 
+std::pair<size_t, size_t> ThumbStripLayout::MaterializeRange(float left, float right, size_t maxMargin) const
+{
+    const auto [first, last] = Range(left, right);
+    const size_t margin = (std::min)(last - first, maxMargin);
+    return { first - (std::min)(first, margin), (std::min)(m_extents.size(), last + margin) };
+}
+
+std::pair<size_t, size_t> ThumbStripLayout::RangeAround(size_t index, size_t margin) const
+{
+    const size_t count = m_extents.size();
+    if (count == 0)
+    {
+        return { 0, 0 };
+    }
+    index = (std::min)(index, count - 1);
+    return { index - (std::min)(index, margin), (std::min)(count, index + margin + 1) };
+}
+
 ThumbStripLayout::Anchor ThumbStripLayout::AnchorFor(float scroll, float viewportWidth, size_t selected) const
 {
     Anchor anchor {};
