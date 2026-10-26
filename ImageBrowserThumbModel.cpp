@@ -51,21 +51,24 @@ float ThumbItemModel::AspectOf(const std::wstring& lookupKey) const
 
 void ThumbItemModel::Reset(const Floar::VirtualPath& folder, bool showNavItems, ImageFilter isImage)
 {
-    if (!(folder == m_folder))
-    {
-        m_aspectByKey.clear();
-    }
-    m_folder = folder;
-    m_showNavItems = showNavItems;
+    StageReset(folder, showNavItems, std::move(isImage));
+    (void)Commit();
+}
+
+void ThumbItemModel::StageReset(const Floar::VirtualPath& folder, bool showNavItems, ImageFilter isImage)
+{
     m_isImage = std::move(isImage);
-    m_up.reset();
-    m_folders.clear();
-    m_images.clear();
     m_folderKeys.clear();
     m_imageKeys.clear();
     m_nextArrival = 0;
     m_listed = 0;
+    m_stagedFolders.clear();
+    m_stagedImages.clear();
 
+    m_resetPending = true;
+    m_pendingFolder = folder;
+    m_pendingShowNavItems = showNavItems;
+    m_pendingUp.reset();
     if (showNavItems && !folder.hostPath.empty())
     {
         Floar::VirtualPath parent = folder.GetParent();
@@ -73,17 +76,56 @@ void ThumbItemModel::Reset(const Floar::VirtualPath& folder, bool showNavItems, 
         {
             ThumbModelEntry up {};
             up.kind = ThumbItemKind::Up;
+            up.lookupKey = LookupKeyFor(parent);
             up.path = std::move(parent);
-            m_up = std::move(up);
+            m_pendingUp = std::move(up);
         }
     }
 }
 
+bool ThumbItemModel::Commit()
+{
+    bool changed = false;
+    if (m_resetPending)
+    {
+        m_resetPending = false;
+        if (!(m_pendingFolder == m_folder))
+        {
+            m_aspectByKey.clear();
+        }
+        m_folder = std::move(m_pendingFolder);
+        m_pendingFolder = {};
+        m_showNavItems = m_pendingShowNavItems;
+        m_up = std::move(m_pendingUp);
+        m_pendingUp.reset();
+        m_folders.clear();
+        m_images.clear();
+        changed = true;
+    }
+    if (!m_stagedFolders.empty() || !m_stagedImages.empty())
+    {
+        MergeSorted(m_folders, std::move(m_stagedFolders));
+        MergeSorted(m_images, std::move(m_stagedImages));
+        m_stagedFolders.clear();
+        m_stagedImages.clear();
+        changed = true;
+    }
+    return changed;
+}
+
 size_t ThumbItemModel::Merge(const std::vector<Floar::VirtualFileEntry>& entries)
 {
+    const size_t added = Stage(entries);
+    (void)Commit();
+    return added;
+}
+
+size_t ThumbItemModel::Stage(const std::vector<Floar::VirtualFileEntry>& entries)
+{
     m_listed += entries.size();
-    std::vector<ThumbModelEntry> folders;
-    std::vector<ThumbModelEntry> images;
+    auto& folders = m_stagedFolders;
+    auto& images = m_stagedImages;
+    const size_t stagedBefore = folders.size() + images.size();
 
     for (const auto& entry : entries)
     {
@@ -117,10 +159,7 @@ size_t ThumbItemModel::Merge(const std::vector<Floar::VirtualFileEntry>& entries
         (isFolder ? folders : images).push_back(std::move(item));
     }
 
-    const size_t added = folders.size() + images.size();
-    MergeSorted(m_folders, std::move(folders));
-    MergeSorted(m_images, std::move(images));
-    return added;
+    return folders.size() + images.size() - stagedBefore;
 }
 
 void ThumbItemModel::MergeSorted(std::vector<ThumbModelEntry>& into, std::vector<ThumbModelEntry>&& added)
@@ -144,4 +183,25 @@ size_t ThumbItemModel::DisplayCount() const
         count += m_folders.size() + (m_up ? 1 : 0);
     }
     return count;
+}
+
+const ThumbModelEntry& ThumbItemModel::At(size_t index) const
+{
+    if (m_showNavItems)
+    {
+        if (m_up)
+        {
+            if (index == 0)
+            {
+                return *m_up;
+            }
+            --index;
+        }
+        if (index < m_folders.size())
+        {
+            return m_folders[index];
+        }
+        index -= m_folders.size();
+    }
+    return m_images[index];
 }

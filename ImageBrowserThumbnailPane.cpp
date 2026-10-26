@@ -9,47 +9,37 @@ ThumbStripPanel::ThumbStripPanel()
 {
 }
 
-bool ThumbStripPanel::LayoutMatchesChildren() const
-{
-    return m_layout != nullptr && m_layout->Count() == ChildrenInOrder().size();
-}
-
 FD2D::Size ThumbStripPanel::Measure(FD2D::Size available)
 {
-    if (!LayoutMatchesChildren())
-    {
-        return FD2D::StackPanel::Measure(available);
-    }
-
     // Widths come from the layout; tiles only report their (fixed) height.
     float cross = 0.0f;
-    for (const auto& child : ChildrenInOrder())
+    if (m_tiles != nullptr)
     {
-        if (child)
+        for (const ThumbTile& tile : m_tiles->Tiles())
         {
-            cross = (std::max)(cross, child->Measure(available).h);
+            if (tile.focus)
+            {
+                cross = (std::max)(cross, tile.focus->Measure(available).h);
+            }
         }
     }
-    m_desired = { m_layout->ContentWidth() + 2.0f * m_margin, cross + 2.0f * m_padding + 2.0f * m_margin };
+    const float content = (m_layout != nullptr) ? m_layout->ContentWidth() : 2.0f * m_padding;
+    m_desired = { content + 2.0f * m_margin, cross + 2.0f * m_padding + 2.0f * m_margin };
     return m_desired;
 }
 
 void ThumbStripPanel::Arrange(FD2D::Rect finalRect)
 {
-    if (!LayoutMatchesChildren())
-    {
-        FD2D::StackPanel::Arrange(finalRect);
-        return;
-    }
-
     const FD2D::Rect inset = FD2D::Inset(finalRect, m_margin);
     const FD2D::Rect childArea = FD2D::Inset(inset, m_padding);
-    const auto& children = ChildrenInOrder();
-    for (size_t i = 0; i < children.size(); ++i)
+    if (m_layout != nullptr && m_tiles != nullptr)
     {
-        if (children[i])
+        for (const ThumbTile& tile : m_tiles->Tiles())
         {
-            children[i]->Arrange({ inset.x + m_layout->Start(i), childArea.y, m_layout->Extent(i), childArea.h });
+            if (tile.focus && tile.index < m_layout->Count())
+            {
+                tile.focus->Arrange({ inset.x + m_layout->Start(tile.index), childArea.y, m_layout->Extent(tile.index), childArea.h });
+            }
         }
     }
     m_bounds = finalRect;

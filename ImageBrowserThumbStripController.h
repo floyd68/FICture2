@@ -16,47 +16,56 @@ namespace FD2D
     class Wnd;
 }
 
+// Strip tiles over model indices. ThumbItemModel holds the items; only the
+// materialized index range has tiles (ThumbTileSet), and selection is a model
+// index that is applied to a tile when the tile is bound.
 class ImageBrowserThumbStripController
 {
 public:
-    struct RebuildResult
-    {
-        size_t selectIndex { 0 };
-        bool hasItems { false };
-    };
-
-    struct RebuildListContext
+    struct MaterializeContext
     {
         std::shared_ptr<FD2D::StackPanel> panel {};
-        std::vector<ThumbItem>* items { nullptr };
+        ThumbTileSet* tiles { nullptr };
         float thumbW { 0.0f };
         float thumbH { 0.0f };
         // Classified, de-duplicated and ordered items (Up/folders shown when the
         // model was reset with nav items).
         const ThumbItemModel* model { nullptr };
-        Floar::VirtualPath preferSelectPath {};
+        // Model indices to materialize (clamped to the model).
+        ThumbIndexRange range {};
+        // The selected model index: its tile is highlighted when bound.
+        size_t selectedIndex { static_cast<size_t>(-1) };
         std::function<void(size_t)> onSelectIndex {};
         std::function<void(size_t)> onActivateIndex {};
         // An image tile's decoded aspect ratio became known (lookup key, aspect).
         std::function<void(const std::wstring&, float)> onImageAspect {};
-        std::function<bool(const Floar::VirtualPath&, const Floar::VirtualPath&)> pathEquals {};
         std::function<std::wstring(const wchar_t*, const Floar::VirtualPath&)> makeStableName {};
     };
 
     struct SelectItemContext
     {
-        std::vector<ThumbItem>* items { nullptr };
+        const ThumbItemModel* model { nullptr };
+        const ThumbTileSet* tiles { nullptr };
         size_t* selectedIndex { nullptr };
-        std::shared_ptr<FD2D::Wnd>* selectedFocus { nullptr };
+        // Scrolls the selected model index into view (no tile needed).
         std::function<void()> ensureSelectionVisible {};
         bool syncSuppressBroadcast { false };
         size_t imageBrowserCount { 0 };
         std::function<void(size_t)> applyMainFromIndex {};
-        std::function<void(const ThumbItem&)> applyNonImageSelection {};
+        std::function<void(const ThumbModelEntry&)> applyNonImageSelection {};
         std::function<void(const std::wstring&)> publishFileName {};
     };
 
-    RebuildResult RebuildList(const RebuildListContext& context) const;
+    // Binds tiles for the model indices of `context.range`: creates missing
+    // tiles, updates and reorders the existing ones, and removes tiles outside
+    // the range. Work is proportional to the range (and the tiles it replaces),
+    // not to the model size.
+    void MaterializeTiles(const MaterializeContext& context) const;
 
+    // Selects model item `index` (clamped to the model) whether or not it has
+    // a tile; a materialized tile shows the highlight at once, any other when
+    // it is bound.
     void SelectItemByIndex(const SelectItemContext& context, size_t index) const;
+
+    static void SetTileSelected(const ThumbTile& tile, bool selected);
 };

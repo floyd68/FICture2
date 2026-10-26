@@ -29,8 +29,8 @@ bool ImageBrowserAsyncThumbLoader::ApplyChunkToProgressive(
     bool& progressiveLoadCompleted)
 {
     bool changed = false;
-    // Only chunks that add items need a UI update.
-    if (!chunk.batch.empty() && model.Merge(chunk.batch) > 0)
+    // Only chunks that add items need a UI update, which commits them.
+    if (!chunk.batch.empty() && model.Stage(chunk.batch) > 0)
     {
         progressiveUiDirty = true;
         changed = true;

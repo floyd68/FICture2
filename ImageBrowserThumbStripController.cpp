@@ -40,36 +40,45 @@ namespace
     }
 }
 
-ImageBrowserThumbStripController::RebuildResult ImageBrowserThumbStripController::RebuildList(
-    const RebuildListContext& context) const
+void ImageBrowserThumbStripController::SetTileSelected(const ThumbTile& tile, bool selected)
 {
-    RebuildResult result {};
-    if (!context.panel || context.items == nullptr || context.model == nullptr)
+    if (tile.image)
     {
-        return result;
+        tile.image->SetSelected(selected);
+    }
+    if (tile.navTile)
+    {
+        tile.navTile->SetSelected(selected);
+    }
+}
+
+void ImageBrowserThumbStripController::MaterializeTiles(const MaterializeContext& context) const
+{
+    if (!context.panel || context.tiles == nullptr || context.model == nullptr)
+    {
+        return;
     }
 
-    const auto t_rebuild = std::chrono::steady_clock::now();
+    const auto t_materialize = std::chrono::steady_clock::now();
 
     const auto& panel = context.panel;
-    auto& items = *context.items;
     const ThumbItemModel& model = *context.model;
     const float thumbW = context.thumbW;
     const float thumbH = context.thumbH;
-    const bool showNavItems = model.ShowNavItems();
-    const Floar::VirtualPath& preferSelectPath = context.preferSelectPath;
     const auto& onSelectIndex = context.onSelectIndex;
     const auto& onActivateIndex = context.onActivateIndex;
-    const auto& pathEquals = context.pathEquals;
     const auto& makeStableName = context.makeStableName;
 
-    items.clear();
-    items.reserve(model.DisplayCount());
+    const size_t count = model.DisplayCount();
+    ThumbIndexRange range { (std::min)(context.range.first, count), (std::min)(context.range.last, count) };
+    range.last = (std::max)(range.first, range.last);
 
+    std::vector<ThumbTile> tiles;
+    tiles.reserve(range.Size());
     std::vector<std::wstring> desiredOrder;
-    desiredOrder.reserve(model.DisplayCount());
+    desiredOrder.reserve(range.Size());
     std::unordered_set<std::wstring> desiredNames;
-    desiredNames.reserve(model.DisplayCount());
+    desiredNames.reserve(range.Size());
 
     auto getExistingChild = [panel](const std::wstring& name) -> std::shared_ptr<FD2D::Wnd>
     {
@@ -82,76 +91,88 @@ ImageBrowserThumbStripController::RebuildResult ImageBrowserThumbStripController
         return it->second;
     };
 
-    if (showNavItems)
+    for (size_t index = range.first; index < range.last; ++index)
     {
-        if (model.Up())
+        const ThumbModelEntry& entry = model.At(index);
+        ThumbTile bound {};
+        bound.index = index;
+        bound.kind = entry.kind;
+        std::wstring name;
+
+        if (entry.kind == ThumbItemKind::Image)
         {
-            const Floar::VirtualPath& parent = model.Up()->path;
-            std::wstring name = makeStableName ? makeStableName(L"nav_up", parent) : L"nav_up";
-            auto tile = std::dynamic_pointer_cast<ThumbNavTile>(getExistingChild(name));
-            if (!tile)
+            const Floar::VirtualPath& p = entry.path;
+            name = makeStableName ? makeStableName(L"thumb_img", p) : L"thumb_img";
+            auto thumbTile = std::dynamic_pointer_cast<ThumbImageTile>(getExistingChild(name));
+            if (!thumbTile)
             {
                 (void)panel->RemoveChild(name);
-                tile = std::make_shared<ThumbNavTile>(name);
-                (void)panel->AddChild(tile);
-            }
-
-            tile->SetFixedSize({ thumbW, thumbH });
-            tile->SetText(L"..");
-            tile->SetTextPlacement(ThumbNavTile::TextPlacement::Bottom);
-            tile->SetIcon(ThumbNavTile::IconKind::Up);
-            const size_t index = items.size();
-            tile->SetOnClick([onSelectIndex, index]()
-            {
-                if (onSelectIndex)
-                {
-                    onSelectIndex(index);
-                }
-            });
-            tile->SetOnDoubleClick([onSelectIndex, onActivateIndex, index]()
-            {
-                if (onSelectIndex)
-                {
-                    onSelectIndex(index);
-                }
-                if (onActivateIndex)
-                {
-                    onActivateIndex(index);
-                }
-            });
-
-            desiredOrder.push_back(name);
-            desiredNames.emplace(name);
-            items.push_back({ ThumbItemKind::Up, parent, tile, nullptr, tile, nullptr, ThumbItemModel::LookupKeyFor(parent) });
-        }
-
-        for (const ThumbModelEntry& folder : model.Folders())
-        {
-            const Floar::VirtualPath& dir = folder.path;
-            std::wstring name = makeStableName ? makeStableName(L"nav_folder", dir) : L"nav_folder";
-            auto tile = std::dynamic_pointer_cast<ThumbNavTile>(getExistingChild(name));
-            if (!tile)
-            {
-                (void)panel->RemoveChild(name);
-                tile = std::make_shared<ThumbNavTile>(name);
-                (void)panel->AddChild(tile);
-            }
-
-            tile->SetFixedSize({ thumbW, thumbH });
-            tile->SetText(dir.filename().wstring());
-            tile->SetTextPlacement(ThumbNavTile::TextPlacement::Bottom);
-            tile->SetIcon(ThumbNavTile::IconKind::Folder);
-            if (folder.isArchive)
-            {
-                tile->SetBadgeText(GetArchiveBadgeText(dir));
-                tile->SetIconTint(GetArchiveIconTint(dir));
+                thumbTile = std::make_shared<ThumbImageTile>(name);
+                thumbTile->SetFixedHeight(thumbH);
+                thumbTile->SetSourceFile(p.wstring());
+                thumbTile->SetCaption(p.filename().wstring());
+                (void)panel->AddChild(thumbTile);
             }
             else
             {
-                tile->SetBadgeText(L"");
-                tile->SetIconTint(ThumbNavTile::IconTint::None);
+                thumbTile->SetFixedHeight(thumbH);
             }
-            const size_t index = items.size();
+
+            thumbTile->SetOnClick([onSelectIndex, index]()
+            {
+                if (onSelectIndex)
+                {
+                    onSelectIndex(index);
+                }
+            });
+            thumbTile->SetOnAspectChanged([onImageAspect = context.onImageAspect, key = entry.lookupKey](float aspect)
+            {
+                if (onImageAspect)
+                {
+                    onImageAspect(key, aspect);
+                }
+            });
+
+            bound.focus = thumbTile;
+            bound.image = thumbTile->ImageWnd();
+            bound.imageTile = thumbTile;
+        }
+        else
+        {
+            const bool isUp = (entry.kind == ThumbItemKind::Up);
+            const Floar::VirtualPath& dir = entry.path;
+            const wchar_t* prefix = isUp ? L"nav_up" : L"nav_folder";
+            name = makeStableName ? makeStableName(prefix, dir) : prefix;
+            auto tile = std::dynamic_pointer_cast<ThumbNavTile>(getExistingChild(name));
+            if (!tile)
+            {
+                (void)panel->RemoveChild(name);
+                tile = std::make_shared<ThumbNavTile>(name);
+                (void)panel->AddChild(tile);
+            }
+
+            tile->SetFixedSize({ thumbW, thumbH });
+            tile->SetTextPlacement(ThumbNavTile::TextPlacement::Bottom);
+            if (isUp)
+            {
+                tile->SetText(L"..");
+                tile->SetIcon(ThumbNavTile::IconKind::Up);
+            }
+            else
+            {
+                tile->SetText(dir.filename().wstring());
+                tile->SetIcon(ThumbNavTile::IconKind::Folder);
+                if (entry.isArchive)
+                {
+                    tile->SetBadgeText(GetArchiveBadgeText(dir));
+                    tile->SetIconTint(GetArchiveIconTint(dir));
+                }
+                else
+                {
+                    tile->SetBadgeText(L"");
+                    tile->SetIconTint(ThumbNavTile::IconTint::None);
+                }
+            }
             tile->SetOnClick([onSelectIndex, index]()
             {
                 if (onSelectIndex)
@@ -171,50 +192,16 @@ ImageBrowserThumbStripController::RebuildResult ImageBrowserThumbStripController
                 }
             });
 
-            desiredOrder.push_back(name);
-            desiredNames.emplace(name);
-            items.push_back({ ThumbItemKind::Folder, dir, tile, nullptr, tile, nullptr, folder.lookupKey });
-        }
-    }
-
-    for (const ThumbModelEntry& entry : model.Images())
-    {
-        const Floar::VirtualPath& p = entry.path;
-        std::wstring name = makeStableName ? makeStableName(L"thumb_img", p) : L"thumb_img";
-        auto thumbTile = std::dynamic_pointer_cast<ThumbImageTile>(getExistingChild(name));
-        if (!thumbTile)
-        {
-            (void)panel->RemoveChild(name);
-            thumbTile = std::make_shared<ThumbImageTile>(name);
-            thumbTile->SetFixedHeight(thumbH);
-            thumbTile->SetSourceFile(p.wstring());
-            thumbTile->SetCaption(p.filename().wstring());
-            (void)panel->AddChild(thumbTile);
-        }
-        else
-        {
-            thumbTile->SetFixedHeight(thumbH);
+            bound.focus = tile;
+            bound.navTile = tile;
         }
 
-        const size_t index = items.size();
-        thumbTile->SetOnClick([onSelectIndex, index]()
-        {
-            if (onSelectIndex)
-            {
-                onSelectIndex(index);
-            }
-        });
-        thumbTile->SetOnAspectChanged([onImageAspect = context.onImageAspect, key = entry.lookupKey](float aspect)
-        {
-            if (onImageAspect)
-            {
-                onImageAspect(key, aspect);
-            }
-        });
+        // Selection is model state: a tile shows it when it is bound.
+        SetTileSelected(bound, index == context.selectedIndex);
 
         desiredOrder.push_back(name);
-        desiredNames.emplace(name);
-        items.push_back({ ThumbItemKind::Image, p, thumbTile, thumbTile->ImageWnd(), nullptr, thumbTile, entry.lookupKey });
+        desiredNames.emplace(std::move(name));
+        tiles.push_back(std::move(bound));
     }
 
     std::vector<std::wstring> toRemove;
@@ -232,46 +219,27 @@ ImageBrowserThumbStripController::RebuildResult ImageBrowserThumbStripController
     }
 
     (void)panel->ReorderChildren(desiredOrder);
-
-    result.hasItems = !items.empty();
-
-    size_t selectIndex = 0;
-    if (!preferSelectPath.empty() && pathEquals)
-    {
-        for (size_t i = 0; i < items.size(); ++i)
-        {
-            if (pathEquals(items[i].path, preferSelectPath))
-            {
-                selectIndex = i;
-                break;
-            }
-        }
-    }
-
-    result.selectIndex = selectIndex;
+    context.tiles->Assign(range, std::move(tiles));
 
     {
-        const auto rebuildMs = FIC2_ELAPSED_MS(t_rebuild);
-        if (rebuildMs > 50)
+        const auto materializeMs = FIC2_ELAPSED_MS(t_materialize);
+        if (materializeMs > 50)
         {
-            FIC2_LOG_INFO("[UI stall] ThumbStrip::RebuildList took {}ms ({} items)",
-                rebuildMs, items.size());
+            FIC2_LOG_INFO("[UI stall] ThumbStrip::MaterializeTiles took {}ms ({} tiles of {} items)",
+                materializeMs, range.Size(), count);
         }
     }
-
-    return result;
 }
 
 void ImageBrowserThumbStripController::SelectItemByIndex(const SelectItemContext& context, size_t index) const
 {
-    if (context.items == nullptr || context.selectedIndex == nullptr || context.selectedFocus == nullptr)
+    if (context.model == nullptr || context.selectedIndex == nullptr)
     {
         return;
     }
 
-    auto& items = *context.items;
+    const ThumbItemModel& model = *context.model;
     auto& selectedIndex = *context.selectedIndex;
-    auto& selectedFocus = *context.selectedFocus;
     const auto& ensureSelectionVisible = context.ensureSelectionVisible;
     const bool syncSuppressBroadcast = context.syncSuppressBroadcast;
     const size_t imageBrowserCount = context.imageBrowserCount;
@@ -279,57 +247,54 @@ void ImageBrowserThumbStripController::SelectItemByIndex(const SelectItemContext
     const auto& applyNonImageSelection = context.applyNonImageSelection;
     const auto& publishFileName = context.publishFileName;
 
-    if (items.empty())
+    const size_t count = model.DisplayCount();
+    if (count == 0)
     {
         return;
     }
 
-    if (index >= items.size())
+    if (index >= count)
     {
-        index = items.size() - 1;
+        index = count - 1;
     }
 
-    if (selectedIndex < items.size())
+    if (context.tiles != nullptr)
     {
-        if (items[selectedIndex].image)
+        if (const ThumbTile* previous = context.tiles->Find(selectedIndex))
         {
-            items[selectedIndex].image->SetSelected(false);
-        }
-        if (items[selectedIndex].navTile)
-        {
-            items[selectedIndex].navTile->SetSelected(false);
+            SetTileSelected(*previous, false);
         }
     }
 
     selectedIndex = index;
-    selectedFocus = items[index].focus;
 
-    if (items[index].image)
+    if (context.tiles != nullptr)
     {
-        items[index].image->SetSelected(true);
-    }
-    if (items[index].navTile)
-    {
-        items[index].navTile->SetSelected(true);
+        if (const ThumbTile* tile = context.tiles->Find(index))
+        {
+            SetTileSelected(*tile, true);
+        }
     }
 
-    if (selectedFocus && ensureSelectionVisible)
+    // Scrolling works from the model index; the item need not have a tile.
+    if (ensureSelectionVisible)
     {
         ensureSelectionVisible();
     }
 
-    if (items[selectedIndex].kind == ThumbItemKind::Image)
+    const ThumbModelEntry& selected = model.At(selectedIndex);
+    if (selected.kind == ThumbItemKind::Image)
     {
         if (applyMainFromIndex)
         {
             applyMainFromIndex(selectedIndex);
         }
     }
-    else if (items[selectedIndex].kind == ThumbItemKind::Folder || items[selectedIndex].kind == ThumbItemKind::Up)
+    else if (selected.kind == ThumbItemKind::Folder || selected.kind == ThumbItemKind::Up)
     {
         if (applyNonImageSelection)
         {
-            applyNonImageSelection(items[selectedIndex]);
+            applyNonImageSelection(selected);
         }
     }
 
@@ -337,9 +302,9 @@ void ImageBrowserThumbStripController::SelectItemByIndex(const SelectItemContext
     // If we are in compare mode (2+ ImageBrowsers) and a new image is selected in the thumbnail list,
     // propagate its filename to other ImageBrowsers. Receivers select the same filename in their
     // current directory (if present).
-    if (!syncSuppressBroadcast && imageBrowserCount >= 2 && selectedIndex < items.size())
+    if (!syncSuppressBroadcast && imageBrowserCount >= 2 && selectedIndex < model.DisplayCount())
     {
-        const ThumbItem& item = items[selectedIndex];
+        const ThumbModelEntry& item = model.At(selectedIndex);
         if (item.kind == ThumbItemKind::Image)
         {
             const std::wstring fileNameLower = CommonUtil::ToLower(item.path.filename().wstring());

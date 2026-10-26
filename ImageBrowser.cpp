@@ -269,9 +269,9 @@ namespace
             m_showNavItems = showNavItems;
 
             Floar::VirtualPath prefer {};
-            if (m_selectedIndex < m_items.size())
+            if (const ThumbModelEntry* selected = SelectedThumbEntry())
             {
-                prefer = m_items[m_selectedIndex].path;
+                prefer = selected->path;
             }
             RebuildThumbList(prefer);
         }
@@ -376,9 +376,36 @@ namespace
             float offset { 0.0f }; // its start relative to the viewport's left edge
         };
 
+        // Items in the strip (the committed model).
+        size_t ThumbItemCount() const
+        {
+            return m_thumbModel.DisplayCount();
+        }
+
+        const ThumbModelEntry* SelectedThumbEntry() const
+        {
+            return (m_selectedIndex < ThumbItemCount()) ? &m_thumbModel.At(m_selectedIndex) : nullptr;
+        }
+
         bool ThumbLayoutReady() const
         {
-            return !m_items.empty() && m_thumbLayout.Count() == m_items.size();
+            return ThumbItemCount() > 0 && m_thumbLayout.Count() == ThumbItemCount();
+        }
+
+        // The model indices that have tiles: the whole model for now. #46
+        // narrows it to the visible range plus a bounded prefetch margin; the
+        // per-item strip paths already work from model indices and touch only
+        // m_thumbTiles.
+        ThumbIndexRange MaterializedThumbRange() const
+        {
+            return { 0, ThumbItemCount() };
+        }
+
+        // Binds tiles for MaterializedThumbRange(), highlighting `selectedIndex`.
+        void MaterializeThumbTiles(size_t selectedIndex)
+        {
+            auto context = MakeThumbMaterializeContext(selectedIndex);
+            m_thumbStripController.MaterializeTiles(context);
         }
 
         // The strip viewport in panel coordinates: [left, left + width).
@@ -407,30 +434,33 @@ namespace
 
         std::wstring ThumbItemKey(size_t index) const
         {
-            return (index < m_items.size()) ? m_items[index].key : std::wstring();
+            return (index < ThumbItemCount()) ? m_thumbModel.At(index).lookupKey : std::wstring();
         }
 
-        float ThumbItemExtent(const ThumbItem& item) const
+        float ThumbItemExtent(const ThumbModelEntry& item) const
         {
             if (item.kind == ThumbItemKind::Image)
             {
-                const float aspect = m_thumbModel.AspectOf(item.key);
+                const float aspect = m_thumbModel.AspectOf(item.lookupKey);
                 return ThumbStripLayout::ImageExtent(m_thumbH, aspect, kThumbTileMargin);
             }
             return m_thumbW + 2.0f * kThumbTileMargin;   // nav tiles are square
         }
 
-        // Extents of every item (after a rebuild or a row-height change).
+        // Extents and the key index of every item (after a rebuild or a
+        // row-height change): the per-update work that is linear in the folder.
         void RebuildThumbLayout()
         {
+            const size_t count = ThumbItemCount();
             std::vector<float> extents;
-            extents.reserve(m_items.size());
+            extents.reserve(count);
             m_thumbItemIndexByKey.clear();
-            m_thumbItemIndexByKey.reserve(m_items.size());
-            for (size_t i = 0; i < m_items.size(); ++i)
+            m_thumbItemIndexByKey.reserve(count);
+            for (size_t i = 0; i < count; ++i)
             {
-                extents.push_back(ThumbItemExtent(m_items[i]));
-                m_thumbItemIndexByKey.emplace(m_items[i].key, i);
+                const ThumbModelEntry& item = m_thumbModel.At(i);
+                extents.push_back(ThumbItemExtent(item));
+                m_thumbItemIndexByKey.emplace(item.lookupKey, i);
             }
             m_thumbLayout.Reset(std::move(extents),
                 ImageBrowserThumbnailPane::kItemSpacing, ImageBrowserThumbnailPane::kPanelPadding);
@@ -493,7 +523,7 @@ namespace
             {
                 m_thumbCenterPending = false;
                 m_thumbAnchor = {};
-                if (m_selectedIndex < m_items.size())
+                if (m_selectedIndex < ThumbItemCount())
                 {
                     scroll->EnsureCentered(ThumbItemRect(m_selectedIndex), true);
                 }
@@ -600,12 +630,12 @@ namespace
             }
 
             // Folder / parent-folder icon when a folder tile is selected.
-            if (m_selectedIndex < m_items.size() &&
-                (m_items[m_selectedIndex].kind == ThumbItemKind::Folder ||
-                    m_items[m_selectedIndex].kind == ThumbItemKind::Up) &&
+            const ThumbModelEntry* selected = SelectedThumbEntry();
+            if (selected != nullptr &&
+                (selected->kind == ThumbItemKind::Folder || selected->kind == ThumbItemKind::Up) &&
                 m_mainPane != nullptr)
             {
-                const bool isUp = (m_items[m_selectedIndex].kind == ThumbItemKind::Up);
+                const bool isUp = (selected->kind == ThumbItemKind::Up);
                 const auto iconKind = isUp
                     ? ImageBrowserAssets::FolderIconKind::FolderUp
                     : ImageBrowserAssets::FolderIconKind::Folder;
@@ -722,21 +752,23 @@ namespace
 
         Floar::VirtualPath GetContextMenuTargetImagePathAtPoint(const POINT& pt) const
         {
-            for (const auto& item : m_items)
+            // Only materialized tiles can be under the point.
+            for (const ThumbTile& tile : m_thumbTiles.Tiles())
             {
-                if (item.kind != ThumbItemKind::Image || !item.focus)
+                if (tile.kind != ThumbItemKind::Image || !tile.focus || tile.index >= ThumbItemCount())
                 {
                     continue;
                 }
-                if (FD2D::Util::RectContainsPoint(item.focus->LayoutRect(), pt))
+                if (FD2D::Util::RectContainsPoint(tile.focus->LayoutRect(), pt))
                 {
-                    return item.path;
+                    return m_thumbModel.At(tile.index).path;
                 }
             }
 
-            if (m_selectedIndex < m_items.size() && m_items[m_selectedIndex].kind == ThumbItemKind::Image)
+            const ThumbModelEntry* selected = SelectedThumbEntry();
+            if (selected != nullptr && selected->kind == ThumbItemKind::Image)
             {
-                return m_items[m_selectedIndex].path;
+                return selected->path;
             }
             return Floar::VirtualPath();
         }
@@ -753,7 +785,7 @@ namespace
 
         size_t CurrentThumbSelectionIndex() const
         {
-            return (m_selectedIndex < m_items.size()) ? m_selectedIndex : 0;
+            return (m_selectedIndex < ThumbItemCount()) ? m_selectedIndex : 0;
         }
 
         void ApplyThumbWheelStep(int steps)
@@ -779,7 +811,7 @@ namespace
                 }
                 else
                 {
-                    if ((next + 1) >= m_items.size())
+                    if ((next + 1) >= ThumbItemCount())
                     {
                         break;
                     }
@@ -841,7 +873,7 @@ namespace
                 event.modifiers.control,
                 event.modifiers.alt,
                 CommonUtil::NowMs(),
-                m_items.size(),
+                ThumbItemCount(),
                 m_selectedIndex,
                 [this](size_t index)
                 {
@@ -857,12 +889,12 @@ namespace
 
         std::wstring TypeToSelectItemLabel(size_t index) const
         {
-            if (index >= m_items.size())
+            if (index >= ThumbItemCount())
             {
                 return L"";
             }
 
-            const ThumbItem& item = m_items[index];
+            const ThumbModelEntry& item = m_thumbModel.At(index);
             if (item.kind == ThumbItemKind::Up)
             {
                 return L"..";
@@ -898,6 +930,7 @@ namespace
         // ImageCore serves on-screen thumbnails first in both its I/O and decode
         // stages (and promotes queued ones as they scroll into view). Tiles keep
         // their content coordinates; the scroll view translates while rendering.
+        // Runs every frame over the materialized tiles only.
         void UpdateThumbLoadPriorities()
         {
             float left = 0.0f;
@@ -907,12 +940,12 @@ namespace
                 return;
             }
             const auto [first, last] = m_thumbLayout.Range(left, left + width);
-            for (size_t i = 0; i < m_items.size(); ++i)
+            const ThumbIndexRange visible { first, last };
+            for (const ThumbTile& tile : m_thumbTiles.Tiles())
             {
-                if (m_items[i].image)
+                if (tile.image)
                 {
-                    const bool visible = (i >= first && i < last);
-                    m_items[i].image->SetLoadPriority(visible ? ImageCore::RequestPriority::Visible : ImageCore::RequestPriority::Prefetch);
+                    tile.image->SetLoadPriority(visible.Contains(tile.index) ? ImageCore::RequestPriority::Visible : ImageCore::RequestPriority::Prefetch);
                 }
             }
         }
@@ -1131,9 +1164,10 @@ namespace
             RebuildThumbList(*vp);
 
             // Select/apply exact match if present.
-            for (size_t i = 0; i < m_items.size(); ++i)
+            for (size_t i = 0; i < ThumbItemCount(); ++i)
             {
-                if (m_items[i].kind == ThumbItemKind::Image && m_items[i].path == *vp)
+                const ThumbModelEntry& item = m_thumbModel.At(i);
+                if (item.kind == ThumbItemKind::Image && item.path == *vp)
                 {
                     SelectItemByIndex(i);
                     return;
@@ -1141,9 +1175,9 @@ namespace
             }
 
             // Fallback: show first image in folder.
-            for (size_t i = 0; i < m_items.size(); ++i)
+            for (size_t i = 0; i < ThumbItemCount(); ++i)
             {
-                if (m_items[i].kind == ThumbItemKind::Image)
+                if (m_thumbModel.At(i).kind == ThumbItemKind::Image)
                 {
                     SelectItemByIndex(i);
                     return;
@@ -1337,18 +1371,19 @@ namespace
                 }
             }
 
-            for (auto& item : m_items)
+            // Tiles that are bound later get the new size from the materialize context.
+            for (const ThumbTile& tile : m_thumbTiles.Tiles())
             {
-                if (item.imageTile)
+                if (tile.imageTile)
                 {
                     // Use variable width based on aspect ratio
-                    item.imageTile->SetFixedHeight(m_thumbH);
+                    tile.imageTile->SetFixedHeight(m_thumbH);
                 }
-                if (item.navTile)
+                if (tile.navTile)
                 {
                     // Navigation tiles remain square
-                    item.navTile->SetFixedSize({ m_thumbW, m_thumbH });
-                    item.navTile->Invalidate();
+                    tile.navTile->SetFixedSize({ m_thumbW, m_thumbH });
+                    tile.navTile->Invalidate();
                 }
             }
             RebuildThumbLayout();
@@ -1486,7 +1521,7 @@ namespace
         // Command domain: selection/navigation.
         void BrowserCmdActivateSelected() override
         {
-            if (!m_items.empty() && m_selectedIndex < m_items.size())
+            if (m_selectedIndex < ThumbItemCount())
             {
                 ActivateSelected();
             }
@@ -1494,14 +1529,14 @@ namespace
 
         void BrowserCmdSelectPrevious() override
         {
-            const size_t cur = (m_selectedIndex < m_items.size()) ? m_selectedIndex : 0;
+            const size_t cur = CurrentThumbSelectionIndex();
             const size_t next = (cur == 0) ? 0 : (cur - 1);
             SelectItemByIndex(next);
         }
 
         void BrowserCmdSelectNext() override
         {
-            const size_t cur = (m_selectedIndex < m_items.size()) ? m_selectedIndex : 0;
+            const size_t cur = CurrentThumbSelectionIndex();
             SelectItemByIndex(cur + 1);
         }
 
@@ -1512,16 +1547,16 @@ namespace
 
         void BrowserCmdSelectLast() override
         {
-            if (!m_items.empty())
+            if (ThumbItemCount() > 0)
             {
-                SelectItemByIndex(m_items.size() - 1);
+                SelectItemByIndex(ThumbItemCount() - 1);
             }
         }
 
         void BrowserCmdPagePrevious() override
         {
             const size_t step = PagingStepFromThumbViewport();
-            const size_t cur = (m_selectedIndex < m_items.size()) ? m_selectedIndex : 0;
+            const size_t cur = CurrentThumbSelectionIndex();
             const size_t next = (cur > step) ? (cur - step) : 0;
             SelectItemByIndex(next);
         }
@@ -1529,7 +1564,7 @@ namespace
         void BrowserCmdPageNext() override
         {
             const size_t step = PagingStepFromThumbViewport();
-            const size_t cur = (m_selectedIndex < m_items.size()) ? m_selectedIndex : 0;
+            const size_t cur = CurrentThumbSelectionIndex();
             const size_t next = cur + step;
             SelectItemByIndex(next);
         }
@@ -1762,6 +1797,7 @@ namespace
             if (auto strip = m_thumbPane->StripPanel())
             {
                 strip->SetLayout(&m_thumbLayout);
+                strip->SetTiles(&m_thumbTiles);
             }
 
             rootSplit->OnSplitChanged([this](float)
@@ -2017,11 +2053,12 @@ namespace
 
             ImageBrowserInfoPresenter::Input input {};
             input.activePath = ActiveMainPath();
-            input.hasSelection = (m_selectedIndex < m_items.size());
-            if (input.hasSelection)
+            const ThumbModelEntry* selected = SelectedThumbEntry();
+            input.hasSelection = (selected != nullptr);
+            if (selected != nullptr)
             {
-                input.selectedKind = m_items[m_selectedIndex].kind;
-                input.selectedPath = m_items[m_selectedIndex].path;
+                input.selectedKind = selected->kind;
+                input.selectedPath = selected->path;
             }
             input.currentFolder = m_currentFolder;
             input.hasLoadedInfo = (main != nullptr);
@@ -2060,19 +2097,20 @@ namespace
         void ApplyMainFromIndex(size_t index)
         {
             auto mainImage = ActiveMainImage();
-            if (!mainImage || index >= m_items.size())
+            if (!mainImage || index >= ThumbItemCount())
             {
                 return;
             }
 
-            if (m_items[index].kind != ThumbItemKind::Image)
+            const ThumbModelEntry& item = m_thumbModel.At(index);
+            if (item.kind != ThumbItemKind::Image)
             {
                 return;
             }
 
             mainImage->SetInteractionEnabled(true);
             mainImage->SetLoadingSpinnerEnabled(true);
-            const std::wstring p = m_items[index].path.wstring();
+            const std::wstring p = item.path.wstring();
             // The request is recorded before the load starts: a GPU cache hit
             // presents synchronously inside SetSourceFile and must match it.
             m_paths.RequestImage(p, [&]()
@@ -2088,12 +2126,12 @@ namespace
         ImageBrowserThumbStripController::SelectItemContext MakeThumbSelectContext()
         {
             ImageBrowserThumbStripController::SelectItemContext context {};
-            context.items = &m_items;
+            context.model = &m_thumbModel;
+            context.tiles = &m_thumbTiles;
             context.selectedIndex = &m_selectedIndex;
-            context.selectedFocus = &m_selectedFocus;
             context.ensureSelectionVisible = [this]()
             {
-                if (m_thumbPane == nullptr || m_selectedIndex >= m_items.size() || m_thumbKeepScrollOnSelect)
+                if (m_thumbPane == nullptr || m_selectedIndex >= ThumbItemCount() || m_thumbKeepScrollOnSelect)
                 {
                     return;
                 }
@@ -2117,7 +2155,7 @@ namespace
             {
                 ApplyMainFromIndex(idx);
             };
-            context.applyNonImageSelection = [this](const ThumbItem& selectedItem)
+            context.applyNonImageSelection = [this](const ThumbModelEntry& selectedItem)
             {
                 if (m_mainImage)
                 {
@@ -2179,9 +2217,10 @@ namespace
             }
 
             // If we already have this file selected, do nothing.
-            if (m_selectedIndex < m_items.size() && m_items[m_selectedIndex].kind == ThumbItemKind::Image)
+            const ThumbModelEntry* selected = SelectedThumbEntry();
+            if (selected != nullptr && selected->kind == ThumbItemKind::Image)
             {
-                const std::wstring curLower = CommonUtil::ToLower(m_items[m_selectedIndex].path.filename().wstring());
+                const std::wstring curLower = CommonUtil::ToLower(selected->path.filename().wstring());
                 if (!curLower.empty() && curLower == fileNameLower)
                 {
                     return;
@@ -2190,14 +2229,15 @@ namespace
 
             // Find same filename among image items in current directory.
             size_t match = static_cast<size_t>(-1);
-            for (size_t i = 0; i < m_items.size(); ++i)
+            for (size_t i = 0; i < ThumbItemCount(); ++i)
             {
-                if (m_items[i].kind != ThumbItemKind::Image)
+                const ThumbModelEntry& item = m_thumbModel.At(i);
+                if (item.kind != ThumbItemKind::Image)
                 {
                     continue;
                 }
 
-                const std::wstring nameLower = CommonUtil::ToLower(m_items[i].path.filename().wstring());
+                const std::wstring nameLower = CommonUtil::ToLower(item.path.filename().wstring());
                 if (!nameLower.empty() && nameLower == fileNameLower)
                 {
                     match = i;
@@ -2297,21 +2337,22 @@ namespace
 
         void ActivateSelectedImpl()
         {
-            if (m_selectedIndex >= m_items.size())
+            const ThumbModelEntry* item = SelectedThumbEntry();
+            if (item == nullptr)
             {
                 return;
             }
 
-            const ThumbItem& item = m_items[m_selectedIndex];
-            if (item.kind == ThumbItemKind::Image)
+            if (item->kind == ThumbItemKind::Image)
             {
                 ApplyMainFromIndex(m_selectedIndex);
                 return;
             }
 
-            if (item.kind == ThumbItemKind::Up || item.kind == ThumbItemKind::Folder)
+            if (item->kind == ThumbItemKind::Up || item->kind == ThumbItemKind::Folder)
             {
-                NavigateToFolder(item.path);
+                const Floar::VirtualPath folder = item->path;   // the rebuild replaces the model's items
+                NavigateToFolder(folder);
             }
         }
 
@@ -2362,7 +2403,7 @@ namespace
             FD2D::Backplate* bp = BackplateRef();
             if (bp == nullptr)
             {
-                RebuildThumbListImmediate(preferSelectPath, nullptr);
+                RebuildThumbListImmediate(preferSelectPath, true);
                 return;
             }
 
@@ -2386,8 +2427,11 @@ namespace
             FIC2_LOG_INFO("[ThumbLoad] Started loading folder '{}' (browser={})",
                 AppLog::ToUtf8(folder.wstring()),
                 AppLog::ToUtf8(browserName));
-            ResetThumbModel(folder, showNavItems);
+            // The strip keeps showing the committed items until the first
+            // progressive update commits the new listing.
+            m_thumbModel.StageReset(folder, showNavItems, ImageFilterForThumbModel());
             m_progressivePreferSelectPath = preferSelectPath;
+            m_thumbPreferKey.clear();
             m_progressiveUiDirty = false;
             m_progressiveLoadCompleted = false;
             m_progressiveLastApplyMs = 0;
@@ -2426,6 +2470,7 @@ namespace
                 }
 
                 anyAccepted = true;
+                ResolveThumbPreferKey(m_progressivePreferSelectPath, chunk.batch);
                 (void)ImageBrowserAsyncThumbLoader::ApplyChunkToProgressive(
                     chunk,
                     m_thumbModel,
@@ -2500,12 +2545,12 @@ namespace
             FIC2_TIMER_START(t_apply);
             RebuildThumbListImmediate(
                 m_progressivePreferSelectPath,
-                &m_thumbModel,
+                false,
                 applySelection);
             const auto applyMs = FIC2_ELAPSED_MS(t_apply);
             FIC2_LOG_INFO(
                 "[ThumbLoad] ApplyProgressiveThumbUpdate: {} items in {}ms (finalize={}, entriesAccumulated={})",
-                m_items.size(), applyMs, m_progressiveLoadCompleted, m_thumbModel.ListedCount());
+                ThumbItemCount(), applyMs, m_progressiveLoadCompleted, m_thumbModel.ListedCount());
 
             m_progressiveUiDirty = false;
             m_progressiveLastApplyMs = CommonUtil::NowMs();
@@ -2514,65 +2559,75 @@ namespace
                 m_thumbListLoading = false;
                 const unsigned long long totalMs = CommonUtil::NowMs() - m_progressiveStartMs;
                 FIC2_LOG_INFO("[ThumbLoad] Progressive load complete: {} items in {}ms total",
-                    m_items.size(), totalMs);
+                    ThumbItemCount(), totalMs);
             }
         }
 
-        void ResetThumbModel(const Floar::VirtualPath& folder, bool showNavItems)
+        static ThumbItemModel::ImageFilter ImageFilterForThumbModel()
         {
-            m_thumbModel.Reset(folder, showNavItems, [](const Floar::VirtualPath& p)
+            return [](const Floar::VirtualPath& p)
             {
                 return ImageAwareVfs::IsImageFile(p);
-            });
+            };
         }
 
-        // `model` holds the (progressively) listed items; without one, the
-        // current folder is listed synchronously into m_thumbModel first.
+        // Rebuilds the strip from m_thumbModel. With `listSynchronously` the
+        // current folder is listed into it first; otherwise the progressively
+        // staged listing is committed.
         void RebuildThumbListImmediate(
             const Floar::VirtualPath& preferSelectPath,
-            const ThumbItemModel* model,
+            bool listSynchronously,
             bool applySelection = true)
         {
             if (!m_thumbPane || !m_thumbPane->Panel())
             {
                 return;
             }
-            if (model == nullptr)
+
+            // The anchor and the previous selection refer to the items shown
+            // so far, before the model's display order changes.
+            CaptureThumbAnchor();
+            const std::wstring previousSelectedKey = ThumbItemKey(m_selectedIndex);
+            if (listSynchronously)
             {
-                ResetThumbModel(m_currentFolder, m_showNavItems);
+                m_thumbModel.Reset(m_currentFolder, m_showNavItems, ImageFilterForThumbModel());
+                m_thumbPreferKey.clear();
                 if (!m_currentFolder.hostPath.empty())
                 {
-                    (void)m_thumbModel.Merge(Floar::VirtualFileSystem::ListDirectory(m_currentFolder));
+                    const auto listing = Floar::VirtualFileSystem::ListDirectory(m_currentFolder);
+                    ResolveThumbPreferKey(preferSelectPath, listing);
+                    (void)m_thumbModel.Merge(listing);
                 }
-                model = &m_thumbModel;
+            }
+            else
+            {
+                (void)m_thumbModel.Commit();
             }
 
             FIC2_TIMER_START(t_rebuild);
 
-            CaptureThumbAnchor();
-            const std::wstring previousSelectedKey = ThumbItemKey(m_selectedIndex);
-            m_items.clear();
             m_typeSelectQuery.clear();
             m_selectedIndex = static_cast<size_t>(-1);
-            m_selectedFocus.reset();
 
-            auto context = MakeThumbRebuildContext(preferSelectPath, model);
-            FIC2_LOG_STEP(t_rebuild, "[RebuildImmediate] MakeThumbRebuildContext");
-
-            auto result = m_thumbStripController.RebuildList(context);
-            FIC2_LOG_STEP(t_rebuild, "[RebuildImmediate] ThumbStripController::RebuildList");
+            // The layout model first (extents and key index), then the tiles of
+            // the materialized range with the resolved selection highlighted.
             RebuildThumbLayout();
+            const bool hasItems = ThumbItemCount() > 0;
+            const size_t selectIndex = PreferredThumbIndex(preferSelectPath);
+            FIC2_LOG_STEP(t_rebuild, "[RebuildImmediate] RebuildThumbLayout");
+            MaterializeThumbTiles(selectIndex);
+            FIC2_LOG_STEP(t_rebuild, "[RebuildImmediate] MaterializeThumbTiles");
             // The anchor survives a progressive merge by key; a different (or
             // newly resolved) selection is centered instead.
             const bool centerSelection = ThumbStripLayout::CenterAfterRebuild(
-                previousSelectedKey, ThumbItemKey(result.selectIndex), result.hasItems);
+                previousSelectedKey, ThumbItemKey(selectIndex), hasItems);
             if (centerSelection)
             {
                 m_thumbCenterPending = true;
             }
 
             // Restore selection without scrolling yet; layout hasn't been updated.
-            if (!result.hasItems)
+            if (!hasItems)
             {
                 if (applySelection)
                 {
@@ -2592,30 +2647,15 @@ namespace
                 // Re-applying the same selection (the final progressive update)
                 // must not re-center: the user may have scrolled away.
                 m_thumbKeepScrollOnSelect = !centerSelection;
-                SelectItemByIndex(result.selectIndex);
+                SelectItemByIndex(selectIndex);
                 m_thumbKeepScrollOnSelect = false;
             }
             else
             {
-                // During progressive async updates, keep a stable selected index/focus so keyboard
-                // navigation does not reset to the first item between chunks.
-                m_selectedIndex = result.selectIndex;
-                if (m_selectedIndex < m_items.size())
-                {
-                    m_selectedFocus = m_items[m_selectedIndex].focus;
-                    if (m_items[m_selectedIndex].image)
-                    {
-                        m_items[m_selectedIndex].image->SetSelected(true);
-                    }
-                    if (m_items[m_selectedIndex].navTile)
-                    {
-                        m_items[m_selectedIndex].navTile->SetSelected(true);
-                    }
-                }
-                else
-                {
-                    m_selectedFocus.reset();
-                }
+                // During progressive async updates, keep a stable selected index so keyboard
+                // navigation does not reset to the first item between chunks (its tile was
+                // highlighted when bound).
+                m_selectedIndex = selectIndex;
             }
 
             if (BackplateRef() != nullptr)
@@ -2625,17 +2665,56 @@ namespace
             }
         }
 
-        ImageBrowserThumbStripController::RebuildListContext MakeThumbRebuildContext(
-            const Floar::VirtualPath& preferSelectPath,
-            const ThumbItemModel* model)
+        // The display index of `preferSelectPath`, or 0 when it is not listed.
+        // A lookup in the layout's key index, not a scan of the folder; a path
+        // spelled differently from the listing was matched when its entry was
+        // listed (ResolveThumbPreferKey).
+        size_t PreferredThumbIndex(const Floar::VirtualPath& preferSelectPath) const
         {
-            ImageBrowserThumbStripController::RebuildListContext context {};
+            if (preferSelectPath.empty())
+            {
+                return 0;
+            }
+            auto it = m_thumbItemIndexByKey.find(ThumbItemModel::LookupKeyFor(preferSelectPath));
+            if (it == m_thumbItemIndexByKey.end() && !m_thumbPreferKey.empty())
+            {
+                it = m_thumbItemIndexByKey.find(m_thumbPreferKey);
+            }
+            return (it != m_thumbItemIndexByKey.end()) ? it->second : 0;
+        }
+
+        // Remembers the lookup key of the listed entry that is `preferSelectPath`
+        // (compared as paths, as the strip always has), once per listing.
+        void ResolveThumbPreferKey(
+            const Floar::VirtualPath& preferSelectPath,
+            const std::vector<Floar::VirtualFileEntry>& entries)
+        {
+            if (preferSelectPath.empty() || !m_thumbPreferKey.empty())
+            {
+                return;
+            }
+            for (const auto& entry : entries)
+            {
+                if (CommonUtil::PathEqualsInsensitive(
+                        entry.path.hostPath, entry.path.archiveInnerPath,
+                        preferSelectPath.hostPath, preferSelectPath.archiveInnerPath))
+                {
+                    m_thumbPreferKey = ThumbItemModel::LookupKeyFor(entry.path);
+                    return;
+                }
+            }
+        }
+
+        ImageBrowserThumbStripController::MaterializeContext MakeThumbMaterializeContext(size_t selectedIndex)
+        {
+            ImageBrowserThumbStripController::MaterializeContext context {};
             context.panel = (m_thumbPane != nullptr) ? m_thumbPane->Panel() : nullptr;
-            context.items = &m_items;
+            context.tiles = &m_thumbTiles;
             context.thumbW = m_thumbW;
             context.thumbH = m_thumbH;
-            context.model = model;
-            context.preferSelectPath = preferSelectPath;
+            context.model = &m_thumbModel;
+            context.range = MaterializedThumbRange();
+            context.selectedIndex = selectedIndex;
             context.onSelectIndex = [this](size_t index)
             {
                 RequestFocus();
@@ -2650,14 +2729,6 @@ namespace
             context.onImageAspect = [this](const std::wstring& key, float aspect)
             {
                 OnThumbImageAspect(key, aspect);
-            };
-            context.pathEquals = [](const Floar::VirtualPath& a, const Floar::VirtualPath& b)
-            {
-                return CommonUtil::PathEqualsInsensitive(
-                    a.hostPath,
-                    a.archiveInnerPath,
-                    b.hostPath,
-                    b.archiveInnerPath);
             };
             context.makeStableName = [this](const wchar_t* prefix, const Floar::VirtualPath& p)
             {
@@ -3105,11 +3176,10 @@ namespace
         // Selected / requested / displayed paths (single owner; see ImageBrowserPathState.h).
         ImageBrowserPathState m_paths {};
 
-        std::shared_ptr<FD2D::Wnd> m_selectedFocus {};
         ImageBrowserThumbStripController m_thumbStripController {};
         std::shared_ptr<ImageBrowserThumbnailPane> m_thumbPane {};
-        std::vector<ThumbItem> m_items {};
-        size_t m_selectedIndex { static_cast<size_t>(-1) };
+        ThumbTileSet m_thumbTiles {};   // tiles of MaterializedThumbRange()
+        size_t m_selectedIndex { static_cast<size_t>(-1) };   // model index; its tile (if any) is highlighted
         std::wstring m_typeSelectQuery {};
         unsigned long long m_typeSelectLastInputMs { 0 };
         ULONGLONG m_lastKeyNavMs { 0 };
@@ -3119,8 +3189,9 @@ namespace
         std::atomic<unsigned long long> m_thumbListRequestId { 0 };
         bool m_thumbListLoading { false };
         Floar::VirtualPath m_progressivePreferSelectPath {};
-        ThumbItemModel m_thumbModel {};   // listed items of m_currentFolder
-        ThumbStripLayout m_thumbLayout {};  // geometry of m_items (see ApplyThumbScrollAfterArrange)
+        std::wstring m_thumbPreferKey {};   // see ResolveThumbPreferKey
+        ThumbItemModel m_thumbModel {};   // the strip's items (committed); a progressive listing is staged in it
+        ThumbStripLayout m_thumbLayout {};  // geometry of m_thumbModel's items (see ApplyThumbScrollAfterArrange)
         std::unordered_map<std::wstring, size_t> m_thumbItemIndexByKey {};
         ThumbScrollAnchor m_thumbAnchor {};
         bool m_thumbCenterPending { false };
