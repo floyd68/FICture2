@@ -142,6 +142,16 @@ HRESULT ImageBrowserThumbImage::SetSourceFile(const std::wstring& filePath)
 
 void ImageBrowserThumbImage::Recycle()
 {
+    // A payload decoded while the tile was never rendered (an offscreen
+    // prefetch tile) is retained instead of being dropped with the request.
+    if (m_payloadStore)
+    {
+        const ImageAsyncBinding::Payload staged = m_binding.TakePending();
+        if (!m_filePath.empty() && staged.sourcePath == m_filePath)
+        {
+            m_payloadStore->Retain(staged);
+        }
+    }
     m_binding.Cancel();
     m_binding.ClearFailure();
     m_filePath.clear();

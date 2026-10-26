@@ -36,8 +36,9 @@ public:
     HRESULT SetSourceFile(const std::wstring& filePath);
     // Prepares the control for another file (tile recycling): cancels the
     // request in flight (the binding's generation drops its late completion),
-    // and releases the bitmap, the CPU payload reference and the selection.
-    // The retained payload in the store is kept.
+    // and releases the bitmap, the CPU payload reference and the selection. A
+    // payload decoded but not yet presented is retained in the payload store
+    // first; retained payloads are kept.
     void Recycle();
 
     void SetSelected(bool selected);

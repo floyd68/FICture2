@@ -359,16 +359,22 @@ FIC2_TEST(ThumbStripTiles_ScrollingBackToALoadedItemIssuesNoNewRequest)
     }
     FIC2_CHECK(strip.payloads->Count() == 3);
 
+    // A prefetch tile offscreen (never rendered) finishes decoding too.
+    strip.Materialize({ 3, 7 });
+    strip.decodes.Complete(strip.decodes.LatestThumbnailFor(strip.SourceOf(6)), S_OK,
+        ThumbTestSupport::MakeBgraImage(4, 2));
+
     // Out of the range: the tiles are released ...
     strip.Materialize({ 9, 12 });
     FIC2_CHECK(strip.tiles.Find(4) == nullptr);
+    FIC2_CHECK(strip.payloads->Count() == 4);   // item 6's payload is retained, not dropped
     const size_t requestsAway = strip.decodes.RequestCount();
-    FIC2_CHECK(requestsAway == 6);
+    FIC2_CHECK(requestsAway == 7);
 
     // ... and back: no new request; the next render rebuilds the bitmaps.
-    strip.Materialize({ 3, 6 });
+    strip.Materialize({ 3, 7 });
     FIC2_CHECK(strip.decodes.RequestCount() == requestsAway);
-    for (size_t index = 3; index < 6; ++index)
+    for (size_t index = 3; index < 7; ++index)
     {
         FIC2_CHECK(strip.decodes.ThumbnailRequestsFor(strip.SourceOf(index)) == 1);
         auto image = strip.tiles.Find(index)->image;
