@@ -4,6 +4,7 @@
 add_executable(FICture2Tests
     TestHarness.h
     TestMain.cpp
+    BackplateTestAccess.h
     AppLogTests.cpp
     GpuPresentationTests.cpp
     IdleRenderingTests.cpp
