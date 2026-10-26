@@ -98,6 +98,17 @@ void ThumbImageTile::SetSourceFile(const std::wstring& path)
     }
 }
 
+void ThumbImageTile::Recycle()
+{
+    if (m_image)
+    {
+        m_image->Recycle();
+    }
+    m_lastBitmapSize = D2D1::SizeF(0.0f, 0.0f);   // the next bitmap reports its aspect
+    m_onClick = {};
+    m_onAspectChanged = {};
+}
+
 void ThumbImageTile::SetSelected(bool selected)
 {
     if (m_image)

@@ -52,7 +52,7 @@ void ImageBrowserThumbStripController::SetTileSelected(const ThumbTile& tile, bo
     }
 }
 
-void ImageBrowserThumbStripController::MaterializeTiles(const MaterializeContext& context) const
+void ImageBrowserThumbStripController::MaterializeTiles(const MaterializeContext& context)
 {
     if (!context.panel || context.tiles == nullptr || context.model == nullptr)
     {
@@ -73,12 +73,18 @@ void ImageBrowserThumbStripController::MaterializeTiles(const MaterializeContext
     ThumbIndexRange range { (std::min)(context.range.first, count), (std::min)(context.range.last, count) };
     range.last = (std::max)(range.first, range.last);
 
-    std::vector<ThumbTile> tiles;
-    tiles.reserve(range.Size());
+    // Child names are stable per item path, so a tile that stays in the range
+    // keeps its window.
     std::vector<std::wstring> desiredOrder;
     desiredOrder.reserve(range.Size());
-    std::unordered_set<std::wstring> desiredNames;
-    desiredNames.reserve(range.Size());
+    for (size_t index = range.first; index < range.last; ++index)
+    {
+        const ThumbModelEntry& entry = model.At(index);
+        const wchar_t* prefix = (entry.kind == ThumbItemKind::Image) ? L"thumb_img"
+            : (entry.kind == ThumbItemKind::Up) ? L"nav_up" : L"nav_folder";
+        desiredOrder.push_back(makeStableName ? makeStableName(prefix, entry.path) : std::wstring(prefix));
+    }
+    const std::unordered_set<std::wstring> desiredNames(desiredOrder.begin(), desiredOrder.end());
 
     auto getExistingChild = [panel](const std::wstring& name) -> std::shared_ptr<FD2D::Wnd>
     {
@@ -91,24 +97,67 @@ void ImageBrowserThumbStripController::MaterializeTiles(const MaterializeContext
         return it->second;
     };
 
+    // Release the tiles that left the range first, so their image tiles can be
+    // reused below. Releasing cancels a request still queued or running.
+    {
+        std::vector<std::wstring> toRemove;
+        for (const auto& kv : panel->Children())
+        {
+            if (desiredNames.find(kv.first) == desiredNames.end())
+            {
+                toRemove.push_back(kv.first);
+            }
+        }
+        for (const auto& name : toRemove)
+        {
+            auto imageTile = std::dynamic_pointer_cast<ThumbImageTile>(getExistingChild(name));
+            (void)panel->RemoveChild(name);
+            if (imageTile)
+            {
+                imageTile->Recycle();
+                if (m_recycled.size() < kMaxRecycledTiles)
+                {
+                    m_recycled.push_back(std::move(imageTile));
+                }
+            }
+        }
+    }
+
+    std::vector<ThumbTile> tiles;
+    tiles.reserve(range.Size());
+
     for (size_t index = range.first; index < range.last; ++index)
     {
         const ThumbModelEntry& entry = model.At(index);
+        const std::wstring& name = desiredOrder[index - range.first];
         ThumbTile bound {};
         bound.index = index;
         bound.kind = entry.kind;
-        std::wstring name;
 
         if (entry.kind == ThumbItemKind::Image)
         {
             const Floar::VirtualPath& p = entry.path;
-            name = makeStableName ? makeStableName(L"thumb_img", p) : L"thumb_img";
+            const auto priority = context.visible.Contains(index)
+                ? ImageCore::RequestPriority::Visible
+                : ImageCore::RequestPriority::Prefetch;
             auto thumbTile = std::dynamic_pointer_cast<ThumbImageTile>(getExistingChild(name));
             if (!thumbTile)
             {
                 (void)panel->RemoveChild(name);
-                thumbTile = std::make_shared<ThumbImageTile>(name);
+                if (!m_recycled.empty())
+                {
+                    thumbTile = std::move(m_recycled.back());
+                    m_recycled.pop_back();
+                    thumbTile->SetName(name);
+                }
+                else
+                {
+                    thumbTile = std::make_shared<ThumbImageTile>(name);
+                }
+                // Set before the source, so the request goes out at this priority
+                // (or not at all, when a retained payload is shown).
                 thumbTile->ImageWnd()->SetPayloadStore(context.payloads);
+                thumbTile->ImageWnd()->SetLoadPriority(priority);
                 thumbTile->SetFixedHeight(thumbH);
                 thumbTile->SetSourceFile(p.wstring());
                 thumbTile->SetCaption(p.filename().wstring());
@@ -116,6 +165,7 @@ void ImageBrowserThumbStripController::MaterializeTiles(const MaterializeContext
             }
             else
             {
+                thumbTile->ImageWnd()->SetLoadPriority(priority);
                 thumbTile->SetFixedHeight(thumbH);
             }
 
@@ -142,8 +192,6 @@ void ImageBrowserThumbStripController::MaterializeTiles(const MaterializeContext
         {
             const bool isUp = (entry.kind == ThumbItemKind::Up);
             const Floar::VirtualPath& dir = entry.path;
-            const wchar_t* prefix = isUp ? L"nav_up" : L"nav_folder";
-            name = makeStableName ? makeStableName(prefix, dir) : prefix;
             auto tile = std::dynamic_pointer_cast<ThumbNavTile>(getExistingChild(name));
             if (!tile)
             {
@@ -200,23 +248,7 @@ void ImageBrowserThumbStripController::MaterializeTiles(const MaterializeContext
         // Selection is model state: a tile shows it when it is bound.
         SetTileSelected(bound, index == context.selectedIndex);
 
-        desiredOrder.push_back(name);
-        desiredNames.emplace(std::move(name));
         tiles.push_back(std::move(bound));
-    }
-
-    std::vector<std::wstring> toRemove;
-    for (const auto& kv : panel->Children())
-    {
-        if (desiredNames.find(kv.first) == desiredNames.end())
-        {
-            toRemove.push_back(kv.first);
-        }
-    }
-
-    for (const auto& name : toRemove)
-    {
-        (void)panel->RemoveChild(name);
     }
 
     (void)panel->ReorderChildren(desiredOrder);

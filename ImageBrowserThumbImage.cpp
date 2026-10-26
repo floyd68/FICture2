@@ -140,6 +140,28 @@ HRESULT ImageBrowserThumbImage::SetSourceFile(const std::wstring& filePath)
     return S_OK;
 }
 
+void ImageBrowserThumbImage::Recycle()
+{
+    m_binding.Cancel();
+    m_binding.ClearFailure();
+    m_filePath.clear();
+    m_loadedFilePath.clear();
+    m_request.source.clear();
+    m_cpuPayload = {};
+    m_needsCpuReupload = false;
+    if (m_texture)
+    {
+        m_texture->Clear();
+    }
+    m_bitmapStamp = {};
+    m_selected = false;
+    m_selectionAnimStartMs = 0;
+    if (m_spinner)
+    {
+        m_spinner->SetActive(false);
+    }
+}
+
 void ImageBrowserThumbImage::SetSelected(bool selected)
 {
     if (m_selected == selected)

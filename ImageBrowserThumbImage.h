@@ -34,6 +34,11 @@ public:
     // from it instead of being requested again. Set before SetSourceFile.
     void SetPayloadStore(std::shared_ptr<ThumbPayloadStore> store) { m_payloadStore = std::move(store); }
     HRESULT SetSourceFile(const std::wstring& filePath);
+    // Prepares the control for another file (tile recycling): cancels the
+    // request in flight (the binding's generation drops its late completion),
+    // and releases the bitmap, the CPU payload reference and the selection.
+    // The retained payload in the store is kept.
+    void Recycle();
 
     void SetSelected(bool selected);
     bool Selected() const { return m_selected; }

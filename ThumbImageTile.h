@@ -29,6 +29,9 @@ public:
     void SetCaption(const std::wstring& text);
 
     void SetSourceFile(const std::wstring& path);
+    // Releases the bound item (see ImageBrowserThumbImage::Recycle) and the
+    // handlers, so the tile can be bound to another item.
+    void Recycle();
     void SetSelected(bool selected);
     void SetOnClick(ClickHandler handler);
     void SetOnAspectChanged(AspectHandler handler) { m_onAspectChanged = std::move(handler); }
