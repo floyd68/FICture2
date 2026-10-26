@@ -27,6 +27,7 @@ add_executable(FICture2Tests
     ListingPixelTests.cpp
     TestAssets.rc
     IpcOpenQueueTests.cpp
+    InfoPresenterTests.cpp
     ${PROJECT_SOURCE_DIR}/AppLog.cpp
     ${PROJECT_SOURCE_DIR}/ImageGpuResourceCache.cpp
     ${PROJECT_SOURCE_DIR}/ImageAlphaPresentation.cpp
@@ -109,6 +110,7 @@ if(MSVC)
 endif()
 
 add_test(NAME FICture2.IpcOpenQueue COMMAND FICture2Tests IpcOpenQueue_)
+add_test(NAME FICture2.InfoPresenter COMMAND FICture2Tests InfoPresenter_)
 add_test(NAME FICture2.ImageAsyncBinding COMMAND FICture2Tests ImageAsyncBinding_)
 add_test(NAME FICture2.PathState COMMAND FICture2Tests PathState_)
 add_test(NAME FICture2.GpuPresentation COMMAND FICture2Tests GpuPresentation_)
