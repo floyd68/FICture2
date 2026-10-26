@@ -86,6 +86,11 @@ public:
 
     static void SetTileSelected(const ThumbTile& tile, bool selected);
 
+    // Admits every bound image tile's completed decode into the payload cache
+    // (ImageBrowserThumbImage::AdmitCompletedPayload), rendered or not, so
+    // decoded payloads are accounted from the first frame after they arrive.
+    static void AdmitCompletedPayloads(const ThumbTileSet& tiles);
+
     // Released image tiles kept for reuse, at most this many.
     static constexpr size_t kMaxRecycledTiles = 32;
     size_t RecycledTileCount() const { return m_recycled.size(); }

@@ -29,10 +29,13 @@
 // returns only the final scaled size, so this is the only way to tell a
 // box-limited decode from a source that has no more pixels.
 //
-// Ownership and bounds: a tile that shows a payload holds a Pin on it, and the
-// payload is the tile's only CPU copy (device-loss recovery re-creates the
-// bitmap from it). Every byte reachable through a pin or an entry is accounted
-// in TotalBytes():
+// Ownership and bounds: a tile holds a Pin on its item's payload from the
+// first frame after the decode completes (whether or not the tile renders:
+// offscreen prefetch tiles are admitted too) until it is recycled. The
+// payload is the tile's only CPU copy; its bitmap and device-loss recovery
+// are both created from it. Until that frame a completed decode is staged in
+// its tile's binding, at most one per bound tile. Every byte reachable
+// through a pin or an entry is accounted in TotalBytes():
 //   - evictable entries (not pinned) form the LRU;
 //   - pinned entries are never evicted while pinned;
 //   - held payloads that are not entries (unknown identity, oversize) count

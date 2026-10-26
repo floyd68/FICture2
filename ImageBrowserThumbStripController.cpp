@@ -52,6 +52,17 @@ void ImageBrowserThumbStripController::SetTileSelected(const ThumbTile& tile, bo
     }
 }
 
+void ImageBrowserThumbStripController::AdmitCompletedPayloads(const ThumbTileSet& tiles)
+{
+    for (const ThumbTile& tile : tiles.Tiles())
+    {
+        if (tile.image)
+        {
+            (void)tile.image->AdmitCompletedPayload();
+        }
+    }
+}
+
 void ImageBrowserThumbStripController::MaterializeTiles(const MaterializeContext& context)
 {
     if (!context.panel || context.tiles == nullptr || context.model == nullptr)

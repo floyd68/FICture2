@@ -567,6 +567,7 @@ namespace
         ImageBrowserThumbStripController controller {};
         size_t views { 0 };
         size_t maxTiles { 0 };
+        ThumbIndexRange visible {};   // of the last View
 
         explicit VirtualStrip(ThumbPayloadCache::Limits limits = ThumbPayloadCache::kDefaultLimits)
             : payloads(std::make_shared<ThumbPayloadCache>(limits))
@@ -602,6 +603,7 @@ namespace
         {
             const auto [first, last] = layout.Range(left, left + kViewport);
             const auto [mFirst, mLast] = layout.MaterializeRange(left, left + kViewport);
+            visible = { first, last };
             ImageBrowserThumbStripController::MaterializeContext context {};
             context.panel = panel;
             context.tiles = &tiles;
@@ -726,8 +728,24 @@ FIC2_TEST(ThumbStripTiles_PayloadMemoryStaysBoundedWhileScrolling)
 
     size_t maxTotal = 0;
     size_t maxPinned = 0;
-    // Shows the view, completes every outstanding request and presents every
-    // bound tile, then checks the bounds.
+    // Every decoded payload handed out, to count the bytes still alive.
+    std::vector<std::weak_ptr<std::vector<uint8_t>>> decoded;
+    const auto liveBytes = [&]()
+    {
+        size_t bytes = 0;
+        for (const auto& weak : decoded)
+        {
+            if (const auto blocks = weak.lock())
+            {
+                bytes += blocks->size();
+            }
+        }
+        return bytes;
+    };
+    // Shows the view and completes every outstanding request; then, as a
+    // browser frame does, admits the completed decodes of all bound tiles and
+    // renders only the tiles on screen (offscreen tiles are culled), and
+    // checks the bounds.
     const auto settle = [&](float left)
     {
         strip.View(left);
@@ -735,13 +753,16 @@ FIC2_TEST(ThumbStripTiles_PayloadMemoryStaysBoundedWhileScrolling)
         {
             if (!request.canceled && !request.completed)
             {
-                strip.decodes.Complete(request.handle, S_OK, ThumbTestSupport::MakeBgraImage(kSide, kSide));
+                ImageCore::DecodedImage image = ThumbTestSupport::MakeBgraImage(kSide, kSide);
+                decoded.push_back(image.blocks);
+                strip.decodes.Complete(request.handle, S_OK, std::move(image));
             }
         }
+        ImageBrowserThumbStripController::AdmitCompletedPayloads(strip.tiles);
         size_t bitmaps = 0;
         for (const ThumbTile& tile : strip.tiles.Tiles())
         {
-            if (tile.image)
+            if (tile.image && strip.visible.Contains(tile.index))
             {
                 FIC2_REQUIRE(SUCCEEDED(canvas.Render(*tile.image)));
                 bitmaps += (tile.image->GetBitmapSize().width > 0.0f) ? 1 : 0;
@@ -750,6 +771,8 @@ FIC2_TEST(ThumbStripTiles_PayloadMemoryStaysBoundedWhileScrolling)
         const ThumbPayloadCache::Stats stats = strip.payloads->GetStats();
         const size_t tiles = strip.tiles.Range().Size();
         const size_t pinned = stats.pinnedBytes + stats.heldBytes;
+        // Every live payload, presented or not, is accounted.
+        FIC2_CHECK(liveBytes() <= strip.payloads->TotalBytes());
         FIC2_CHECK(bitmaps <= tiles);
         FIC2_CHECK(pinned <= tiles * kPayloadBytes);
         FIC2_CHECK(strip.payloads->TotalBytes() <= (std::max)(limits.maxBytes, pinned));
@@ -938,4 +961,108 @@ FIC2_TEST(ThumbStripTiles_UnknownIdentityItemsAreNeverCached)
     strip.Materialize({ 3, 5 });
     FIC2_CHECK(strip.decodes.ThumbnailRequestsFor(strip.SourceOf(3)) == 2);
     FIC2_CHECK(strip.decodes.ThumbnailRequestsFor(strip.SourceOf(4)) == 2);
+}
+
+// Completed decodes are cached and accounted when the frame admits them, not
+// when (or if) their tiles render: offscreen prefetch tiles are culled from
+// rendering, yet their payloads are alive. With the cache already full, the
+// admitted payloads are pinned and older unpinned entries make room. During
+// a replacement (the file listed again with a new identity) the old payload
+// and the new one are both accounted while the old picture is still shown.
+FIC2_TEST(ThumbStripTiles_CompletedPrefetchPayloadsAreAccountedWithoutRendering)
+{
+    ThumbTestSupport::ComScope com;
+    ThumbTestSupport::Canvas canvas;
+    FIC2_REQUIRE(canvas.Create(64, 64));
+    constexpr size_t kBytes = 8 * 8 * 4;   // 256
+
+    std::vector<std::weak_ptr<std::vector<uint8_t>>> decoded;
+    const auto liveBytes = [&]()
+    {
+        size_t bytes = 0;
+        for (const auto& weak : decoded)
+        {
+            if (const auto blocks = weak.lock())
+            {
+                bytes += blocks->size();
+            }
+        }
+        return bytes;
+    };
+    const auto complete = [&](Strip& strip, size_t index, uint32_t width, uint32_t height)
+    {
+        ImageCore::DecodedImage image = ThumbTestSupport::MakeBgraImage(width, height);
+        decoded.push_back(image.blocks);
+        strip.decodes.Complete(strip.decodes.LatestThumbnailFor(strip.SourceOf(index)), S_OK, std::move(image));
+    };
+
+    {
+        // A full cache: one unpinned entry fills the 256-byte budget.
+        Strip strip({ kBytes, 100, 1u << 20 });
+        ThumbPayloadCache::Payload filler {};
+        filler.blocks = std::make_shared<std::vector<uint8_t>>(kBytes, uint8_t(0));
+        decoded.push_back(filler.blocks);
+        filler.width = 8;
+        filler.height = 8;
+        filler.rowPitch = 32;
+        filler.format = DXGI_FORMAT_B8G8R8A8_UNORM;
+        filler.sourcePath = L"c:\\elsewhere\\filler.png";
+        (void)strip.payloads->Insert(filler.sourcePath, KnownIdentity(1), ThumbDecodeOptions {}, { 64.0f, 64.0f }, filler);
+        filler = {};
+        FIC2_REQUIRE(strip.payloads->TotalBytes() == kBytes);
+
+        // Three bound prefetch tiles; two decodes complete. None renders.
+        strip.Materialize({ 3, 6 });
+        complete(strip, 3, 8, 8);
+        complete(strip, 4, 8, 8);
+        ImageBrowserThumbStripController::AdmitCompletedPayloads(strip.tiles);
+
+        const ThumbPayloadCache::Stats stats = strip.payloads->GetStats();
+        FIC2_CHECK(stats.pinnedBytes == 2 * kBytes);
+        FIC2_CHECK(strip.payloads->EntryCount() == 2);   // the filler was evicted for them
+        FIC2_CHECK(liveBytes() == 2 * kBytes);
+        FIC2_CHECK(liveBytes() <= strip.payloads->TotalBytes());
+        FIC2_CHECK(strip.payloads->TotalBytes() <= (std::max)(kBytes, stats.pinnedBytes + stats.heldBytes));
+        FIC2_CHECK(strip.BitmapWidth(3) == 0.0f);   // not rendered, so not uploaded
+        FIC2_CHECK(strip.decodes.RequestCount() == 3);
+
+        // Once a tile renders, it shows the admitted payload without a request.
+        FIC2_REQUIRE(SUCCEEDED(canvas.Render(*strip.tiles.Find(3)->image)));
+        FIC2_CHECK(strip.BitmapWidth(3) == 8.0f);
+        FIC2_CHECK(strip.decodes.RequestCount() == 3);
+    }
+    FIC2_CHECK(liveBytes() == 0);
+
+    {
+        // Replacement: item 3 is shown, then listed again with a new identity.
+        Strip strip({ 4 * kBytes, 100, 1u << 20 });
+        strip.Materialize({ 3, 5 });
+        complete(strip, 3, 4, 2);
+        ImageBrowserThumbStripController::AdmitCompletedPayloads(strip.tiles);
+        FIC2_REQUIRE(SUCCEEDED(canvas.Render(*strip.tiles.Find(3)->image)));
+        FIC2_REQUIRE(strip.BitmapWidth(3) == 4.0f);
+
+        std::vector<Floar::VirtualFileEntry> listing = Strip::Listing();
+        std::vector<ImageSourceIdentity> identities = ListedIdentities(listing);
+        identities[2] = KnownIdentity(identities[2].size, 2);   // img00.png rewritten
+        strip.model.StageReset(kFolder, true, &IsTestImage);
+        (void)strip.model.Stage(listing, identities);
+        FIC2_REQUIRE(strip.model.Commit());
+        strip.Materialize({ 3, 5 });
+        FIC2_REQUIRE(strip.decodes.ThumbnailRequestsFor(strip.SourceOf(3)) == 2);
+
+        // The new decode and the prefetch tile's decode complete; the old
+        // picture is still shown. Every live payload is accounted.
+        complete(strip, 3, 8, 8);
+        complete(strip, 4, 8, 8);
+        ImageBrowserThumbStripController::AdmitCompletedPayloads(strip.tiles);
+        const ThumbPayloadCache::Stats stats = strip.payloads->GetStats();
+        FIC2_CHECK(stats.pinnedBytes == 2 * kBytes);        // the new payloads
+        FIC2_CHECK(strip.payloads->EntryCount() == 3);      // and the old one, now evictable
+        FIC2_CHECK(liveBytes() == 2 * kBytes + 4 * 2 * 4);
+        FIC2_CHECK(liveBytes() <= strip.payloads->TotalBytes());
+        FIC2_CHECK(strip.BitmapWidth(3) == 4.0f);           // old picture until the upload
+        FIC2_REQUIRE(SUCCEEDED(canvas.Render(*strip.tiles.Find(3)->image)));
+        FIC2_CHECK(strip.BitmapWidth(3) == 8.0f);
+    }
 }

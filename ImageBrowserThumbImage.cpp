@@ -551,9 +551,10 @@ void ImageBrowserThumbImage::OnRender(ID2D1RenderTarget* target)
     FD2D::Backplate* bp = BackplateRef();
     const bool deferBitmapUpload = (bp != nullptr && bp->IsInSizeMove());
 
+    // Admitted (and accounted) even while the upload is deferred.
+    (void)AdmitCompletedPayload();
     if (!deferBitmapUpload)
     {
-        (void)AdmitCompletedPayload();
         TryReuploadCpuPayload(target);
     }
 

@@ -693,6 +693,9 @@ namespace
             // Throttle progressive UI list updates so large folders don't monopolize the UI thread.
             ApplyThrottledProgressiveUpdate();
             SettleThumbStripGeometry();
+            // Decodes completed since the last frame are cached and accounted
+            // now, also for prefetch tiles that will not render (offscreen).
+            ImageBrowserThumbStripController::AdmitCompletedPayloads(m_thumbTiles);
             // Tile materialization and load priorities run when the strip
             // panel renders (OnBeforeRenderStripTiles), after the scroll view
             // advanced this frame's smooth scroll.

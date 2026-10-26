@@ -48,6 +48,14 @@ public:
     // payload decoded but not yet presented is stored in the payload cache
     // first (unpinned); cached payloads are kept, subject to the cache bounds.
     void Recycle();
+    // Takes a completed decode off the binding and pins it in the payload
+    // cache, so its bytes are accounted (and older unpinned entries make
+    // room) before, and independently of, its bitmap upload: a prefetch tile
+    // outside the viewport is not rendered, yet its payload is alive. The
+    // bitmap is created from the pinned payload when the control renders.
+    // The browser runs this for every bound tile once per frame, before the
+    // tiles render; OnRender runs it too. Returns true when one was admitted.
+    bool AdmitCompletedPayload();
 
     void SetSelected(bool selected);
     bool Selected() const { return m_selected; }
@@ -78,11 +86,6 @@ private:
     ThumbPayloadCache::Pin StorePayload(const ImageAsyncBinding::Payload& payload);
     static bool SameListing(const ImageSourceIdentity& a, const ImageSourceIdentity& b);
     void SyncTextureDrawState();
-    // Takes a completed decode off the binding and pins it in the payload
-    // cache; the bitmap is then created from the pinned payload, which is the
-    // cached entry's when one with the same key already exists. Returns true
-    // when one was admitted.
-    bool AdmitCompletedPayload();
     // Creates the bitmap from the pinned payload (a newly admitted decode, a
     // cached payload, or recovery after a device or target change).
     void TryReuploadCpuPayload(ID2D1RenderTarget* target);
