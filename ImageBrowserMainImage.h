@@ -18,6 +18,14 @@
 #include <optional>
 #include <string>
 
+// Creates an immutable single-mip texture and its SRV on `device` from a
+// block-compressed (BCn) payload: the main view's GPU passthrough. E_INVALIDARG
+// for a null device or a payload that is not block-compressed.
+HRESULT CreateCompressedShaderResource(
+    ID3D11Device* device,
+    const ImageAsyncBinding::Payload& payload,
+    Microsoft::WRL::ComPtr<ID3D11ShaderResourceView>& outSrv);
+
 // FICture2 main-image control: owns FD2D::Image + Spinner + ImageAsyncBinding.
 // Ports FullResolution behavior from FD2D::Image (zoom/pan/rotation/GPU BCn).
 class ImageBrowserMainImage : public FD2D::Wnd

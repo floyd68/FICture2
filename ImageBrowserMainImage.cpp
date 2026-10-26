@@ -189,6 +189,57 @@ namespace
     }
 }
 
+HRESULT CreateCompressedShaderResource(
+    ID3D11Device* device,
+    const ImageAsyncBinding::Payload& payload,
+    Microsoft::WRL::ComPtr<ID3D11ShaderResourceView>& outSrv)
+{
+    outSrv.Reset();
+    if (device == nullptr || !payload.blocks || payload.blocks->empty() || !IsCompressedDxgiFormat(payload.format))
+    {
+        return E_INVALIDARG;
+    }
+
+    D3D11_TEXTURE2D_DESC td {};
+    td.Width = payload.width;
+    td.Height = payload.height;
+    td.MipLevels = 1;
+    td.ArraySize = 1;
+    td.Format = payload.format;
+    td.SampleDesc.Count = 1;
+    td.Usage = D3D11_USAGE_IMMUTABLE;
+    td.BindFlags = D3D11_BIND_SHADER_RESOURCE;
+
+    D3D11_SUBRESOURCE_DATA init {};
+    init.pSysMem = payload.blocks->data();
+    init.SysMemPitch = payload.rowPitch;
+    init.SysMemSlicePitch = static_cast<UINT>(payload.blocks->size());
+
+    Microsoft::WRL::ComPtr<ID3D11Texture2D> tex;
+    const auto t_tex = std::chrono::steady_clock::now();
+    const HRESULT hrTex = device->CreateTexture2D(&td, &init, &tex);
+    const auto texMs = FIC2_ELAPSED_MS(t_tex);
+    if (texMs > 30)
+    {
+        FIC2_LOG_INFO("[D3D] CreateTexture2D {}x{} fmt={} took {}ms",
+            payload.width, payload.height, static_cast<int>(payload.format), texMs);
+    }
+    if (FAILED(hrTex) || !tex)
+    {
+        LogImageHr(L"D3D CreateTexture2D", payload.sourcePath, hrTex);
+        return FAILED(hrTex) ? hrTex : E_FAIL;
+    }
+
+    const HRESULT hrSrv = device->CreateShaderResourceView(tex.Get(), nullptr, &outSrv);
+    if (FAILED(hrSrv) || !outSrv)
+    {
+        LogImageHr(L"D3D CreateShaderResourceView", payload.sourcePath, hrSrv);
+        outSrv.Reset();
+        return FAILED(hrSrv) ? hrSrv : E_FAIL;
+    }
+    return S_OK;
+}
+
 ImageBrowserMainImage::ImageBrowserMainImage()
     : Wnd()
 {
@@ -1136,71 +1187,34 @@ void ImageBrowserMainImage::ApplyPendingPayload(ID2D1RenderTarget* target)
         ID3D11Device* dev = BackplateRef()->D3DDevice();
         if (dev && !m_forceCpuDecode.load())
         {
-            D3D11_TEXTURE2D_DESC td {};
-            td.Width = pending.width;
-            td.Height = pending.height;
-            td.MipLevels = 1;
-            td.ArraySize = 1;
-            td.Format = pending.format;
-            td.SampleDesc.Count = 1;
-            td.Usage = D3D11_USAGE_IMMUTABLE;
-            td.BindFlags = D3D11_BIND_SHADER_RESOURCE;
-
-            D3D11_SUBRESOURCE_DATA init {};
-            init.pSysMem = pending.blocks->data();
-            init.SysMemPitch = pending.rowPitch;
-            init.SysMemSlicePitch = static_cast<UINT>(pending.blocks->size());
-
-            Microsoft::WRL::ComPtr<ID3D11Texture2D> tex;
-            const auto t_tex = std::chrono::steady_clock::now();
-            const HRESULT hrTex = dev->CreateTexture2D(&td, &init, &tex);
-            const auto texMs = FIC2_ELAPSED_MS(t_tex);
-            if (texMs > 30)
+            Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> srv;
+            if (SUCCEEDED(CreateCompressedShaderResource(dev, pending, srv)))
             {
-                FIC2_LOG_INFO("[D3D] CreateTexture2D {}x{} fmt={} took {}ms",
-                    pending.width, pending.height, static_cast<int>(pending.format), texMs);
-            }
-
-            if (SUCCEEDED(hrTex) && tex)
-            {
-                Microsoft::WRL::ComPtr<ID3D11ShaderResourceView> srv;
-                const HRESULT hrSrv = dev->CreateShaderResourceView(tex.Get(), nullptr, &srv);
-                if (SUCCEEDED(hrSrv) && srv)
+                if (m_texture)
                 {
-                    if (m_texture)
-                    {
-                        m_texture->SetShaderResource(srv);
-                    }
-                    ApplyPresentation(PresentationKind::ShaderResource, pending.sourcePath, pending.width,
-                        pending.height, pending.format, AlphaInfoFromPayload(pending), pending.sourceMipLevels,
-                        pending.sourceMipIndex, m_requestIdentity);
-                    // GPU-only content: nothing to re-upload from after a device change.
-                    m_cpuPayload = {};
-
-                    ImageGpuResourceCache::Instance().Put(
-                        pending.sourcePath,
-                        pending.sourceMipIndex,
-                        srv,
-                        pending.width,
-                        pending.height,
-                        pending.format,
-                        m_alpha,
-                        m_sourceMipLevels,
-                        m_sourceMipIndex,
-                        m_requestIdentity,
-                        DeviceGeneration());
-
-                    usedGpu = true;
-                    applied = true;
+                    m_texture->SetShaderResource(srv);
                 }
-                else
-                {
-                    LogImageHr(L"D3D CreateShaderResourceView", pending.sourcePath, hrSrv);
-                }
-            }
-            else
-            {
-                LogImageHr(L"D3D CreateTexture2D", pending.sourcePath, hrTex);
+                ApplyPresentation(PresentationKind::ShaderResource, pending.sourcePath, pending.width,
+                    pending.height, pending.format, AlphaInfoFromPayload(pending), pending.sourceMipLevels,
+                    pending.sourceMipIndex, m_requestIdentity);
+                // GPU-only content: nothing to re-upload from after a device change.
+                m_cpuPayload = {};
+
+                ImageGpuResourceCache::Instance().Put(
+                    pending.sourcePath,
+                    pending.sourceMipIndex,
+                    srv,
+                    pending.width,
+                    pending.height,
+                    pending.format,
+                    m_alpha,
+                    m_sourceMipLevels,
+                    m_sourceMipIndex,
+                    m_requestIdentity,
+                    DeviceGeneration());
+
+                usedGpu = true;
+                applied = true;
             }
 
             if (!applied)
