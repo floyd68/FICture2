@@ -1507,9 +1507,8 @@ namespace
                 }
                 if (tile.navTile)
                 {
-                    // Navigation tiles remain square
+                    // Navigation tiles remain square (invalidates on a change)
                     tile.navTile->SetFixedSize({ m_thumbW, m_thumbH });
-                    tile.navTile->Invalidate();
                 }
             }
             RebuildThumbLayout();

@@ -16,6 +16,9 @@ ThumbNavTile::ThumbNavTile(const std::wstring& name)
     , m_label(name + L"_label")
     , m_badgeLabel(name + L"_badge")
 {
+    // m_text and m_badgeText mirror the labels (FD2D::Text starts non-empty).
+    m_label.SetText(m_text);
+    m_badgeLabel.SetText(m_badgeText);
     m_label.SetFont(L"Segoe UI Semibold", 18.0f);
     m_label.SetColor(D2D1::ColorF(D2D1::ColorF::White, 0.90f));
     m_label.SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
@@ -44,11 +47,23 @@ void ThumbNavTile::SetIcon(IconKind kind)
 
 void ThumbNavTile::SetText(const std::wstring& text)
 {
+    if (m_text == text)
+    {
+        return;
+    }
+
+    m_text = text;
     m_label.SetText(text);
+    Invalidate();
 }
 
 void ThumbNavTile::SetBadgeText(const std::wstring& text)
 {
+    if (m_badgeText == text)
+    {
+        return;
+    }
+
     m_badgeText = text;
     m_badgeLabel.SetText(text);
     Invalidate();
@@ -70,13 +85,24 @@ void ThumbNavTile::SetIconTint(IconTint tint)
 
 void ThumbNavTile::SetTextPlacement(TextPlacement placement)
 {
+    if (m_textPlacement == placement)
+    {
+        return;
+    }
+
     m_textPlacement = placement;
     Invalidate();
 }
 
 void ThumbNavTile::SetFixedSize(const FD2D::Size& size)
 {
+    if (m_fixedSize.w == size.w && m_fixedSize.h == size.h)
+    {
+        return;
+    }
+
     m_fixedSize = size;
+    Invalidate();
 }
 
 void ThumbNavTile::SetSelected(bool selected)

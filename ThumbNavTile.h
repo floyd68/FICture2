@@ -37,6 +37,7 @@ public:
 
     explicit ThumbNavTile(const std::wstring& name);
 
+    // Setters invalidate only when the value changes.
     void SetIcon(IconKind kind);
     void SetText(const std::wstring& text);
     void SetBadgeText(const std::wstring& text);
@@ -79,6 +80,7 @@ private:
     bool m_hovered { false };
     bool m_pressed { false };
     bool m_selected { false };
+    std::wstring m_text {};
     std::wstring m_badgeText {};
     unsigned long long m_selectedStartMs { 0 };
 };

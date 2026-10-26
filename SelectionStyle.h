@@ -29,6 +29,21 @@ namespace FD2D
         float breatheAlphaAmp { 0.25f };
     };
 
+    inline bool SameSelectionStyle(const SelectionStyle& a, const SelectionStyle& b)
+    {
+        const auto sameColor = [](const D2D1_COLOR_F& x, const D2D1_COLOR_F& y)
+        {
+            return x.r == y.r && x.g == y.g && x.b == y.b && x.a == y.a;
+        };
+        return sameColor(a.accent, b.accent) && sameColor(a.shadow, b.shadow) && sameColor(a.fill, b.fill) &&
+            a.radius == b.radius && a.baseInflate == b.baseInflate && a.popInflate == b.popInflate &&
+            a.shadowThickness == b.shadowThickness && a.accentThickness == b.accentThickness &&
+            a.fillMaxAlpha == b.fillMaxAlpha && a.breatheEnabled == b.breatheEnabled &&
+            a.breathePeriodMs == b.breathePeriodMs && a.breatheCycles == b.breatheCycles &&
+            a.breatheInflateAmp == b.breatheInflateAmp && a.breatheThicknessAmp == b.breatheThicknessAmp &&
+            a.breatheAlphaAmp == b.breatheAlphaAmp;
+    }
+
     // Bounded selection "breathe" amount in [0, 1] at `elapsedMs` after the
     // selection: starts at rest, follows whole cosine cycles so it ends exactly at
     // rest, and stops after `cycles` cycles. `active` is true while another frame

@@ -111,11 +111,11 @@ void ThumbImageTile::Recycle()
 
 void ThumbImageTile::SetSelected(bool selected)
 {
+    // The image control shows the selection and invalidates when it changes.
     if (m_image)
     {
         m_image->SetSelected(selected);
     }
-    Invalidate();
 }
 
 void ThumbImageTile::SetOnClick(ClickHandler handler)
