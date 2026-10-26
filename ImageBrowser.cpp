@@ -619,7 +619,7 @@ namespace
             m_thumbArrangePending = true;
             if (BackplateRef() != nullptr)
             {
-                BackplateRef()->RequestLayout();
+                DeferredRenderScope::RequestLayout(BackplateRef());
             }
         }
 
@@ -1266,7 +1266,7 @@ namespace
             ApplySplitRatiosRecursive(m_hHost, m_hPanes, ratios, idx);
             if (BackplateRef() != nullptr)
             {
-                BackplateRef()->RequestLayout();
+                DeferredRenderScope::RequestLayout(BackplateRef());
             }
         }
 
@@ -1518,7 +1518,7 @@ namespace
 
             if (BackplateRef() != nullptr)
             {
-                BackplateRef()->RequestLayout();
+                DeferredRenderScope::RequestLayout(BackplateRef());
             }
             m_lastThumbSizingApplyMs = sizing.updatedApplyMs;
             return true;
@@ -2070,7 +2070,7 @@ namespace
 
             if (BackplateRef() != nullptr)
             {
-                BackplateRef()->RequestLayout();
+                DeferredRenderScope::RequestLayout(BackplateRef());
             }
             return true;
         }
@@ -2824,7 +2824,7 @@ namespace
 
             if (BackplateRef() != nullptr)
             {
-                BackplateRef()->RequestLayout();
+                DeferredRenderScope::RequestLayout(BackplateRef());
                 Invalidate();
             }
         }
@@ -3153,7 +3153,7 @@ namespace
         {
             if (BackplateRef() != nullptr)
             {
-                BackplateRef()->RequestLayout();
+                DeferredRenderScope::RequestLayout(BackplateRef());
             }
         }
 
