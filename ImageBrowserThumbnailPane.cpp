@@ -37,6 +37,15 @@ void ThumbStripPanel::Arrange(FD2D::Rect finalRect)
     m_layoutRect = FD2D::ToD2D(finalRect);
 }
 
+void ThumbStripPanel::OnRender(ID2D1RenderTarget* target)
+{
+    if (target != nullptr && m_onBeforeRenderTiles)
+    {
+        m_onBeforeRenderTiles();
+    }
+    FD2D::StackPanel::OnRender(target);
+}
+
 ImageBrowserThumbnailPane::ImageBrowserThumbnailPane()
     : FD2D::Wnd(L"thumbnailPane")
 {

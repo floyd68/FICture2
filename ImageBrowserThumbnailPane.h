@@ -39,11 +39,17 @@ public:
     // Places the tiles again within the bounds of the last Arrange, for a tile
     // set that changed after the layout pass.
     void ArrangeTiles() { Arrange(m_bounds); }
+    // Runs at the start of every render of the panel, before its tiles draw.
+    // The scroll view renders the panel after advancing a smooth scroll, so
+    // the scroll offset seen here is the one this frame presents.
+    void SetOnBeforeRenderTiles(std::function<void()> handler) { m_onBeforeRenderTiles = std::move(handler); }
+    void OnRender(ID2D1RenderTarget* target) override;
 
 private:
     const ThumbStripLayout* m_layout { nullptr };
     const ThumbTileSet* m_tiles { nullptr };
     float m_rowHeight { 0.0f };
+    std::function<void()> m_onBeforeRenderTiles {};
 };
 
 class ImageBrowserThumbnailPane : public FD2D::Wnd

@@ -253,3 +253,62 @@ FIC2_TEST(ImageBrowserThumbStrip_TenThousandImagesStayBoundedAndScrollBackIsFree
     std::printf("  %zu frames (%zu while the listing was partial), at most %zu tiles, %zu thumbnail requests\n",
         strip.frames, partialFrames, strip.maxTiles, decodes.service.RequestCount());
 }
+
+// A far jump animates (EnsureCentered without Immediate, as End and
+// type-to-select do): the scroll view advances its offset while rendering, by
+// more than the prefetch margin per frame. Every presented frame must still
+// have tiles for its whole viewport.
+FIC2_TEST(ImageBrowserThumbStrip_AnimatedFarJumpKeepsEveryFrameCovered)
+{
+    ThumbTestSupport::ComScope com;
+    ThumbTestSupport::ScopedDecodeService decodes;
+    ThumbTestSupport::Canvas canvas;
+    FIC2_REQUIRE(canvas.Create(kWidth, kHeight));
+    const ImageFolder folder(L"StripJump", 1000);
+
+    FD2D::Backplate backplate(L"thumb-strip-jump-test");
+    BrowserStrip strip;
+    strip.browser = CreateImageBrowser(L"strip_jump_browser");
+    strip.decodes = &decodes.service;
+    strip.canvas = &canvas;
+    FIC2_REQUIRE(backplate.AddWnd(strip.browser));
+    auto* ops = dynamic_cast<IImageBrowserOps*>(strip.browser.get());
+    FIC2_REQUIRE(ops != nullptr);
+    ops->BrowserRestoreOpenFolder(folder.dir.wstring());
+    FIC2_REQUIRE(strip.LoadUntil(1000 + 1));
+    FIC2_REQUIRE(strip.Scroll().ScrollX() == 0.0f);
+
+    // Animates to `index` and checks every frame until the scroll settles.
+    auto animateTo = [&](size_t index)
+    {
+        const D2D1_RECT_F panel = strip.Strip().LayoutRect();
+        strip.Scroll().EnsureCentered(D2D1::RectF(
+            panel.left + strip.Layout().Start(index), panel.top,
+            panel.left + strip.Layout().End(index), panel.bottom), false);
+        FIC2_REQUIRE(strip.Scroll().TargetScrollX() != strip.Scroll().ScrollX());
+        size_t frames = 0;
+        size_t moving = 0;
+        while (frames < 200)
+        {
+            std::this_thread::sleep_for(std::chrono::milliseconds(16));
+            const float before = strip.Scroll().ScrollX();
+            strip.Frame();   // the scroll view advances its offset while rendering
+            strip.CheckBounds();   // the presented viewport has tiles
+            ++frames;
+            if (strip.Scroll().ScrollX() != before)
+            {
+                ++moving;
+            }
+            else if (strip.Scroll().ScrollX() == strip.Scroll().TargetScrollX())
+            {
+                break;
+            }
+        }
+        FIC2_CHECK(moving >= 1);
+        FIC2_CHECK(strip.Scroll().ScrollX() == strip.Scroll().TargetScrollX());
+        FIC2_CHECK(strip.Tiles().Find(index) != nullptr);
+    };
+    animateTo(1000);   // End
+    animateTo(0);      // Home
+    animateTo(500);
+}

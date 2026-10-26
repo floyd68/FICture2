@@ -458,6 +458,16 @@ namespace
             m_thumbStripController.MaterializeTiles(context);
         }
 
+        // Runs as the strip panel starts rendering: the scroll view has
+        // advanced any smooth scroll, so the viewport is the one this frame
+        // presents, even when an animated jump moves farther than the
+        // prefetch margin in one frame.
+        void OnBeforeRenderStripTiles()
+        {
+            UpdateMaterializedThumbTiles();
+            UpdateThumbLoadPriorities();
+        }
+
         // Between rebuilds the viewport moves (scrolling, or extents and the
         // row height changing): rebind the tiles when the range it needs
         // changed. Runs during Render, before the tiles render, so a tile
@@ -647,8 +657,9 @@ namespace
             }
             // Throttle progressive UI list updates so large folders don't monopolize the UI thread.
             ApplyThrottledProgressiveUpdate();
-            UpdateMaterializedThumbTiles();
-            UpdateThumbLoadPriorities();
+            // Tile materialization and load priorities run when the strip
+            // panel renders (OnBeforeRenderStripTiles), after the scroll view
+            // advanced this frame's smooth scroll.
             if (m_pendingThumbStripBroadcast && m_rootSplit != nullptr && !m_rootSplit->IsSplitterDragging())
             {
                 m_pendingThumbStripBroadcast = false;
@@ -1884,6 +1895,10 @@ namespace
             {
                 strip->SetLayout(&m_thumbLayout);
                 strip->SetTiles(&m_thumbTiles);
+                strip->SetOnBeforeRenderTiles([this]()
+                {
+                    OnBeforeRenderStripTiles();
+                });
             }
 
             rootSplit->OnSplitChanged([this](float)
