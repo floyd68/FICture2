@@ -1,5 +1,6 @@
 #include "TestHarness.h"
 
+#include "BackplateTestAccess.h"
 #include "CommonUtil.h"
 #include "FD2D/Backplate.h"
 #include "FD2D/tests/WindowlessTestSupport.h"
@@ -837,4 +838,112 @@ FIC2_TEST(MainImageHandoff_ReselectingModifiedPendingImageRestartsItsDecode)
     scene.decodes.Complete(scene.decodes.Latest(), Decoded(Solid(kGreen)));
     FIC2_CHECK(Matches(scene.RenderFrame(), LookOf("b", Solid(kGreen))));
     FIC2_CHECK(scene.main->GetLoadedInfo().sourcePath == b);
+}
+
+namespace
+{
+    // A hidden window handle given to the scene's windowless backplate, so
+    // Wnd::Invalidate() renders synchronously as in the app.
+    struct SynchronousInvalidation
+    {
+        FD2D::Backplate& backplate;
+        HWND window { nullptr };
+
+        explicit SynchronousInvalidation(FD2D::Backplate& bp)
+            : backplate(bp)
+        {
+            const HINSTANCE instance = GetModuleHandleW(nullptr);
+            WNDCLASSEXW wc { sizeof(wc) };
+            wc.lpfnWndProc = DefWindowProcW;
+            wc.hInstance = instance;
+            wc.lpszClassName = L"FICture2TestsHandoffWindow";
+            (void)RegisterClassExW(&wc);   // already registered by an earlier test: fine
+            window = CreateWindowExW(WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE, wc.lpszClassName, L"", WS_POPUP,
+                0, 0, static_cast<int>(kSize), static_cast<int>(kSize), nullptr, nullptr, instance, nullptr);
+            if (window != nullptr)
+            {
+                FD2D::BackplateTestAccess::SetWindow(backplate, window);
+            }
+        }
+
+        ~SynchronousInvalidation()
+        {
+            FD2D::BackplateTestAccess::SetWindow(backplate, nullptr);
+            if (window != nullptr)
+            {
+                DestroyWindow(window);
+            }
+        }
+
+        SynchronousInvalidation(const SynchronousInvalidation&) = delete;
+        SynchronousInvalidation& operator=(const SynchronousInvalidation&) = delete;
+    };
+}
+
+FIC2_TEST(MainImageHandoff_SynchronousRenderSeesCommittedCacheHit)
+{
+    // With synchronous invalidation (a live window, outside a render), a
+    // cache hit renders while SetSourceFile runs. Every such frame must show
+    // the pixels and the metadata of the same image, and the hit must not
+    // start a decode.
+    Scene scene;
+    FIC2_REQUIRE(scene.Create());
+    const std::wstring a = scene.File(L"a.png", 100);
+    const std::wstring b = scene.File(L"b.png", 200);
+    const TestImage imageA = Solid(kRed, 32, 8);
+    const TestImage imageB = Solid(kGreen, 8, 32);
+    FIC2_REQUIRE(scene.Show(a, imageA));
+    FIC2_REQUIRE(scene.Show(b, imageB));
+    const std::vector<Look> looks { LookOf("a", imageA), LookOf("b", imageB) };
+    const size_t requests = scene.decodes.requests.size();
+
+    SynchronousInvalidation sync(scene.backplate);
+    FIC2_REQUIRE(sync.window != nullptr);
+
+    // Cached content is an SRV: the D3D pass alone draws the whole image, so
+    // each frame is read between its passes, together with the metadata it
+    // is drawn with.
+    struct Seen
+    {
+        int look { -1 };
+        std::wstring path {};
+        uint32_t width { 0 };
+    };
+    std::vector<Seen> frames;
+    scene.backplate.SetBetweenPassesHook([&]()
+    {
+        Frame frame;
+        if (FAILED(frame.Read(scene.backplate, D2D1::RectF(0.0f, 0.0f, static_cast<float>(kSize), static_cast<float>(kSize)))))
+        {
+            frames.push_back({});
+            return;
+        }
+        const ImageLoadedInfo info = scene.main->GetLoadedInfo();
+        frames.push_back({ Classify(frame, looks), info.sourcePath, info.width });
+    });
+
+    const auto revisit = [&](const std::wstring& path, int expectedLook)
+    {
+        frames.clear();
+        FIC2_CHECK(scene.main->SetSourceFile(path) == S_OK);
+        std::printf("  revisit %s: %zu synchronous frame(s):", looks[static_cast<size_t>(expectedLook)].name, frames.size());
+        for (const Seen& seen : frames)
+        {
+            std::printf(" [pixels %s, metadata %s %u px]",
+                seen.look < 0 ? "OTHER" : looks[static_cast<size_t>(seen.look)].name,
+                seen.path == a ? "a" : (seen.path == b ? "b" : "-"), seen.width);
+        }
+        std::printf(", requests %zu -> %zu\n", requests, scene.decodes.requests.size());
+        FIC2_CHECK(!frames.empty());
+        for (const Seen& seen : frames)
+        {
+            FIC2_CHECK(seen.look == expectedLook);
+            FIC2_CHECK(seen.path == path);
+            FIC2_CHECK(seen.width == (expectedLook == 0 ? imageA.width : imageB.width));
+        }
+        FIC2_CHECK(scene.decodes.requests.size() == requests);
+    };
+    revisit(a, 0);
+    revisit(b, 1);
+    revisit(a, 0);
 }

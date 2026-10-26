@@ -2,6 +2,7 @@
 
 #include "AppLog.h"
 #include "CommonUtil.h"
+#include "DeferredRenderScope.h"
 #include "ImageAlphaPresentation.h"
 #include "ImageGpuResourceCache.h"
 #include "FD2D/Backplate.h"
@@ -240,7 +241,6 @@ void ImageBrowserMainImage::ApplyPresentation(
     uint32_t sourceMipIndex,
     const ImageSourceIdentity& identity)
 {
-    SetLoadedFilePath(path);
     m_loadedW = width;
     m_loadedH = height;
     m_loadedFormat = format;
@@ -259,6 +259,8 @@ void ImageBrowserMainImage::ApplyPresentation(
     m_presentationIdentity = identity;
     m_needsCpuReupload = false;
     m_selectingMip = false;
+    // Owners are told about the new path once its metadata is in place.
+    SetLoadedFilePath(path);
     SyncTextureDrawState();
 }
 
@@ -771,9 +773,13 @@ bool ImageBrowserMainImage::SelectMip(uint32_t mipLevel)
     CachedPresentation cached {};
     if (TryGetCachedPresentation(m_filePath, mipLevel, current, cached))
     {
-        m_binding.MarkSettled();
-        PresentCached(std::move(cached));
-        Invalidate();
+        {
+            // Committed as one unit before any frame renders (see SetSourceFile).
+            DeferredRenderScope deferRender(BackplateRef());
+            m_binding.MarkSettled();
+            PresentCached(std::move(cached));
+            Invalidate();
+        }
         if (!m_suppressViewNotify && m_onViewChanged)
         {
             m_onViewChanged(GetViewTransform());
@@ -881,6 +887,10 @@ HRESULT ImageBrowserMainImage::SetSourceFile(const std::wstring& filePath)
     CachedPresentation cached {};
     if (TryGetCachedPresentation(normalized, 0, identity, cached))
     {
+        // The request, the binding, the resource and its metadata change as
+        // one unit: no frame renders (Image::SetShaderResource invalidates)
+        // until all of them are committed; the scope renders the result once.
+        DeferredRenderScope deferRender(BackplateRef());
         m_filePath = normalized;
         m_binding.MarkSettled();
         m_request.source = normalized;
@@ -1382,6 +1392,19 @@ void ImageBrowserMainImage::PresentPendingContent(ID2D1RenderTarget* target)
     {
         return;
     }
+
+    // Each replacement below installs its resource before its metadata, and
+    // installing invalidates. The handoff runs inside a render, where an
+    // invalidation only queues the next frame; deferring keeps that true for
+    // a caller that draws this control outside Backplate::Render().
+    struct DeferRender
+    {
+        FD2D::Backplate* backplate;
+        explicit DeferRender(FD2D::Backplate* bp) : backplate(bp) { if (backplate) backplate->BeginDeferredRender(); }
+        ~DeferRender() { if (backplate) backplate->EndDeferredRender(); }
+        DeferRender(const DeferRender&) = delete;
+        DeferRender& operator=(const DeferRender&) = delete;
+    } deferRender(BackplateRef());
 
     if (m_stagedCacheHit)
     {

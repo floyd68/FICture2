@@ -20,6 +20,16 @@ namespace FD2D
             backplate.InvalidateGraphics(GraphicsInvalidationReason::DeviceLost, true, true, false);
         }
 
+        // Gives a backplate in windowless render mode a (hidden) window handle
+        // and nothing else: it keeps rendering into its offscreen target, but
+        // Wnd::Invalidate() now renders synchronously outside a render and a
+        // deferred-render scope, as in the app. Pass nullptr to detach it
+        // before the window is destroyed.
+        static void SetWindow(Backplate& backplate, HWND window)
+        {
+            backplate.m_window = window;
+        }
+
         // Gives a windowless backplate a window and a D2D-only target the test
         // created for it (no device, no subclassing): Wnd::Invalidate() then
         // renders synchronously outside a deferred-render scope, as in the
