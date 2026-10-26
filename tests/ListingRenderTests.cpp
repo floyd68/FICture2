@@ -3,7 +3,9 @@
 #include "BackplateTestAccess.h"
 #include "DeferredRenderScope.h"
 #include "FD2D/Backplate.h"
+#include "Ficture2Backplate.h"
 #include "FolderEnumeration.h"
+#include "IniStore.h"
 #include "ImageAsyncBinding.h"
 #include "ImageBrowser.h"
 #include "ImageBrowserThumbImage.h"
@@ -23,6 +25,7 @@
 
 #include <algorithm>
 #include <chrono>
+#include <cmath>
 #include <cstdio>
 #include <filesystem>
 #include <memory>
@@ -509,4 +512,65 @@ FIC2_TEST(ListingRender_ApplyingAFolderListingRendersAtMostOneFrame)
     open("open the 158-image folder", child.dir, 1 + 158);
     open("folder up to 28 folders + 70 images", parent.dir, 1 + 28 + 70);
     open("list the parent again", parent.dir, 1 + 28 + 70);
+}
+
+// Restoring a session of several viewers inside the restore's one-frame
+// scope: every viewer gets the saved strip height. The added viewers' layout
+// requests are held for that frame, so the forced height must not be
+// computed from a viewer that was never arranged.
+FIC2_TEST(ListingRender_RestoredViewersGetTheSavedStripHeight)
+{
+    constexpr float kSavedHeight = 230.0f;
+    ThumbTestSupport::ScopedDecodeService decodes;
+    const TempRoot root;
+    const DiskFolder a(root.dir / L"a", 2, 5);
+    const DiskFolder b(root.dir / L"b", 2, 5);
+    const DiskFolder c(root.dir / L"c", 2, 5);
+    const std::filesystem::path folders[] = { a.dir, b.dir, c.dir };
+
+    for (int viewers = 2; viewers <= 3; ++viewers)
+    {
+        // A temporary session INI (never the user's).
+        const std::wstring ini = (root.dir / (L"session" + std::to_wstring(viewers) + L".ini")).wstring();
+        IniStore::SetInt(ini, L"Session", L"ViewerCount", viewers);
+        IniStore::SetString(ini, L"Session", L"ThumbStripHeight", L"230.00");
+        for (int i = 0; i < viewers; ++i)
+        {
+            IniStore::SetString(ini, L"Viewer" + std::to_wstring(i), L"CurrentFolder", folders[i].wstring());
+        }
+
+        ThumbTestSupport::ComScope com;
+        RenderWindow window;
+        FIC2_REQUIRE(window.Create());
+        Ficture2Backplate backplate(L"restore-test");
+        backplate.SkipImageBrowserIniForTesting();
+        FD2D::BackplateTestAccess::RenderInto(backplate, window.window, window.target.Get());
+        auto probe = std::make_shared<RenderProbe>();
+        FIC2_REQUIRE(backplate.AddWnd(probe));
+        auto browser = CreateImageBrowser(L"restore_root");
+        FIC2_REQUIRE(browser != nullptr);
+        FIC2_REQUIRE(backplate.AddWnd(browser));
+        backplate.Render();
+
+        const size_t before = probe->Frames();
+        FIC2_REQUIRE(backplate.TryRestoreImageBrowserSession(ini));
+        FIC2_CHECK(probe->Frames() - before <= 1);
+        for (int i = 0; i < 3; ++i)
+        {
+            backplate.Render();
+        }
+
+        const std::vector<FD2D::Wnd*> browsers = backplate.Bus().ImageBrowsersSnapshot();
+        FIC2_CHECK(browsers.size() == static_cast<size_t>(viewers));
+        for (FD2D::Wnd* restored : browsers)
+        {
+            D2D1_RECT_F strip {};
+            const ImageBrowserThumbnailPane* pane = ImageBrowserThumbPane(*restored);
+            FIC2_REQUIRE(pane != nullptr);
+            FIC2_CHECK(pane->TryGetStripRect(strip));
+            const float height = strip.bottom - strip.top;
+            std::printf("  %d viewers: %ls strip height %.1f\n", viewers, restored->Name().c_str(), height);
+            FIC2_CHECK(std::fabs(height - kSavedHeight) < 1.5f);
+        }
+    }
 }
