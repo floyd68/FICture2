@@ -1151,26 +1151,6 @@ bool Ficture2Backplate::HandleMessage(HWND hWnd, UINT message, WPARAM wParam, LP
     return Backplate::HandleMessage(hWnd, message, wParam, lParam, result);
 }
 
-void Ficture2Backplate::ArrangeChildrenNow()
-{
-    const float width = static_cast<float>(m_size.width);
-    const float height = static_cast<float>(m_size.height);
-    if (width <= 0.0f || height <= 0.0f)
-    {
-        return;
-    }
-    // Copy: arranging may change the tree.
-    const std::vector<std::shared_ptr<FD2D::Wnd>> children = m_childrenOrdered;
-    for (const auto& child : children)
-    {
-        if (child)
-        {
-            (void)child->Measure({ width, height });
-            child->Arrange({ 0.0f, 0.0f, width, height });
-        }
-    }
-}
-
 void Ficture2Backplate::DispatchFolderListingReady()
 {
     const FD2D::CommandEvent event { kFolderListingReadyMessage, 0, 0 };
@@ -2118,10 +2098,11 @@ bool Ficture2Backplate::TryRestoreImageBrowserSession(const std::wstring& iniFil
 
     if (payload.hasThumbStripHeight)
     {
-        // The added viewers' layout requests are held for the scope's render,
-        // but the forced height is computed from each browser's arranged root
-        // split: arrange the rebuilt host now (no frame).
-        ArrangeChildrenNow();
+        // The added viewers' layout requests are laid out by the next
+        // (coalesced) render, but the forced height is computed from each
+        // browser's arranged root split: arrange the rebuilt host now (no
+        // frame).
+        (void)LayoutIfPending();
         const auto refreshedBrowserOps = SnapshotBrowserOps(m_eventBus);
         for (auto* ops : refreshedBrowserOps)
         {
