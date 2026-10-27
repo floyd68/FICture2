@@ -640,7 +640,9 @@ namespace
             sourceSync->BrowserApplyFocusedBackgroundColorForSync(nextColor);
             backplate->SynchronizeFocusedBackgroundColor(source, nextColor);
         }
-        backplate->Render();
+        // The new colours (clear colour and every synchronized pane) appear
+        // in one coalesced frame, rendered after this command.
+        backplate->RequestRender();
         return true;
     }
 
