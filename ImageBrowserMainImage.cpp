@@ -404,8 +404,8 @@ void ImageBrowserMainImage::ReloadSource()
         return;
     }
 
-    // Everything is reset before Invalidate(), which may render synchronously
-    // and dispatch the reload request right away: that request must be mip 0.
+    // Everything is reset before Invalidate(): the next render dispatches the
+    // reload request, and that request must be mip 0.
 
     ImageGpuResourceCache::Instance().InvalidatePath(m_filePath);
     m_binding.Cancel();
@@ -831,7 +831,8 @@ bool ImageBrowserMainImage::SelectMip(uint32_t mipLevel)
     // if it (or its host archive) was replaced, every cached mip is stale.
     // Reload mip 0 first - only it supplies the new source size and mip count -
     // and select the requested mip once that has been presented. The pending
-    // mip is recorded before ReloadSource(), whose Invalidate() may render.
+    // mip is recorded before ReloadSource(), whose Invalidate() requests the
+    // render that dispatches the reload.
     const ImageSourceIdentity current = ImageSourceIdentity::ForPath(m_filePath);
     if (m_presentationKind != PresentationKind::None && current != m_presentationIdentity)
     {

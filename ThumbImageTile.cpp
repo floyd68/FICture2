@@ -295,9 +295,8 @@ void ThumbImageTile::OnRender(ID2D1RenderTarget* target)
                 m_onAspectChanged(currentSize.width / currentSize.height);
             }
 
-            // Force parent container to re-layout
-            // Note: RequestLayout during rendering will set m_renderRequested flag
-            // and the layout will be updated in the next render loop iteration
+            // Force parent container to re-layout. During a render this
+            // requests the next (coalesced) frame, which lays it out.
             if (bp != nullptr)
             {
                 if (!bp->IsInSizeMove())
