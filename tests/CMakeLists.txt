@@ -12,6 +12,7 @@ add_executable(FICture2Tests
     MainImageTestSupport.h
     MainImageHandoffTests.cpp
     CompressedPassthroughTests.cpp
+    SrgbReadbackTests.cpp
     ImageAsyncBindingTests.cpp
     FolderEnumerationTests.cpp
     ArchiveCancelTestSupport.h
@@ -119,6 +120,7 @@ add_test(NAME FICture2.GpuPresentation COMMAND FICture2Tests GpuPresentation_)
 add_test(NAME FICture2.MainImage COMMAND FICture2Tests MainImage_)
 add_test(NAME FICture2.MainImageHandoff COMMAND FICture2Tests MainImageHandoff_)
 add_test(NAME FICture2.CompressedPassthrough COMMAND FICture2Tests CompressedPassthrough_)
+add_test(NAME FICture2.SrgbReadback COMMAND FICture2Tests SrgbReadback_)
 add_test(NAME FICture2.IdleRendering COMMAND FICture2Tests IdleRendering_)
 add_test(NAME FICture2.ImageBrowserRouting COMMAND FICture2Tests ImageBrowserRouting_)
 add_test(NAME FICture2.ThumbItemModel COMMAND FICture2Tests ThumbItemModel_)
