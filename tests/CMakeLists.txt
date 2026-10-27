@@ -9,6 +9,7 @@ add_executable(FICture2Tests
     GpuPresentationTests.cpp
     IdleRenderingTests.cpp
     MainImagePresentationTests.cpp
+    MainImageTestSupport.h
     MainImageHandoffTests.cpp
     CompressedPassthroughTests.cpp
     ImageAsyncBindingTests.cpp

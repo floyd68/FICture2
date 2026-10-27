@@ -6,12 +6,12 @@
 #include "ImageAsyncBinding.h"
 #include "ImageBrowserMainImage.h"
 #include "ImageGpuResourceCache.h"
+#include "MainImageTestSupport.h"
 
 #include <windows.h>
 #include <d3d11.h>
 #include <wrl/client.h>
 
-#include <array>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -33,6 +33,11 @@
 using Microsoft::WRL::ComPtr;
 using FD2DWindowlessTest::Bgra;
 using FD2DWindowlessTest::Frame;
+using MainImageTestSupport::Bc1Color;
+using MainImageTestSupport::ControlledDecodeService;
+using MainImageTestSupport::ScopedDecodeService;
+using MainImageTestSupport::SolidBc1;
+using MainImageTestSupport::SolidBc7;
 
 namespace
 {
@@ -116,103 +121,9 @@ namespace
         return device;
     }
 
-    // --- Solid test blocks -------------------------------------------------
-
-    // BC1: both endpoints the 5:6:5 color, every index 0.
-    std::vector<uint8_t> SolidBc1(uint16_t rgb565)
-    {
-        std::vector<uint8_t> block(8, uint8_t(0));
-        block[0] = static_cast<uint8_t>(rgb565 & 0xFF);
-        block[1] = static_cast<uint8_t>(rgb565 >> 8);
-        block[2] = block[0];
-        block[3] = block[1];
-        return block;
-    }
-
-    Bgra Bc1Color(uint16_t rgb565)
-    {
-        const int r5 = (rgb565 >> 11) & 0x1F;
-        const int g6 = (rgb565 >> 5) & 0x3F;
-        const int b5 = rgb565 & 0x1F;
-        return Bgra { static_cast<uint8_t>((b5 << 3) | (b5 >> 2)), static_cast<uint8_t>((g6 << 2) | (g6 >> 4)),
-            static_cast<uint8_t>((r5 << 3) | (r5 >> 2)), 255 };
-    }
-
-    // BC7 mode 6 (one subset, 7-bit RGBA endpoints plus a p-bit each, 4-bit
-    // indices) with both p-bits 1 and every index 7 (weight 30/64): each
-    // opaque channel value v in [1, 254] comes from endpoints v-1 | 1 and
-    // v+1 | 1 (odd, so the p-bit is 1) and decodes to exactly v when v is
-    // even ((34*(v-1) + 30*(v+1) + 32) >> 6 == v). Alpha is 255.
-    std::vector<uint8_t> SolidBc7(uint8_t r, uint8_t g, uint8_t b)
-    {
-        std::array<uint8_t, 16> bytes {};
-        unsigned bit = 0;
-        const auto put = [&](uint32_t value, unsigned count)
-        {
-            for (unsigned i = 0; i < count; ++i, ++bit)
-            {
-                if ((value >> i) & 1u)
-                {
-                    bytes[bit / 8] |= static_cast<uint8_t>(1u << (bit % 8));
-                }
-            }
-        };
-        put(1u << 6, 7);   // mode 6
-        for (const uint8_t v : { r, g, b })
-        {
-            put(static_cast<uint32_t>(v - 1) >> 1, 7);   // endpoint 0: (v-1) = c<<1 | 1
-            put(static_cast<uint32_t>(v + 1) >> 1, 7);   // endpoint 1: (v+1) = c<<1 | 1
-        }
-        put(0x7F, 7);   // alpha endpoint 0 (0xFF with p = 1)
-        put(0x7F, 7);   // alpha endpoint 1
-        put(1, 1);      // p-bit 0
-        put(1, 1);      // p-bit 1
-        put(7, 3);      // anchor index (implicit high bit 0)
-        for (int i = 1; i < 16; ++i)
-        {
-            put(7, 4);
-        }
-        return std::vector<uint8_t>(bytes.begin(), bytes.end());
-    }
-
     // --- Main image on a windowless backplate --------------------------------
 
     constexpr UINT kSize = 64;   // logical = surface size (DPI scale 1)
-
-    class ControlledDecodeService : public IImageDecodeService
-    {
-    public:
-        struct Request
-        {
-            ImageCore::ImageRequest request {};
-            ImageCore::DecodedImageLoadCallback callback {};
-        };
-
-        ImageCore::ImageHandle RequestDecoded(const ImageCore::ImageRequest& request,
-            ImageCore::DecodedImageLoadCallback callback, ImageCore::RequestPriority) override
-        {
-            requests.push_back({ request, std::move(callback) });
-            return static_cast<ImageCore::ImageHandle>(requests.size());
-        }
-        void Cancel(ImageCore::ImageHandle) override {}
-        void SetPriority(ImageCore::ImageHandle, ImageCore::RequestPriority) override {}
-
-        std::vector<Request> requests;
-    };
-
-    struct ScopedDecodeService
-    {
-        explicit ScopedDecodeService(IImageDecodeService* service)
-        {
-            ImageAsyncBinding::SetDecodeServiceForTesting(service);
-            ImageGpuResourceCache::Instance().Clear();
-        }
-        ~ScopedDecodeService()
-        {
-            ImageGpuResourceCache::Instance().Clear();
-            ImageAsyncBinding::SetDecodeServiceForTesting(nullptr);
-        }
-    };
 
     ImageCore::DecodedImage Decoded(const ImageAsyncBinding::Payload& payload)
     {
