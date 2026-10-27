@@ -87,10 +87,22 @@ namespace
             return CommonUtil::NormalizePath((dir / archiveName).wstring() + L"\\" + entry);
         }
 
+        // A plain file the scheduler reads from disk. It is read back here
+        // once, on the test thread, outside every bounded wait: the first open
+        // of a just-written file can block in CreateFile for many seconds
+        // (most likely an on-access scan of the new file) when it comes from
+        // the thumbnail prefetch thread, which runs in background mode (very
+        // low CPU and I/O priority), on a busy machine; that stalls the
+        // serialized prefetch queue behind it too. The tests time cancellation
+        // and ordering, not that first open.
         std::wstring LocalFile(const std::wstring& name)
         {
-            WriteFile(dir / name, BytesFor(name));
-            return CommonUtil::NormalizePath((dir / name).wstring());
+            const std::filesystem::path path = dir / name;
+            WriteFile(path, BytesFor(name));
+            std::ifstream in(path, std::ios::binary);
+            std::vector<char> readBack(BytesFor(name).size());
+            in.read(readBack.data(), static_cast<std::streamsize>(readBack.size()));
+            return CommonUtil::NormalizePath(path.wstring());
         }
     };
 
