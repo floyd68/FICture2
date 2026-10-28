@@ -173,3 +173,10 @@ public:
 private:
     std::shared_ptr<Core> m_core;
 };
+
+// Closes Floar's idle forward cursors (ArchiveCursorPool::Shared()->TrimIdle)
+// when a browser lists `to` after `from` and `from` was in (or was) an archive
+// that `to` is not in. Returns true when it trimmed. Idle cursors hold no file
+// handle, but they hold decompressor memory that the archive left behind no
+// longer needs.
+bool TrimArchiveCursorsOnLeave(const Floar::VirtualPath& from, const Floar::VirtualPath& to);

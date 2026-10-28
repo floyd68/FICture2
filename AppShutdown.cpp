@@ -1,6 +1,8 @@
 #include "AppShutdown.h"
 
 #include "AppLog.h"
+#include "ArchiveCursorPool.h"
+#include "ArchiveEntryHandoff.h"
 #include "FolderEnumeration.h"
 #include "ImageAsyncBinding.h"
 #include "ImageGpuResourceCache.h"
@@ -71,6 +73,9 @@ AppShutdownHooks DefaultAppShutdownHooks(
 
     hooks.shutdownArchiveOpens = [cache = &archiveCache](std::chrono::milliseconds bound)
     {
+        // ImageCore is stopped: no read can park or take entries any more.
+        ArchiveEntryHandoff::Shared().Clear();
+        (void)Floar::ArchiveCursorPool::Shared()->TrimIdle();
         if (cache->Shutdown(bound))
         {
             return true;

@@ -820,6 +820,34 @@ FIC2_TEST(ArchiveHandoff_PlainZipBa2AndUndemandedReadsAreUnchanged)
     }
 }
 
+// Leaving an archive closes the idle forward cursors; staying in it or
+// entering one does not.
+FIC2_TEST(ArchiveHandoff_LeavingAnArchiveTrimsIdleCursors)
+{
+    const auto dir = MakeTempDir(L"leave");
+    const auto archive = dir / L"solid.7z";
+    FIC2_REQUIRE(WriteFixture(archive, 'a', {}, L".dds"));
+    {
+        const auto reader = Floar::ArchiveReaderFactory::Open(archive, {}, Floar::ArchiveCursorPool::Shared());
+        FIC2_REQUIRE(reader != nullptr);
+        FIC2_CHECK(reader->ExtractToMemory(DeepName(0)) == Bytes(EntryData(kOther, 'a', kEntrySize)));
+        FIC2_REQUIRE(Floar::ArchiveCursorPool::Shared()->Stats().idle >= 1);
+
+        const Floar::VirtualPath inside(archive, L"Data/Textures");
+        const Floar::VirtualPath deeper(archive, L"Data/Textures/Deep");
+        const Floar::VirtualPath root(archive);
+        const Floar::VirtualPath outside(dir);
+        FIC2_CHECK(!TrimArchiveCursorsOnLeave(outside, inside));
+        FIC2_CHECK(!TrimArchiveCursorsOnLeave(inside, deeper));
+        FIC2_CHECK(!TrimArchiveCursorsOnLeave(deeper, root));
+        FIC2_CHECK(Floar::ArchiveCursorPool::Shared()->Stats().idle >= 1);
+        FIC2_CHECK(TrimArchiveCursorsOnLeave(deeper, outside));
+        FIC2_CHECK(Floar::ArchiveCursorPool::Shared()->Stats().idle == 0);
+    }
+    std::error_code ec;
+    std::filesystem::remove_all(dir, ec);
+}
+
 // -------------------------------------------------------------------------
 // Through ImageCore (real ImageLoader, bindings as the tiles use them)
 // -------------------------------------------------------------------------

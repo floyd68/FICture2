@@ -1,6 +1,7 @@
 #include "ArchiveEntryHandoff.h"
 
 #include "AppLog.h"
+#include "ArchiveCursorPool.h"
 #include "ArchiveReader.h"
 #include "ArchiveReaderCache.h"
 #include "VirtualFileSystem.h"
@@ -519,4 +520,29 @@ void ArchiveEntryHandoff::ResetCounters()
     current.peakParkedBytes = current.parkedBytes;
     current.peakHeldBytes = current.parkedBytes;
     m_core->stats = current;
+}
+
+bool TrimArchiveCursorsOnLeave(const Floar::VirtualPath& from, const Floar::VirtualPath& to)
+{
+    const auto archiveOf = [](const Floar::VirtualPath& folder) -> std::wstring
+    {
+        if (folder.empty())
+        {
+            return {};
+        }
+        if (folder.IsInArchive() || Floar::ArchiveReaderFactory::HasArchiveExtension(folder.hostPath.filename().wstring()))
+        {
+            return Floar::HostPathKey(folder.hostPath);
+        }
+        return {};
+    };
+
+    const std::wstring left = archiveOf(from);
+    if (left.empty() || left == archiveOf(to))
+    {
+        return false;
+    }
+    const size_t closed = Floar::ArchiveCursorPool::Shared()->TrimIdle();
+    FIC2_LOG_INFO("[ArchiveHandoff] Left an archive: closed {} idle cursor(s)", closed);
+    return true;
 }
