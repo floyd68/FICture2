@@ -920,13 +920,14 @@ FIC2_TEST(MainImageHandoff_ReselectingModifiedStagedCacheHitReloads)
 namespace
 {
     // A hidden window handle given to the scene's windowless backplate, so
-    // Wnd::Invalidate() renders synchronously as in the app.
-    struct SynchronousInvalidation
+    // render requests behave as in the app (a request also invalidates the
+    // window; FD2D renders it at the message loop's flush).
+    struct LiveWindow
     {
         FD2D::Backplate& backplate;
         HWND window { nullptr };
 
-        explicit SynchronousInvalidation(FD2D::Backplate& bp)
+        explicit LiveWindow(FD2D::Backplate& bp)
             : backplate(bp)
         {
             const HINSTANCE instance = GetModuleHandleW(nullptr);
@@ -943,7 +944,7 @@ namespace
             }
         }
 
-        ~SynchronousInvalidation()
+        ~LiveWindow()
         {
             FD2D::BackplateTestAccess::SetWindow(backplate, nullptr);
             if (window != nullptr)
@@ -952,17 +953,17 @@ namespace
             }
         }
 
-        SynchronousInvalidation(const SynchronousInvalidation&) = delete;
-        SynchronousInvalidation& operator=(const SynchronousInvalidation&) = delete;
+        LiveWindow(const LiveWindow&) = delete;
+        LiveWindow& operator=(const LiveWindow&) = delete;
     };
 }
 
-FIC2_TEST(MainImageHandoff_SynchronousRenderSeesCommittedCacheHit)
+FIC2_TEST(MainImageHandoff_CoalescedRenderSeesCommittedCacheHit)
 {
-    // With synchronous invalidation (a live window, outside a render), a
-    // cache hit renders while SetSourceFile runs. Every such frame must show
-    // the pixels and the metadata of the same image, and the hit must not
-    // start a decode.
+    // With a live window, a cache hit renders nothing while SetSourceFile
+    // runs (rendering is coalesced) and requests one frame. That frame must
+    // show the pixels and the metadata of the same image, and the hit must
+    // not start a decode.
     Scene scene;
     FIC2_REQUIRE(scene.Create());
     const std::wstring a = scene.File(L"a.png", 100);
@@ -974,7 +975,7 @@ FIC2_TEST(MainImageHandoff_SynchronousRenderSeesCommittedCacheHit)
     const std::vector<Look> looks { LookOf("a", imageA), LookOf("b", imageB) };
     const size_t requests = scene.decodes.requests.size();
 
-    SynchronousInvalidation sync(scene.backplate);
+    LiveWindow sync(scene.backplate);
     FIC2_REQUIRE(sync.window != nullptr);
 
     // Cached content is an SRV: the D3D pass alone draws the whole image, so
@@ -1003,7 +1004,11 @@ FIC2_TEST(MainImageHandoff_SynchronousRenderSeesCommittedCacheHit)
     {
         frames.clear();
         FIC2_CHECK(scene.main->SetSourceFile(path) == S_OK);
-        std::printf("  revisit %s: %zu synchronous frame(s):", looks[static_cast<size_t>(expectedLook)].name, frames.size());
+        const size_t synchronous = frames.size();
+        FIC2_CHECK(scene.backplate.IsRenderPending());
+        (void)scene.backplate.RenderIfPending();   // the message loop's render
+        std::printf("  revisit %s: %zu synchronous frame(s), then %zu:", looks[static_cast<size_t>(expectedLook)].name,
+            synchronous, frames.size() - synchronous);
         for (const Seen& seen : frames)
         {
             std::printf(" [pixels %s, metadata %s %u px]",
@@ -1011,7 +1016,8 @@ FIC2_TEST(MainImageHandoff_SynchronousRenderSeesCommittedCacheHit)
                 seen.path == a ? "a" : (seen.path == b ? "b" : "-"), seen.width);
         }
         std::printf(", requests %zu -> %zu\n", requests, scene.decodes.requests.size());
-        FIC2_CHECK(!frames.empty());
+        FIC2_CHECK(synchronous == 0);
+        FIC2_CHECK(frames.size() == 1);
         for (const Seen& seen : frames)
         {
             FIC2_CHECK(seen.look == expectedLook);

@@ -29,8 +29,9 @@ public:
     struct MaterializeContext
     {
         std::shared_ptr<FD2D::StackPanel> panel {};
-        // The panel's backplate: the update renders one frame in all
-        // (DeferredRenderScope). Null renders per invalidation.
+        // The panel's backplate: the update requests one frame in all
+        // (DeferredRenderScope). Null: no scope (invalidations are
+        // coalesced by FD2D anyway).
         FD2D::Backplate* backplate { nullptr };
         ThumbTileSet* tiles { nullptr };
         float thumbW { 0.0f };

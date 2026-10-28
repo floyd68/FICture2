@@ -483,9 +483,9 @@ namespace
 
         // Between rebuilds the viewport moves (scrolling, or extents and the
         // row height changing): rebind the tiles when the range it needs
-        // changed. Runs during Render, before the tiles render, so a tile
-        // setter's Invalidate() only marks the window dirty (FD2D does not
-        // render re-entrantly) and no frame is rendered per tile.
+        // changed. Runs during Render, before the tiles render; a tile
+        // setter's Invalidate() only requests the next frame (FD2D renders
+        // coalesced, never re-entrantly), so no frame is rendered per tile.
         void UpdateMaterializedThumbTiles()
         {
             if (!m_thumbPane)
@@ -2730,8 +2730,8 @@ namespace
             }
 
             // Applying a listing renders one frame when it is done: the tile
-            // setters, the selection and the main image only mark the window
-            // dirty until then (FD2D renders on every Invalidate() otherwise).
+            // setters, the selection and the main image only request it (FD2D
+            // coalesces invalidations into one render per loop iteration).
             const DeferredRenderScope batchRender(BackplateRef());
 
             // The anchor and the previous selection refer to the items shown

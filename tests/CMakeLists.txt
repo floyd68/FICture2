@@ -31,6 +31,7 @@ add_executable(FICture2Tests
     TestAssets.rc
     IpcOpenQueueTests.cpp
     InfoPresenterTests.cpp
+    RenderSchedulingTests.cpp
     ${PROJECT_SOURCE_DIR}/AppLog.cpp
     ${PROJECT_SOURCE_DIR}/ImageGpuResourceCache.cpp
     ${PROJECT_SOURCE_DIR}/ImageAlphaPresentation.cpp
@@ -130,6 +131,7 @@ add_test(NAME FICture2.ThumbStripTiles COMMAND FICture2Tests ThumbStripTiles_)
 add_test(NAME FICture2.ImageBrowserThumbStrip COMMAND FICture2Tests ImageBrowserThumbStrip_)
 add_test(NAME FICture2.ListingRender COMMAND FICture2Tests ListingRender_)
 add_test(NAME FICture2.ListingPixels COMMAND FICture2Tests ListingPixels_)
+add_test(NAME FICture2.RenderScheduling COMMAND FICture2Tests RenderScheduling_)
 add_test(NAME FICture2.FolderEnumeration COMMAND FICture2Tests FolderEnumeration_)
 add_test(NAME FICture2.FolderEnumerationForcedExit COMMAND FICture2Tests FolderEnumerationForcedExit_)
 add_test(NAME FICture2.ArchiveReadCancel COMMAND FICture2Tests ArchiveReadCancel_)

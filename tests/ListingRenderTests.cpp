@@ -35,9 +35,11 @@
 #include <vector>
 
 // Applying a folder listing renders at most one frame. The backplate renders
-// into a hidden, never shown window through a software D2D target, so
-// Wnd::Invalidate() renders synchronously outside a deferred-render scope as
-// it does in the app, and a probe child counts the frames.
+// into a hidden, never shown window through a software D2D target, and a
+// probe child counts the frames. FD2D coalesces rendering (FD2D#4):
+// Wnd::Invalidate() and RequestLayout() only request a render, so nothing
+// renders while an update runs, and Flush() renders the pending request
+// once, as the app's message loop does after the message.
 
 namespace
 {
@@ -113,32 +115,13 @@ namespace
         size_t m_layouts { 0 };
     };
 
-    // A plain FD2D backplate that can lay out without rendering, as
-    // Ficture2Backplate can (DeferredLayoutHost).
-    class TestBackplate : public FD2D::Backplate, public DeferredLayoutHost
-    {
-    public:
-        using FD2D::Backplate::Backplate;
-
-        void ArrangeChildrenNow() override
-        {
-            const float width = static_cast<float>(m_size.width);
-            const float height = static_cast<float>(m_size.height);
-            for (const auto& child : m_childrenOrdered)
-            {
-                (void)child->Measure({ width, height });
-                child->Arrange({ 0.0f, 0.0f, width, height });
-            }
-        }
-    };
-
     // A backplate that renders into a hidden window, with a frame probe.
     // Declared before anything attached to it (destroyed after it).
     struct RenderingBackplate
     {
         ThumbTestSupport::ComScope com;
         RenderWindow window;
-        TestBackplate backplate { L"listing-render-test" };
+        FD2D::Backplate backplate { L"listing-render-test" };
         std::shared_ptr<RenderProbe> probe { std::make_shared<RenderProbe>() };
 
         bool Create()
@@ -152,6 +135,15 @@ namespace
         }
 
         size_t Frames() const { return probe->Frames(); }
+
+        // The message loop's render after a message: renders the pending
+        // request, if any; returns the frames it rendered.
+        size_t Flush()
+        {
+            const size_t before = Frames();
+            (void)backplate.RenderIfPending();
+            return Frames() - before;
+        }
     };
 
     const Floar::VirtualPath kFolder(std::filesystem::path(L"C:\\FICture2Tests\\ListingRender"));
@@ -250,7 +242,8 @@ namespace
 }
 
 // Tile setters called with the value a tile already has invalidate nothing
-// (no frame); a changed value renders one frame.
+// (no render request); a changed value requests one frame and renders none
+// synchronously.
 FIC2_TEST(ListingRender_UnchangedSetterValuesDoNotInvalidate)
 {
     ThumbTestSupport::ScopedDecodeService decodes;
@@ -263,15 +256,15 @@ FIC2_TEST(ListingRender_UnchangedSetterValuesDoNotInvalidate)
     FIC2_REQUIRE(rendering.backplate.AddWnd(image));
     rendering.backplate.Render();   // settle the first layout
 
-    // Sets a value twice: the first call changes it (one frame), the second
-    // does not (no frame).
+    // Sets a value twice: the first call changes it (one frame after the
+    // flush), the second does not (no request).
     const auto check = [&](const char* what, const auto& set)
     {
         const size_t before = rendering.Frames();
         set();
-        const bool changedRendered = rendering.Frames() == before + 1;
+        const bool changedRendered = rendering.Frames() == before && rendering.Flush() == 1;
         set();
-        const bool unchangedSilent = rendering.Frames() == before + 1;
+        const bool unchangedSilent = !rendering.backplate.IsRenderPending() && rendering.Flush() == 0;
         if (!changedRendered || !unchangedSilent)
         {
             std::printf("  setter %s: changed rendered %d, unchanged silent %d\n",
@@ -308,6 +301,7 @@ FIC2_TEST(ListingRender_UnchangedSetterValuesDoNotInvalidate)
     image->SetCaption(L"img.png");
     image->SetFixedHeight(80.0f);
     image->SetSelected(true);
+    FIC2_CHECK(!rendering.backplate.IsRenderPending());
     FIC2_CHECK(rendering.Frames() == before);
 }
 
@@ -332,8 +326,11 @@ FIC2_TEST(ListingRender_MaterializingTilesRendersOneFrame)
         const auto start = std::chrono::steady_clock::now();
         strip.Materialize(range, selected);
         const double ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count();
-        const size_t frames = rendering.Frames() - before;
-        std::printf("  %s: %zu tiles, %zu frame(s), %.1f ms\n", what, strip.tiles.Range().Size(), frames, ms);
+        const size_t synchronous = rendering.Frames() - before;
+        const size_t frames = rendering.Flush();
+        std::printf("  %s: %zu tiles, %zu synchronous frame(s), %zu frame(s) after the flush, %.1f ms\n",
+            what, strip.tiles.Range().Size(), synchronous, frames, ms);
+        FIC2_CHECK(synchronous == 0);
         FIC2_CHECK(frames == 1);
     };
 
@@ -349,9 +346,10 @@ FIC2_TEST(ListingRender_MaterializingTilesRendersOneFrame)
     FIC2_CHECK(strip.tiles.Range().Size() == strip.model.DisplayCount());
 }
 
-// Scopes nest: only the outermost renders, once, including the layout
-// requests held during the scope; an exception renders nothing.
-FIC2_TEST(ListingRender_NestedScopesRenderOnceAtTheOutermost)
+// Scopes nest: nothing renders inside them, the outermost requests one
+// frame, layout requests made in them are laid out by that frame, and an
+// exception leaves the depth balanced.
+FIC2_TEST(ListingRender_NestedScopesRequestOneFrame)
 {
     RenderingBackplate rendering;
     FIC2_REQUIRE(rendering.Create());
@@ -367,17 +365,21 @@ FIC2_TEST(ListingRender_NestedScopesRenderOnceAtTheOutermost)
             nav->SetText(L"a");
             nav->SetBadgeText(L"b");
         }
-        FIC2_CHECK(rendering.Frames() == before);
         FIC2_CHECK(rendering.backplate.IsDeferringRender());
         nav->SetSelected(true);
-        FIC2_CHECK(rendering.Frames() == before);
     }
-    FIC2_CHECK(rendering.Frames() == before + 1);
+    FIC2_CHECK(rendering.Frames() == before);
     FIC2_CHECK(!rendering.backplate.IsDeferringRender());
+    FIC2_CHECK(rendering.backplate.IsRenderPending());
+    FIC2_CHECK(rendering.Flush() == 1);
 
-    // Backplate::RequestLayout() renders at once even in a deferred-render
-    // scope; a request made through the scope is held for its one frame,
-    // which runs the layout pass.
+    // A scope around an update that changes nothing still requests its frame.
+    {
+        const DeferredRenderScope scope(&rendering.backplate);
+    }
+    FIC2_CHECK(rendering.Flush() == 1);
+
+    // Layout requests in nested scopes: one layout pass, in the one frame.
     const size_t layouts = rendering.probe->Layouts();
     {
         const DeferredRenderScope outer(&rendering.backplate);
@@ -385,12 +387,14 @@ FIC2_TEST(ListingRender_NestedScopesRenderOnceAtTheOutermost)
         DeferredRenderScope::RequestLayout(&rendering.backplate);
         nav->SetText(L"d");
         DeferredRenderScope::RequestLayout(&rendering.backplate);
-        FIC2_CHECK(rendering.Frames() == before + 1);
     }
     FIC2_CHECK(rendering.Frames() == before + 2);
+    FIC2_CHECK(rendering.probe->Layouts() == layouts);
+    FIC2_CHECK(rendering.Flush() == 1);
     FIC2_CHECK(rendering.probe->Layouts() == layouts + 1);
 
-    // An exception leaves the scope without a render and restores the depth.
+    // An exception leaves the scope without a synchronous frame and restores
+    // the depth; its change is rendered by the next flush.
     try
     {
         const DeferredRenderScope scope(&rendering.backplate);
@@ -400,15 +404,15 @@ FIC2_TEST(ListingRender_NestedScopesRenderOnceAtTheOutermost)
     catch (int)
     {
     }
-    FIC2_CHECK(rendering.Frames() == before + 2);
+    FIC2_CHECK(rendering.Frames() == before + 3);
     FIC2_CHECK(!rendering.backplate.IsDeferringRender());
+    FIC2_CHECK(rendering.Flush() == 1);
 }
 
-// A layout request held by a scope that cannot render - nested in a native
-// FD2D deferred-render scope, or ended by an exception - renders no frame:
-// the layout pass runs without rendering, and the next frame (the enclosing
-// scope's, or the queued paint) shows it.
-FIC2_TEST(ListingRender_HeldLayoutRendersNothingInsideAnFD2DScopeOrWhileUnwinding)
+// A scope nested in a native FD2D batch (as Backplate::HandleFileDragOver
+// opens one) leaves the request to the batch's owner; the changes made in it
+// still render, once, with one layout pass.
+FIC2_TEST(ListingRender_ScopeInsideAnFD2DBatchLeavesTheFrameToTheBatch)
 {
     RenderingBackplate rendering;
     FIC2_REQUIRE(rendering.Create());
@@ -416,9 +420,8 @@ FIC2_TEST(ListingRender_HeldLayoutRendersNothingInsideAnFD2DScopeOrWhileUnwindin
     FIC2_REQUIRE(rendering.backplate.AddWnd(nav));
     rendering.backplate.Render();
 
-    // Inside a native batch (as Backplate::HandleFileDragOver opens one).
-    size_t frames = rendering.Frames();
-    size_t layouts = rendering.probe->Layouts();
+    const size_t frames = rendering.Frames();
+    const size_t layouts = rendering.probe->Layouts();
     rendering.backplate.BeginDeferredRender();
     {
         const DeferredRenderScope scope(&rendering.backplate);
@@ -426,37 +429,18 @@ FIC2_TEST(ListingRender_HeldLayoutRendersNothingInsideAnFD2DScopeOrWhileUnwindin
         nav->SetText(L"x");
     }
     FIC2_CHECK(rendering.Frames() == frames);
-    FIC2_CHECK(rendering.probe->Layouts() == layouts + 1);
     FIC2_CHECK(rendering.backplate.IsDeferringRender());
     rendering.backplate.EndDeferredRender();
-    rendering.backplate.Render();   // the native batch's frame
-    FIC2_CHECK(rendering.Frames() == frames + 1);
-
-    // Ended by an exception.
-    frames = rendering.Frames();
-    layouts = rendering.probe->Layouts();
-    try
-    {
-        const DeferredRenderScope scope(&rendering.backplate);
-        DeferredRenderScope::RequestLayout(&rendering.backplate);
-        nav->SetText(L"y");
-        throw 1;
-    }
-    catch (int)
-    {
-    }
-    FIC2_CHECK(rendering.Frames() == frames);
+    rendering.backplate.RequestRender();   // the batch owner's request
+    FIC2_CHECK(rendering.Flush() == 1);
     FIC2_CHECK(rendering.probe->Layouts() == layouts + 1);
-    FIC2_CHECK(!rendering.backplate.IsDeferringRender());
-    rendering.backplate.Render();   // the queued paint's frame
-    FIC2_CHECK(rendering.Frames() == frames + 1);
 }
 
-// The held layout's pass arranges controls that invalidate while they are
-// arranged (a split panel's splitter takes the new ratio): those
-// invalidations stay deferred too, when no enclosing scope remains (an
-// exception) and inside a native batch, and the bounds are arranged.
-FIC2_TEST(ListingRender_HeldLayoutPassInvalidationsRenderNothing)
+// A split ratio changed in a scope (a control that invalidates while it is
+// arranged) renders nothing synchronously, also when the scope unwinds;
+// input before the frame sees the arranged panes (LayoutIfPending), and the
+// flush renders them once.
+FIC2_TEST(ListingRender_SplitRatioChangeInAScopeIsArrangedBeforeInputAndRenderedOnce)
 {
     RenderingBackplate rendering;
     FIC2_REQUIRE(rendering.Create());
@@ -485,29 +469,26 @@ FIC2_TEST(ListingRender_HeldLayoutPassInvalidationsRenderNothing)
     }
     FIC2_CHECK(rendering.Frames() == frames);
     FIC2_CHECK(!rendering.backplate.IsDeferringRender());
+    FIC2_CHECK(rendering.backplate.LayoutIfPending());   // what routing the next input does
     const float wide = firstWidth();
     std::printf("  first pane %.0f -> %.0f after the unwound scope\n", half, wide);
     FIC2_CHECK(wide > half + 50.0f);
-    rendering.backplate.Render();   // the queued paint's frame
-    FIC2_CHECK(rendering.Frames() == frames + 1);
+    FIC2_CHECK(rendering.Frames() == frames);
+    FIC2_CHECK(rendering.Flush() == 1);
     FIC2_CHECK(std::fabs(firstWidth() - wide) < 1.0f);
 
-    // Inside a native batch.
+    // Completed normally.
     frames = rendering.Frames();
-    rendering.backplate.BeginDeferredRender();
     {
         const DeferredRenderScope scope(&rendering.backplate);
         split->SetSplitRatio(0.3f);
         DeferredRenderScope::RequestLayout(&rendering.backplate);
     }
     FIC2_CHECK(rendering.Frames() == frames);
+    FIC2_CHECK(rendering.Flush() == 1);
     const float narrow = firstWidth();
-    std::printf("  first pane %.0f -> %.0f inside the native batch\n", wide, narrow);
+    std::printf("  first pane %.0f -> %.0f after the scope's frame\n", wide, narrow);
     FIC2_CHECK(narrow < half - 50.0f);
-    rendering.backplate.EndDeferredRender();
-    rendering.backplate.Render();   // the native batch's frame
-    FIC2_CHECK(rendering.Frames() == frames + 1);
-    FIC2_CHECK(std::fabs(firstWidth() - narrow) < 1.0f);
 }
 
 namespace
@@ -561,7 +542,8 @@ namespace
     struct ListingStats
     {
         size_t applies { 0 };      // folder-listing messages that changed the strip
-        size_t maxFrames { 0 };    // frames rendered by one message
+        size_t maxFrames { 0 };    // frames rendered by one message (flushed after it)
+        size_t synchronousFrames { 0 };   // frames rendered while a message ran
         size_t frames { 0 };
         double maxMs { 0.0 };      // UI-thread time of one message
     };
@@ -584,7 +566,8 @@ namespace
                 const auto start = std::chrono::steady_clock::now();
                 (void)browser.OnCommandEvent(FD2D::CommandEvent { kFolderListingReadyMessage, 0, 0 });
                 const double ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count();
-                const size_t frames = rendering.Frames() - before;
+                stats.synchronousFrames += rendering.Frames() - before;
+                const size_t frames = rendering.Frames() - before + rendering.Flush();
                 stats.frames += frames;
                 stats.maxFrames = (std::max)(stats.maxFrames, frames);
                 stats.maxMs = (std::max)(stats.maxMs, ms);
@@ -632,6 +615,7 @@ FIC2_TEST(ListingRender_ApplyingAFolderListingRendersAtMostOneFrame)
         std::printf("  %s: %zu items, %zu listing message(s) rendered, max %zu frame(s) and %.1f ms per message\n",
             what, items, stats.applies, stats.maxFrames, stats.maxMs);
         FIC2_CHECK(stats.applies >= 1);
+        FIC2_CHECK(stats.synchronousFrames == 0);
         FIC2_CHECK(stats.maxFrames <= 1);
     };
 
@@ -642,8 +626,8 @@ FIC2_TEST(ListingRender_ApplyingAFolderListingRendersAtMostOneFrame)
 
 // Restoring a session of several viewers inside the restore's one-frame
 // scope: every viewer gets the saved strip height. The added viewers' layout
-// requests are held for that frame, so the forced height must not be
-// computed from a viewer that was never arranged.
+// is coalesced with that frame, so the forced height must not be computed
+// from a viewer that was never arranged.
 FIC2_TEST(ListingRender_RestoredViewersGetTheSavedStripHeight)
 {
     constexpr float kSavedHeight = 230.0f;
@@ -680,7 +664,7 @@ FIC2_TEST(ListingRender_RestoredViewersGetTheSavedStripHeight)
 
         const size_t before = probe->Frames();
         FIC2_REQUIRE(backplate.TryRestoreImageBrowserSession(ini));
-        FIC2_CHECK(probe->Frames() - before <= 1);
+        FIC2_CHECK(probe->Frames() == before);   // nothing renders synchronously
         for (int i = 0; i < 3; ++i)
         {
             backplate.Render();
