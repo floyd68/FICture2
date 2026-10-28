@@ -262,6 +262,7 @@ target_sources(FICture2 PRIVATE
     AppLog.cpp
     AppSetup.cpp
     AppShutdown.cpp
+    ArchiveEntryHandoff.cpp
     FICture2.cpp
     Ficture2Backplate.cpp
     FloarPathByteSource.cpp

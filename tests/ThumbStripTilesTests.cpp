@@ -700,6 +700,58 @@ FIC2_TEST(ThumbStripTiles_TenThousandItemsStayBoundedWhileScrolling)
         strip.views, strip.maxTiles, strip.decodes.RequestCount());
 }
 
+// A 10,000-image folder inside a (solid) archive: the archive-entry demands
+// the image bindings register for the solid-archive handoff (#43) are exactly
+// the outstanding thumbnail requests, so they stay within visible + 2 * M
+// while scrolling and jumping, and none is left once the strip is cleared.
+// The folder's images are never all demanded, so a forward pass never reads
+// (or parks) the whole folder.
+FIC2_TEST(ThumbStripTiles_TenThousandArchiveItemsKeepDemandBounded)
+{
+    constexpr size_t kImages = 10000;
+    const Floar::VirtualPath archiveFolder(std::filesystem::path(L"C:\\FICture2Tests\\Strip.7z"), L"Deep/Folder");
+    ArchiveEntryHandoff& handoff = ArchiveEntryHandoff::Shared();
+    const size_t baseline = handoff.CurrentStats().demands;
+    size_t maxDemands = 0;
+    {
+        VirtualStrip strip;
+        strip.model.Reset(archiveFolder, true, &IsTestImage);
+        std::vector<Floar::VirtualFileEntry> entries;
+        for (size_t i = 0; i < kImages; ++i)
+        {
+            entries.push_back(Floar::VirtualFileEntry(
+                Floar::VirtualPath(archiveFolder.hostPath, archiveFolder.archiveInnerPath + L"/" + ImageName(i)), false, 0, 0));
+        }
+        (void)strip.model.Merge(entries, ListedIdentities(entries));
+        FIC2_REQUIRE(strip.model.DisplayCount() == kImages + 1);
+        strip.Relayout();
+
+        const auto view = [&](float left)
+        {
+            strip.View(left);
+            const size_t demands = handoff.CurrentStats().demands - baseline;
+            const size_t bound = strip.visible.Size() + 2 * ThumbStripLayout::kMaxPrefetchItems;
+            FIC2_CHECK(demands == strip.decodes.OutstandingThumbnails());
+            FIC2_CHECK(demands <= bound);
+            maxDemands = (std::max)(maxDemands, demands);
+        };
+        const float last = strip.LastLeft();
+        for (float left = 0.0f; left < last; left += VirtualStrip::kViewport * 0.37f)
+        {
+            view(left);
+        }
+        view(last);
+        view(0.0f);
+        view(last * 0.5f);
+        FIC2_CHECK(maxDemands > 0);
+        FIC2_CHECK(maxDemands < 200);   // nowhere near the folder size
+        std::printf("  at most %zu archive-entry demands for %zu images (%zu thumbnail requests in total)\n",
+            maxDemands, kImages, strip.decodes.RequestCount());
+    }
+    // Released tiles cancel their requests, which withdraws their demands.
+    FIC2_CHECK(handoff.CurrentStats().demands == baseline);
+}
+
 // CPU payload memory while scrolling a folder much larger than the cache: the
 // accounted total (cache entries plus pinned payloads) stays within the
 // configured bounds, pinned payloads stay within one per bound tile, only
