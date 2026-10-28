@@ -171,7 +171,10 @@ void CloudThumbnailRouter::Cancel(ImageCore::ImageHandle handle)
         return;
     }
 
-    std::shared_ptr<Job> fallen;
+    // Never waits for a fallback's admission (the inner service may block in
+    // it): a fallback not admitted yet sees the cancel and never starts, and
+    // one being admitted cancels its inner request when the admission returns.
+    ImageCore::ImageHandle innerHandle = 0;
     {
         std::lock_guard<std::mutex> lock(m_core->mutex);
         const auto it = m_core->jobs.find(handle);
@@ -183,24 +186,7 @@ void CloudThumbnailRouter::Cancel(ImageCore::ImageHandle handle)
         m_core->jobs.erase(it);
         job->canceled = true;
         ++m_stats.canceled;
-        if (job->state == JobState::Fallback)
-        {
-            fallen = job;
-        }
-    }
-    if (!fallen)
-    {
-        return;
-    }
-
-    // A fallback not admitted yet sees the cancel and never starts; one being
-    // admitted is waited for (it then cancels its inner request itself), so
-    // no inner request of this job is live when Cancel returns.
-    std::lock_guard<std::mutex> forwardLock(fallen->forward);
-    ImageCore::ImageHandle innerHandle = 0;
-    {
-        std::lock_guard<std::mutex> lock(m_core->mutex);
-        innerHandle = fallen->innerHandle;
+        innerHandle = job->innerHandle;   // 0 unless admitted
     }
     if (innerHandle != 0)
     {
@@ -216,7 +202,7 @@ void CloudThumbnailRouter::SetPriority(ImageCore::ImageHandle handle, ImageCore:
         return;
     }
 
-    std::shared_ptr<Job> fallen;
+    std::shared_ptr<Job> job;
     {
         std::lock_guard<std::mutex> lock(m_core->mutex);
         const auto it = m_core->jobs.find(handle);
@@ -224,35 +210,35 @@ void CloudThumbnailRouter::SetPriority(ImageCore::ImageHandle handle, ImageCore:
         {
             return;
         }
-        it->second->priority = priority;
-        if (it->second->state == JobState::Fallback)
-        {
-            fallen = it->second;
-        }
+        job = it->second;
+        job->priority = priority;
     }
-    if (!fallen)
+    // Not admitted yet: FallBack dispatches at the latest priority.
+    ForwardPriority(job);
+}
+
+void CloudThumbnailRouter::ForwardPriority(const std::shared_ptr<Job>& job)
+{
+    // One forwarder per job at a time, and it sends until the inner request
+    // has the latest priority; any other caller returns without waiting, its
+    // update picked up by the running forwarder. So the last priority the
+    // inner service receives is the last one set.
+    std::unique_lock<std::mutex> lock(m_core->mutex);
+    if (job->innerHandle == 0 || job->forwarding)
     {
         return;
     }
-
-    // Forwarded updates are serialized and each sends the latest priority, so
-    // the last one the inner service receives is the last one requested.
-    std::lock_guard<std::mutex> forwardLock(fallen->forward);
-    ImageCore::ImageHandle innerHandle = 0;
-    ImageCore::RequestPriority latest {};
+    job->forwarding = true;
+    while (!job->canceled && job->priority != job->sentPriority)
     {
-        std::lock_guard<std::mutex> lock(m_core->mutex);
-        if (fallen->canceled)
-        {
-            return;
-        }
-        innerHandle = fallen->innerHandle;
-        latest = fallen->priority;
-    }
-    if (innerHandle != 0)   // 0: not admitted yet; FallBack reads the latest priority
-    {
+        const ImageCore::RequestPriority latest = job->priority;
+        job->sentPriority = latest;
+        const ImageCore::ImageHandle innerHandle = job->innerHandle;
+        lock.unlock();
         m_inner.SetPriority(innerHandle, latest);
+        lock.lock();
     }
+    job->forwarding = false;
 }
 
 void CloudThumbnailRouter::StartWorkers_NoLock()
@@ -400,9 +386,6 @@ void CloudThumbnailRouter::FallBack(const std::shared_ptr<Job>& job)
         m_options.beforeFallbackForTesting();
     }
 
-    // The admission and its priority reconciliation hold the job's forward
-    // lock, so Cancel and SetPriority wait for them instead of racing them.
-    std::unique_lock<std::mutex> forwardLock(job->forward);
     ImageCore::RequestPriority priority {};
     {
         std::lock_guard<std::mutex> lock(m_core->mutex);
@@ -411,6 +394,7 @@ void CloudThumbnailRouter::FallBack(const std::shared_ptr<Job>& job)
             return;   // canceled before admission: no read starts
         }
         priority = job->priority;
+        job->sentPriority = priority;
     }
 
     // The completion leaves the router's table and is forwarded unless the
@@ -439,9 +423,10 @@ void CloudThumbnailRouter::FallBack(const std::shared_ptr<Job>& job)
     };
     const ImageCore::ImageHandle innerHandle = m_inner.RequestDecoded(job->request, std::move(forward), priority);
 
+    // A Cancel or SetPriority made during the dispatch only recorded itself
+    // (innerHandle was 0); apply it now.
     bool cancelInner = false;
     bool rejected = false;
-    ImageCore::RequestPriority latest = priority;
     {
         std::lock_guard<std::mutex> lock(m_core->mutex);
         if (job->canceled)
@@ -456,19 +441,16 @@ void CloudThumbnailRouter::FallBack(const std::shared_ptr<Job>& job)
         else
         {
             job->innerHandle = innerHandle;
-            latest = job->priority;
         }
     }
     if (cancelInner)
     {
         m_inner.Cancel(innerHandle);
     }
-    else if (!rejected && latest != priority)
+    else if (!rejected)
     {
-        // Changed during the dispatch (SetPriority waited for it).
-        m_inner.SetPriority(innerHandle, latest);
+        ForwardPriority(job);
     }
-    forwardLock.unlock();
     if (rejected)
     {
         // The inner service rejected it (for example after its shutdown) and
@@ -479,6 +461,7 @@ void CloudThumbnailRouter::FallBack(const std::shared_ptr<Job>& job)
 
 bool CloudThumbnailRouter::Shutdown(std::chrono::milliseconds bound)
 {
+    const auto deadline = std::chrono::steady_clock::now() + bound;
     std::vector<ImageCore::ImageHandle> innerHandles;
     {
         std::lock_guard<std::mutex> lock(m_core->mutex);
@@ -500,10 +483,18 @@ bool CloudThumbnailRouter::Shutdown(std::chrono::milliseconds bound)
         m_inner.Cancel(handle);
     }
 
+    // One caller at a time owns the workers while it waits for them, so a
+    // concurrent caller never sees them missing and reports success early; it
+    // waits for the owner within its own bound instead.
+    std::unique_lock<std::timed_mutex> lifecycle(m_lifecycle, std::defer_lock);
+    if (!lifecycle.try_lock_until(deadline))
+    {
+        return false;
+    }
+
     // A worker is done only when its thread has terminated (after
     // CoUninitialize and its thread-local destructors), so the bound waits
     // on the native threads; a join before that could block past it.
-    const auto deadline = std::chrono::steady_clock::now() + bound;
     std::vector<std::thread> workers;
     {
         std::lock_guard<std::mutex> lock(m_core->mutex);

@@ -907,6 +907,71 @@ FIC2_TEST(CloudThumbnail_TheLatestPriorityWinsAcrossAFallback)
     FIC2_CHECK(router.Shutdown(5s));
 }
 
+// Cancel and SetPriority (called on the UI thread) never wait for a fallback's
+// admission, which may block in the inner service; a cancel made during it
+// cancels the inner request once the admission returns.
+FIC2_TEST(CloudThumbnail_CancelAndSetPriorityNeverWaitForAdmission)
+{
+    ThumbTestSupport::ComScope com;
+    GatedDecodeService inner;
+    inner.holdDispatch = true;
+    FakeQueries queries;
+    FakeShellSource shell;
+    shell.respond = FailedShell;
+    CloudThumbnailRouter router(inner, shell, &queries, FastOptions(1));
+
+    bool called = false;
+    const ImageCore::ImageHandle handle = router.RequestDecoded(ThumbRequest(kCloud + L"a.dds"),
+        [&called](HRESULT, ImageCore::DecodedImage) { called = true; }, ImageCore::RequestPriority::Visible);
+    FIC2_REQUIRE(inner.WaitDispatching());
+
+    std::mutex mutex;
+    std::condition_variable changed;
+    bool returned = false;
+    std::thread caller([&]
+    {
+        router.SetPriority(handle, ImageCore::RequestPriority::Prefetch);
+        router.Cancel(handle);
+        std::lock_guard<std::mutex> lock(mutex);
+        returned = true;
+        changed.notify_all();
+    });
+    bool returnedDuringAdmission = false;
+    {
+        std::unique_lock<std::mutex> lock(mutex);
+        returnedDuringAdmission = changed.wait_for(lock, 1s, [&] { return returned; });
+    }
+    inner.ReleaseDispatch();
+    caller.join();
+    FIC2_CHECK(returnedDuringAdmission);
+
+    FIC2_REQUIRE(WaitUntil([&] { return inner.RequestCount() == 1 && inner.Requests()[0].canceled; }));
+    FIC2_CHECK(router.Shutdown(5s));
+    FIC2_CHECK(!called);
+}
+
+// Concurrent Shutdown calls: while one still waits for a worker in a shell
+// call, another reports false at its own bound instead of success.
+FIC2_TEST(CloudThumbnail_ConcurrentShutdownReportsRunningWorkers)
+{
+    ThumbTestSupport::ComScope com;
+    RouterFixture fixture(FastOptions(1));
+    fixture.shell.Hold();
+    (void)fixture.router->RequestDecoded(ThumbRequest(kCloud + L"a.jpg"),
+        [](HRESULT, ImageCore::DecodedImage) {}, ImageCore::RequestPriority::Visible);
+    FIC2_REQUIRE(fixture.shell.WaitForCalls(1));
+
+    bool first = false;
+    std::thread owner([&] { first = fixture.router->Shutdown(5s); });
+    std::this_thread::sleep_for(50ms);
+    const bool second = fixture.router->Shutdown(20ms);
+    fixture.shell.Release();
+    owner.join();
+    FIC2_CHECK(!second);
+    FIC2_CHECK(first);
+    FIC2_CHECK(fixture.router->Shutdown(0ms));   // all joined
+}
+
 namespace
 {
     // A provider that completes a pending thumbnail through the calling

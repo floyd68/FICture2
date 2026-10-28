@@ -34,20 +34,23 @@
 //   for no larger one; an upgrade request is again a shell request.
 // - Cancellation (the #45 contract): Cancel removes a queued or waiting
 //   request before its shell call, and drops a running one when its call
-//   returns; a canceled request publishes nothing and never falls back: the
-//   fallback checks for a cancel under the job's forward lock before it is
-//   admitted to the inner service, and a Cancel during the admission waits
-//   for it, so the inner request is canceled when Cancel returns. Late
+//   returns; a canceled request publishes nothing and never falls back. A
+//   fallback checks for a cancel (under the router mutex) right before it is
+//   admitted to the inner service; a Cancel during the admission does not
+//   wait for it (the inner service may block there, and Cancel runs on the
+//   UI thread): the worker cancels the inner request when it returns. Late
 //   results of superseded requests are dropped by ImageAsyncBinding's
 //   generation gate as for ImageCore completions.
 // - Handles: routed requests get handles with kShellHandleBit set; others are
 //   the inner service's handles, passed through. Cancel and SetPriority of a
-//   request that fell back reach its inner handle, serialized with the
-//   admission by the job's forward lock; each forwarded update sends the
-//   latest priority, so the inner request ends at the last priority set.
+//   request that fell back reach its inner handle. Priority updates are
+//   recorded and sent by one forwarder per job at a time (the caller, or the
+//   worker once the admission returns) until the inner request has the
+//   latest one, so it ends at the last priority set; no caller waits.
 // - Shutdown stops the workers, bounded by their native threads' exit, and
 //   drops every request without a completion; later requests all pass
-//   through to the inner service.
+//   through to the inner service. Concurrent Shutdown calls are serialized,
+//   each within its own bound.
 
 #include "FloarPathByteSource.h"
 #include "ImageAsyncBinding.h"
@@ -113,8 +116,9 @@ public:
     // (canceling inner handles of those that fell back) and joins the workers
     // whose threads exit within `bound`. False when a worker's thread is
     // still running at the bound (in a shell call, CoUninitialize or its
-    // thread-local cleanup): it publishes nothing and is kept, so a later
-    // Shutdown can join it.
+    // thread-local cleanup), or when another Shutdown still waits for the
+    // workers at the bound: the worker publishes nothing and is kept, so a
+    // later Shutdown can join it.
     bool Shutdown(std::chrono::milliseconds bound);
 
     Stats GetStats() const;
@@ -148,11 +152,9 @@ private:
         bool called { false };
         uint32_t polls { 0 };
         bool canceled { false };   // removed while running or falling back
-        ImageCore::ImageHandle innerHandle { 0 };
-        // Held while the fallback is admitted to the inner service and while
-        // Cancel or SetPriority forward to it (not the core mutex: the inner
-        // service may complete synchronously).
-        std::mutex forward;
+        ImageCore::ImageHandle innerHandle { 0 };   // set once the fallback is admitted
+        ImageCore::RequestPriority sentPriority { ImageCore::RequestPriority::Visible };   // last sent to the inner service
+        bool forwarding { false };   // a ForwardPriority call is sending
     };
 
     void StartWorkers_NoLock();
@@ -164,6 +166,9 @@ private:
         std::chrono::steady_clock::time_point& wakeAt) const;
     // Sends `job` to the inner service; called without the lock.
     void FallBack(const std::shared_ptr<Job>& job);
+    // Sends the latest priority of an admitted fallback to its inner request
+    // unless another call is already sending; called without the lock.
+    void ForwardPriority(const std::shared_ptr<Job>& job);
 
     // The routed requests by handle, shared with the completion forwarders of
     // requests that fell back (which may outlive the router).
@@ -177,6 +182,8 @@ private:
     IShellThumbnailSource& m_shell;
     HostPathClassifier m_classifier;
     Options m_options;
+    // Held by the Shutdown call that waits for the workers.
+    std::timed_mutex m_lifecycle;
 
     // Everything below is guarded by m_core->mutex.
     const std::shared_ptr<Core> m_core { std::make_shared<Core>() };
