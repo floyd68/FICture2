@@ -26,6 +26,7 @@
 #include "Ficture2Backplate.h"
 #include "AppLog.h"
 #include "AppSetup.h"
+#include "ArchiveEntryHandoff.h"
 #include "DeferredRenderScope.h"
 #include "RecentFiles.h"
 
@@ -2588,6 +2589,7 @@ namespace
             const std::wstring browserName = Name();
             const Floar::VirtualPath folder = m_currentFolder;
             const bool showNavItems = m_showNavItems;
+            NoteListedFolder(folder);
 
             m_thumbListLoading = true;
             m_progressiveStartMs = CommonUtil::NowMs();
@@ -2609,6 +2611,14 @@ namespace
 
             // Supersedes the previous load of this browser (latest request wins).
             m_folderLane.Start(FolderLoadRequest { requestId, folder, preferSelectPath, showNavItems });
+        }
+
+        // A listing of `folder` starts: leaving an archive closes the idle
+        // forward cursors its thumbnails left (TrimArchiveCursorsOnLeave).
+        void NoteListedFolder(const Floar::VirtualPath& folder)
+        {
+            (void)TrimArchiveCursorsOnLeave(m_listedFolder, folder);
+            m_listedFolder = folder;
         }
 
         bool HandleAsyncThumbReadyMessage()
@@ -2762,6 +2772,7 @@ namespace
             const std::wstring previousSelectedKey = ThumbItemKey(m_selectedIndex);
             if (listSynchronously)
             {
+                NoteListedFolder(m_currentFolder);
                 m_thumbModel.Reset(m_currentFolder, m_showNavItems, ImageFilterForThumbModel());
                 m_thumbPreferKey.clear();
                 if (!m_currentFolder.hostPath.empty())
@@ -3385,6 +3396,7 @@ namespace
         ULONGLONG m_lastKeyNavMs { 0 };
 
         Floar::VirtualPath m_currentFolder {};
+        Floar::VirtualPath m_listedFolder {};   // of the last listing started (NoteListedFolder)
         bool m_showNavItems { true };
         std::atomic<unsigned long long> m_thumbListRequestId { 0 };
         bool m_thumbListLoading { false };

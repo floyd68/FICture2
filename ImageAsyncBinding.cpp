@@ -144,6 +144,7 @@ ImageCore::ImageHandle ImageAsyncBinding::Supersede_NoLock(ImageAsyncBindingStat
         state.phase = Phase::Superseded;
     }
     state.pending = Payload {};
+    state.demand.Reset();
     return handle;
 }
 
@@ -218,6 +219,16 @@ void ImageAsyncBinding::RequestLoad(
     const std::wstring& normalizedPath,
     ImageCore::RequestPriority priority)
 {
+    // Registered before the dispatch: ImageCore may read at once.
+    ArchiveEntryHandoff::Demand demand;
+    if (request.purpose == ImageCore::ImagePurpose::Thumbnail || request.purpose == ImageCore::ImagePurpose::FullResolution)
+    {
+        demand = ArchiveEntryHandoff::Shared().Register(request.source,
+            request.purpose == ImageCore::ImagePurpose::Thumbnail
+                ? ArchiveEntryHandoff::DemandKind::Thumbnail
+                : ArchiveEntryHandoff::DemandKind::MainImage);
+    }
+
     uint64_t gen = 0;
     ImageCore::ImageHandle oldHandle = 0;
     {
@@ -227,6 +238,7 @@ void ImageAsyncBinding::RequestLoad(
         m_state->phase = Phase::Loading;
         m_state->requestPath = normalizedPath;
         m_state->priority = priority;
+        m_state->demand = std::move(demand);
     }
 
     if (oldHandle != 0)
@@ -269,6 +281,7 @@ void ImageAsyncBinding::RequestLoad(
             {
                 // ImageCore rejected the request and will never call back.
                 m_state->phase = Phase::Failed;
+                m_state->demand.Reset();
                 m_state->failedPath = normalizedPath;
                 m_state->failedHr = E_ABORT;
                 rejected = true;
@@ -310,6 +323,7 @@ void ImageAsyncBinding::OnDecodeComplete(
         }
 
         state->handle = 0;
+        state->demand.Reset();
         const std::wstring normalizedSource = CommonUtil::NormalizePath(state->requestPath);
 
         if (SUCCEEDED(hr) && image.blocks && !image.blocks->empty())

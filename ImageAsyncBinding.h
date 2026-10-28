@@ -26,6 +26,7 @@
 // concurrently with a newer request). Such callbacks carry an old generation
 // and are dropped without touching the newer request's state.
 
+#include "ArchiveEntryHandoff.h"
 #include "ImageCore/ImageRequest.h"
 #include "ImageCore/ImageLoader.h"
 #include "ImageCore/DecodedImage.h"
@@ -120,6 +121,10 @@ struct ImageAsyncBindingState
     ImageCore::ImageHandle handle { 0 }; // in-flight handle of `generation`, 0 when none
     ImageCore::RequestPriority priority { ImageCore::RequestPriority::Visible };  // of `generation`
     std::wstring requestPath {};         // normalized path of `generation`'s request
+    // `generation`'s demand on its archive entry (ArchiveEntryHandoff::Shared()),
+    // held while Loading: a solid-archive thumbnail pass parks the bytes of
+    // demanded entries only, and a main image is read at High priority.
+    ArchiveEntryHandoff::Demand demand {};
     std::shared_ptr<FD2D::AsyncRedrawToken> redrawToken {};
 
     struct Payload

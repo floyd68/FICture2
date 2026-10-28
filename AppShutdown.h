@@ -11,8 +11,10 @@
 //      ImageLoader::ShutdownIfCreated(bound), which requests stop on every
 //      request token and joins ImageCore's threads (it creates no loader, so a
 //      path that never used ImageCore starts no decode worker);
-//   4. Floar shared-open service, bounded: ArchiveReaderCache::Shutdown(bound),
-//      which joins the archive open workers (none start if no open ran);
+//   4. Floar shared-open service, bounded: the solid-archive handoff's parked
+//      bytes are dropped and the idle forward cursors closed, then
+//      ArchiveReaderCache::Shutdown(bound) joins the archive open workers
+//      (none start if no open ran);
 //   5. GPU resource cache clear, FD2D shutdown, log shutdown, OLE uninitialize.
 // Every archive-cache caller (enumeration, ImageCore) stops before the cache,
 // so no request decodes, falls back to a path read or publishes a completion
