@@ -93,7 +93,7 @@ namespace
         // (most likely an on-access scan of the new file) when it comes from
         // the thumbnail prefetch thread, which runs in background mode (very
         // low CPU and I/O priority), on a busy machine; that stalls the
-        // serialized prefetch queue behind it too. The tests time cancellation
+        // reads queued behind it in its lane too. The tests time cancellation
         // and ordering, not that first open.
         std::wstring LocalFile(const std::wstring& name)
         {
@@ -287,6 +287,9 @@ FIC2_TEST(ArchiveReadCancel_ThumbnailNavigationDuringExtraction)
 
     binding.RequestLoad(Thumb(b), b);
     FIC2_CHECK(WaitApplied(binding) == b);
+    // B (a local file) is read in ImageCore's Local lane, so it does not wait
+    // for A's archive read to return (floyd68/ImageCore#15); wait for A here.
+    FIC2_REQUIRE(WaitUntil([&] { return env.source.Returned(a).path == a; }));
 
     FIC2_CHECK(!env.archive.Released());
     FIC2_CHECK(env.archive.Done(L"a.fic2c").returnedByStop);
@@ -294,8 +297,6 @@ FIC2_TEST(ArchiveReadCancel_ThumbnailNavigationDuringExtraction)
     FIC2_CHECK(aRead.path == a);
     FIC2_CHECK(aRead.bytes == 0);
     FIC2_CHECK(aRead.stopRequested);
-    // B's first read started only after A's returned (one prefetch thread).
-    FIC2_CHECK(env.source.IndexOf(Kind::Return, a) < env.source.IndexOf(Kind::Start, b));
     // No decode, no path fallback and no retry for A.
     FIC2_CHECK(CountingDecoderFactory::Instance().Decodes(a) == 0);
     FIC2_CHECK(env.source.Count(Kind::Start, a) == 1);
@@ -317,11 +318,12 @@ FIC2_TEST(ArchiveReadCancel_ThumbnailNavigationDuringColdOpen)
 
     binding.RequestLoad(Thumb(b), b);
     FIC2_CHECK(WaitApplied(binding) == b);
+    // B does not wait for A's read (separate ImageCore lanes); wait for A here.
+    FIC2_REQUIRE(WaitUntil([&] { return env.source.Returned(a).path == a; }));
 
     const auto aRead = env.source.Returned(a);
     FIC2_CHECK(aRead.path == a);
     FIC2_CHECK(aRead.bytes == 0);
-    FIC2_CHECK(env.source.IndexOf(Kind::Return, a) < env.source.IndexOf(Kind::Start, b));
     FIC2_CHECK(WaitUntil([&] { return env.opener.InFlight() == 0; }));
     FIC2_CHECK(env.opener.StopSeen() == 1);
     FIC2_CHECK(env.archive.Extractions().empty());
@@ -329,7 +331,7 @@ FIC2_TEST(ArchiveReadCancel_ThumbnailNavigationDuringColdOpen)
     FIC2_CHECK(env.source.Count(Kind::Start, a) == 1);
 }
 
-// A full-resolution archive read (decode worker) is canceled the same way.
+// A full-resolution archive read (main-image reader) is canceled the same way.
 FIC2_TEST(ArchiveReadCancel_FullResolutionCancelDuringExtraction)
 {
     Env env(L"fullres", true);

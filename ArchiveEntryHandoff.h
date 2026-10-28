@@ -4,8 +4,9 @@
 //
 // Reading one entry of a solid 7z or RAR decompresses every entry before it.
 // ImageCore reads each thumbnail on its own (FloarPathByteSource::ReadAll on
-// the serialized prefetch thread), in request-priority order, not in archive
-// order. This class lets one archive pass serve several thumbnails:
+// an Archive lane reader, one read at a time per archive lane), in
+// request-priority order, not in archive order. This class lets one archive
+// pass serve several thumbnails:
 //
 // - Demand window: a request registers a Demand for its path while it is
 //   outstanding (ImageAsyncBinding holds one per request: from dispatch until
@@ -56,15 +57,18 @@
 //   parked; it is read by its own request, which returns it directly (a
 //   one-entry allowance, bounded by Floar's 1 GiB per-entry limit).
 // - Decode-held input: bytes returned to ImageCore are owned by ImageCore and
-//   bounded by its own count bounds, not by this budget: the prefetch stage
-//   holds at most its prefetch cap of thumbnail tasks' bytes (FileByteCache
-//   shares the same buffers and caps its entries at that cap), plus one read
-//   in progress, plus one full-resolution input per decode worker; each is at
-//   most 1 GiB (ReadWholeFileBytes). The two budgets are separate and add up:
-//   handoff (maxParkedBytes + one entry per running read) + ImageCore's
-//   count-bounded inputs. ImageCore#15 may add a byte bound to the second
-//   part; it does not change this one. A parked entry moves to ImageCore when
-//   it is read, so no byte is counted by both at once.
+//   bounded by its own count bounds, not by this budget. Since ImageCore#15
+//   (I/O lanes) these are: thumbnail tasks holding read bytes plus thumbnail
+//   reads in progress, together at most the global prefetch cap (at most 8;
+//   FileByteCache shares the same buffers and caps its entries at that cap),
+//   plus archive/remote main-image reads in progress and inputs held for
+//   decoding, together at most 2; each is at most 1 GiB (ReadWholeFileBytes).
+//   ImageCore#15 kept count bounds and added no byte budget. The two budgets
+//   are separate and add up: handoff (maxParkedBytes + one entry per running
+//   read; ImageCore runs at most two archive thumbnail reads and two
+//   main-image reads at once) + ImageCore's count-bounded inputs. A parked
+//   entry moves to ImageCore when it is read, so no byte is counted by both
+//   at once.
 
 #include <cstddef>
 #include <cstdint>
