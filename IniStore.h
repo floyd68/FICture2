@@ -300,12 +300,9 @@ private:
             if (eq != std::wstring_view::npos)
             {
                 std::wstring key = ToLower(Trim(line.substr(start, eq - start)));
+                // The whole value after '=': ';' is legal in file and folder
+                // names, so it starts a comment only at the start of a line.
                 std::wstring val = Trim(line.substr(eq + 1));
-                const std::size_t semi = val.find(L';');
-                if (semi != std::wstring::npos)
-                {
-                    val = Trim(val.substr(0, semi));
-                }
                 if (!key.empty())
                 {
                     m_sections[currentSection][std::move(key)] = std::move(val);
