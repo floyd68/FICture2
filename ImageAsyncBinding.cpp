@@ -1,5 +1,6 @@
 #include "ImageAsyncBinding.h"
 #include "AppLog.h"
+#include "CloudThumbnailRouter.h"
 #include "CommonUtil.h"
 #include "ImageCore/DecodedImage.h"
 
@@ -19,7 +20,9 @@ namespace
         {
             return service->RequestDecoded(request, std::move(callback), priority);
         }
-        return ImageCore::ImageLoader::Instance().RequestDecoded(request, std::move(callback), priority);
+        // Online-only cloud thumbnails come from the shell; everything else
+        // goes to ImageCore::ImageLoader (CloudThumbnailRouter.h).
+        return CloudThumbnailRouter::Shared().RequestDecoded(request, std::move(callback), priority);
     }
 
     void SetDecodePriority(ImageCore::ImageHandle handle, ImageCore::RequestPriority priority)
@@ -29,7 +32,7 @@ namespace
             service->SetPriority(handle, priority);
             return;
         }
-        ImageCore::ImageLoader::Instance().SetPriority(handle, priority);
+        CloudThumbnailRouter::Shared().SetPriority(handle, priority);
     }
 
     void CancelDecode(ImageCore::ImageHandle handle)
@@ -39,7 +42,7 @@ namespace
             service->Cancel(handle);
             return;
         }
-        ImageCore::ImageLoader::Instance().Cancel(handle);
+        CloudThumbnailRouter::Shared().Cancel(handle);
     }
 
     void RequestRedrawFromState(const std::shared_ptr<ImageAsyncBindingState>& state)

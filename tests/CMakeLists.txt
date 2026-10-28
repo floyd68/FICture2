@@ -19,6 +19,7 @@ add_executable(FICture2Tests
     ArchiveReadCancelTests.cpp
     ArchiveHandoffTests.cpp
     PathClassificationTests.cpp
+    CloudThumbnailTests.cpp
     AppShutdownTests.cpp
     ImageBrowserPathStateTests.cpp
     ThumbItemModelTests.cpp
@@ -50,6 +51,8 @@ add_executable(FICture2Tests
     ${PROJECT_SOURCE_DIR}/ThumbNavTile.cpp
     ${PROJECT_SOURCE_DIR}/ImageBrowserAsyncThumbLoader.cpp
     ${PROJECT_SOURCE_DIR}/ImageAsyncBinding.cpp
+    ${PROJECT_SOURCE_DIR}/CloudThumbnailRouter.cpp
+    ${PROJECT_SOURCE_DIR}/ShellThumbnailSource.cpp
     # The rest of the app (everything but FICture2.cpp, which holds WinMain)
     # for tests that build real image browsers.
     ${PROJECT_SOURCE_DIR}/AppIpc.cpp
@@ -145,6 +148,7 @@ add_test(NAME FICture2.FolderEnumerationForcedExit COMMAND FICture2Tests FolderE
 add_test(NAME FICture2.ArchiveReadCancel COMMAND FICture2Tests ArchiveReadCancel_)
 add_test(NAME FICture2.ArchiveHandoff COMMAND FICture2Tests ArchiveHandoff_)
 add_test(NAME FICture2.PathClassification COMMAND FICture2Tests PathClassification_)
+add_test(NAME FICture2.CloudThumbnail COMMAND FICture2Tests CloudThumbnail_)
 add_test(NAME FICture2.AppShutdown COMMAND FICture2Tests AppShutdown_)
 add_test(NAME FICture2.AppShutdownForcedExit COMMAND FICture2Tests AppShutdownForcedExit_)
 # AppLog::Init runs once per process, so each Init scenario gets its own entry.
