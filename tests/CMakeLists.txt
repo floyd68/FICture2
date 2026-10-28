@@ -24,6 +24,7 @@ add_executable(FICture2Tests
     ThumbPayloadCacheTests.cpp
     ThumbTestSupport.h
     ThumbStripTilesTests.cpp
+    ThumbSizePolicyTests.cpp
     ImageBrowserRoutingTests.cpp
     ImageBrowserThumbStripTests.cpp
     ListingRenderTests.cpp
@@ -39,6 +40,7 @@ add_executable(FICture2Tests
     ${PROJECT_SOURCE_DIR}/ImageBrowserThumbImage.cpp
     ${PROJECT_SOURCE_DIR}/ImageBrowserThumbModel.cpp
     ${PROJECT_SOURCE_DIR}/ImageBrowserThumbPayloadCache.cpp
+    ${PROJECT_SOURCE_DIR}/ImageBrowserThumbSizePolicy.cpp
     ${PROJECT_SOURCE_DIR}/ImageBrowserThumbLayout.cpp
     ${PROJECT_SOURCE_DIR}/ImageBrowserAssets.cpp
     ${PROJECT_SOURCE_DIR}/ThumbImageTile.cpp
@@ -128,6 +130,7 @@ add_test(NAME FICture2.ThumbItemModel COMMAND FICture2Tests ThumbItemModel_)
 add_test(NAME FICture2.ThumbStripLayout COMMAND FICture2Tests ThumbStripLayout_)
 add_test(NAME FICture2.ThumbPayloadCache COMMAND FICture2Tests ThumbPayloadCache_)
 add_test(NAME FICture2.ThumbStripTiles COMMAND FICture2Tests ThumbStripTiles_)
+add_test(NAME FICture2.ThumbSizePolicy COMMAND FICture2Tests ThumbSizePolicy_)
 add_test(NAME FICture2.ImageBrowserThumbStrip COMMAND FICture2Tests ImageBrowserThumbStrip_)
 add_test(NAME FICture2.ListingRender COMMAND FICture2Tests ListingRender_)
 add_test(NAME FICture2.ListingPixels COMMAND FICture2Tests ListingPixels_)
