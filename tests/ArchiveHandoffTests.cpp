@@ -966,7 +966,7 @@ namespace
             {
             }
 
-            ImageCore::PipelineResult Decode(const ImageCore::ImageRequest& request, IWICImagingFactory*, const ImageCore::DecodeInput& input) override
+            ImageCore::PipelineResult Decode(const ImageCore::ImageRequest& request, const ImageCore::DecodeInput& input) override
             {
                 std::this_thread::sleep_for(std::chrono::milliseconds(m_owner.delayMs.load()));
                 const size_t slash = request.source.find_last_of(L"/\\");

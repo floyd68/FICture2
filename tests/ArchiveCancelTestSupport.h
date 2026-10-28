@@ -495,7 +495,7 @@ namespace ArchiveCancelTest
             {
             }
 
-            ImageCore::PipelineResult Decode(const ImageCore::ImageRequest& request, IWICImagingFactory*, const ImageCore::DecodeInput&) override
+            ImageCore::PipelineResult Decode(const ImageCore::ImageRequest& request, const ImageCore::DecodeInput&) override
             {
                 {
                     std::lock_guard<std::mutex> lock(m_owner.m_mutex);

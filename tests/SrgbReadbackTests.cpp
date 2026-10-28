@@ -254,7 +254,7 @@ namespace
         input.bytes = std::span<const uint8_t>(dds.data(), dds.size());
         input.header = std::span<const uint8_t>(dds.data(), (std::min)(dds.size(), size_t { 512 }));
         ImageCore::ImageDecodeDispatcher dispatcher;
-        return dispatcher.Decode(request, nullptr, input);
+        return dispatcher.Decode(request, input);
     }
 
     // A compressed payload the device cannot create a texture for (zero size):
