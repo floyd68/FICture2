@@ -457,6 +457,37 @@ FIC2_TEST(ThumbSizeUpgrade_ALargerCachedSizeIsReused)
     FIC2_CHECK(strip.RequestsFor(0) == 0);
 }
 
+// An already bound tile whose row grows past its payload takes a sufficient
+// size from the cache (decoded earlier, e.g. by another tile) instead of
+// requesting a decode: shown on the same render, no request.
+FIC2_TEST(ThumbSizeUpgrade_RowGrowthOnABoundTileReusesALargerCachedSize)
+{
+    SizeStrip strip(Squares(1));
+    strip.Cache(0, 128, 128, { 128.0f, 128.0f });
+    strip.Cache(0, 256, 256, { 256.0f, 256.0f });
+
+    strip.rowHeight = 128.0f;
+    strip.Materialize({ 0, 1 });
+    strip.Settle();
+    FIC2_CHECK(strip.BitmapOf(0).height == 128.0f);   // the smallest sufficient one
+    FIC2_CHECK(strip.RequestsFor(0) == 0);
+
+    strip.SetRowHeight(192.0f);
+    strip.Frame();   // no decode completes
+    FIC2_CHECK(strip.RequestsFor(0) == 0);
+    FIC2_CHECK(strip.BitmapOf(0).height == 256.0f);
+    strip.Frame();
+    FIC2_CHECK(strip.RequestsFor(0) == 0);
+    FIC2_CHECK(strip.BitmapOf(0).height == 256.0f);
+
+    // With no sufficient cached size the upgrade is still requested once.
+    strip.SetRowHeight(320.0f);
+    strip.Frame();
+    strip.Frame();
+    FIC2_CHECK(strip.RequestsFor(0) == 1);
+    FIC2_CHECK(strip.BitmapOf(0).height == 256.0f);   // shown until it arrives
+}
+
 // A source smaller than the target, dragged across several buckets (live and
 // deferred): exactly one decode. Its source-limited height is recorded on
 // the item model until the folder is listed again.

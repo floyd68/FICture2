@@ -107,6 +107,10 @@ private:
     // The shown payload as the size policy sees it (empty: none).
     ThumbSizePolicy::Decoded ShownDecoded() const;
     bool AdoptCachedPayload();
+    // The cached size of this item to show for `bucket` (see
+    // ThumbSizePolicy::ChooseCached); with `onlyIfSatisfies`, none unless it
+    // satisfies the bucket.
+    ThumbPayloadCache::Pin AcquireCachedFor(float bucket, bool onlyIfSatisfies);
     // Pins `payload` (decoded for m_requestedBox) in the cache, or holds it
     // alone without one.
     ThumbPayloadCache::Pin StorePayload(const ImageAsyncBinding::Payload& payload);

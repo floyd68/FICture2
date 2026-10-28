@@ -306,43 +306,53 @@ D2D1_SIZE_F ImageBrowserThumbImage::GetBitmapSize() const
     return D2D1::SizeF(0.0f, 0.0f);
 }
 
+ThumbPayloadCache::Pin ImageBrowserThumbImage::AcquireCachedFor(float bucket, bool onlyIfSatisfies)
+{
+    if (!m_payloadCache || !ThumbPayloadCache::IsCacheable(m_identity))
+    {
+        return {};
+    }
+    // Looked up by the identity the item was listed with: no file access.
+    // The smallest size that satisfies `bucket` (a larger one included),
+    // else (unless `onlyIfSatisfies`) the largest.
+    const ThumbDecodeOptions options = ThumbDecodeOptions::Of(m_request);
+    const std::vector<ThumbPayloadInfo> infos = m_payloadCache->Find(m_filePath, m_identity, options);
+    std::vector<ThumbSizePolicy::Decoded> sizes;
+    sizes.reserve(infos.size());
+    for (const ThumbPayloadInfo& info : infos)
+    {
+        sizes.push_back({ info.width, info.height, info.sourceLimited });
+    }
+    const ThumbSizePolicy::CacheChoice choice = ThumbSizePolicy::ChooseCached(sizes, bucket, m_sourceLimitedHeight);
+    if (!choice.Found() || (onlyIfSatisfies && !choice.satisfies))
+    {
+        return {};
+    }
+    ThumbPayloadKey key {};
+    key.path = m_filePath;
+    key.identity = m_identity;
+    key.width = sizes[choice.index].width;
+    key.height = sizes[choice.index].height;
+    key.options = options;
+    return m_payloadCache->Acquire(key);
+}
+
 bool ImageBrowserThumbImage::AdoptCachedPayload()
 {
     if (!m_payloadCache || !ThumbPayloadCache::IsCacheable(m_identity))
     {
         return false;
     }
-    // Looked up by the identity the item was listed with: no file access.
-    const ThumbDecodeOptions options = ThumbDecodeOptions::Of(m_request);
     ThumbPayloadCache::Pin cached {};
     if (m_rowHeight > 0.0f)
     {
-        // The smallest size that satisfies the row's bucket (a larger one
-        // included), else the largest, shown until its upgrade arrives.
-        const std::vector<ThumbPayloadInfo> infos = m_payloadCache->Find(m_filePath, m_identity, options);
-        std::vector<ThumbSizePolicy::Decoded> sizes;
-        sizes.reserve(infos.size());
-        for (const ThumbPayloadInfo& info : infos)
-        {
-            sizes.push_back({ info.width, info.height, info.sourceLimited });
-        }
-        const ThumbSizePolicy::CacheChoice choice = ThumbSizePolicy::ChooseCached(
-            sizes, ThumbSizePolicy::BucketFor(m_rowHeight), m_sourceLimitedHeight);
-        if (!choice.Found())
-        {
-            return false;
-        }
-        ThumbPayloadKey key {};
-        key.path = m_filePath;
-        key.identity = m_identity;
-        key.width = sizes[choice.index].width;
-        key.height = sizes[choice.index].height;
-        key.options = options;
-        cached = m_payloadCache->Acquire(key);
+        // Shown until its upgrade arrives when no cached size satisfies the
+        // row's bucket.
+        cached = AcquireCachedFor(ThumbSizePolicy::BucketFor(m_rowHeight), false);
     }
     else
     {
-        cached = m_payloadCache->AcquireLargest(m_filePath, m_identity, options);
+        cached = m_payloadCache->AcquireLargest(m_filePath, m_identity, ThumbDecodeOptions::Of(m_request));
     }
     if (!cached)
     {
@@ -436,6 +446,18 @@ void ImageBrowserThumbImage::RequestSizeUpgradeIfDue()
     const ThumbSizePolicy::Decision decision = ThumbSizePolicy::Evaluate(input, m_upgrades);
     if (decision.action != ThumbSizePolicy::Action::Upgrade)
     {
+        return;
+    }
+
+    // A cached payload that satisfies the bucket (decoded by another tile or
+    // an earlier binding) replaces the shown one without a decode and without
+    // using the bucket's upgrade; it is uploaded on this render.
+    if (ThumbPayloadCache::Pin cached = AcquireCachedFor(decision.bucket, true);
+        cached && cached.Info().height > shown.height)
+    {
+        m_payload = std::move(cached);
+        m_needsCpuReupload = true;
+        m_payloadFromDecode = false;
         return;
     }
 
@@ -707,6 +729,10 @@ void ImageBrowserThumbImage::OnRender(ID2D1RenderTarget* target)
     else if (hasContent)
     {
         RequestSizeUpgradeIfDue();
+        if (!deferBitmapUpload)
+        {
+            TryReuploadCpuPayload(target);   // a sufficient cached payload it adopted
+        }
     }
 
     SyncTextureDrawState();
