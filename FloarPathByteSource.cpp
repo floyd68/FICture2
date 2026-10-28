@@ -70,7 +70,7 @@ FloarPathByteSource::FloarPathByteSource(Floar::ArchiveReaderCache& cache, Archi
 }
 
 FloarPathByteSource::FloarPathByteSource(const PathClassificationQueries& queries)
-    : m_queries(&queries)
+    : m_classifier(&queries)
 {
 }
 
@@ -84,7 +84,7 @@ ArchiveEntryHandoff& FloarPathByteSource::Handoff() const
     return m_handoff ? *m_handoff : ArchiveEntryHandoff::Shared();
 }
 
-const PathClassificationQueries& FloarPathByteSource::Queries() const
+const PathClassificationQueries& HostPathClassifier::Queries() const
 {
     return m_queries ? *m_queries : PathClassificationQueries::System();
 }
@@ -121,7 +121,7 @@ std::vector<uint8_t> FloarPathByteSource::ReadAll(const std::wstring& path, std:
     return Handoff().Read(*vpath, stop, Cache());
 }
 
-std::uint32_t FloarPathByteSource::DriveTypeOf(wchar_t letter) const
+std::uint32_t HostPathClassifier::DriveTypeOf(wchar_t letter) const
 {
     std::lock_guard<std::mutex> lock(m_driveMutex);
     std::optional<std::uint32_t>& cached = m_driveTypes[static_cast<size_t>(letter - L'A')];
@@ -133,9 +133,9 @@ std::uint32_t FloarPathByteSource::DriveTypeOf(wchar_t letter) const
     return *cached;
 }
 
-ImageCore::PathSourceKind FloarPathByteSource::ClassifyPath(const std::wstring& path) const
+HostPathKind HostPathClassifier::Classify(const std::wstring& path) const
 {
-    using Kind = ImageCore::PathSourceKind;
+    using Kind = HostPathKind;
 
     // Lexical checks first: no filesystem access for archives and UNC paths.
     const auto vpath = Floar::VirtualPath::Parse(path);
@@ -175,7 +175,25 @@ ImageCore::PathSourceKind FloarPathByteSource::ClassifyPath(const std::wstring& 
     }
     if (attributes & (FILE_ATTRIBUTE_RECALL_ON_DATA_ACCESS | FILE_ATTRIBUTE_OFFLINE))
     {
-        return Kind::Remote;
+        return Kind::CloudPlaceholder;
     }
     return Kind::Local;
+}
+
+ImageCore::PathSourceKind FloarPathByteSource::ClassifyPath(const std::wstring& path) const
+{
+    using Kind = ImageCore::PathSourceKind;
+    switch (m_classifier.Classify(path))
+    {
+    case HostPathKind::Local:
+        return Kind::Local;
+    case HostPathKind::Archive:
+        return Kind::Archive;
+    case HostPathKind::Remote:
+    case HostPathKind::CloudPlaceholder:
+        return Kind::Remote;
+    case HostPathKind::Unknown:
+        break;
+    }
+    return Kind::Unknown;
 }

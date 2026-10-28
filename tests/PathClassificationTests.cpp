@@ -155,6 +155,26 @@ FIC2_TEST(PathClassification_MapsEachPathToItsLane)
     FIC2_CHECK(queries.AttributeCalls(L"Q:\\h.png") == 0);
 }
 
+// The host classifier behind ClassifyPath tells a cloud placeholder (which
+// ImageCore schedules as Remote) apart from a remote path: the shell thumbnail
+// routing of online-only files (#59) uses the same detection.
+FIC2_TEST(PathClassification_HostClassifierSeparatesCloudPlaceholders)
+{
+    FakeQueries queries;
+    Fill(queries);
+    const HostPathClassifier classifier(&queries);
+
+    FIC2_CHECK(classifier.Classify(L"C:\\OneDrive\\online.png") == HostPathKind::CloudPlaceholder);
+    FIC2_CHECK(classifier.Classify(L"C:\\OneDrive\\offline.png") == HostPathKind::CloudPlaceholder);
+    FIC2_CHECK(classifier.Classify(L"C:\\OneDrive\\pinned.png") == HostPathKind::Local);
+    FIC2_CHECK(classifier.Classify(L"C:\\pics\\plain.png") == HostPathKind::Local);
+    FIC2_CHECK(classifier.Classify(L"Z:\\photos\\f.png") == HostPathKind::Remote);
+    FIC2_CHECK(classifier.Classify(L"\\\\server\\share\\d.png") == HostPathKind::Remote);
+    FIC2_CHECK(classifier.Classify(L"C:\\pics\\pack.zip\\a.png") == HostPathKind::Archive);
+    FIC2_CHECK(classifier.Classify(L"C:\\pics\\missing.png") == HostPathKind::Unknown);
+    FIC2_CHECK(classifier.Classify(L"") == HostPathKind::Unknown);
+}
+
 FIC2_TEST(PathClassification_AvoidsRemoteMetadataQueries)
 {
     // UNC and remote-drive paths never reach the attribute query, UNC paths
