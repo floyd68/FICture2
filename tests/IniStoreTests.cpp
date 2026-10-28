@@ -1,5 +1,6 @@
 #include "TestHarness.h"
 
+#include "AppSetup.h"
 #include "ImageBrowserSessionPersistence.h"
 #include "IniStore.h"
 #include "RecentFiles.h"
@@ -772,13 +773,13 @@ namespace
             g_replaceCalls = 0;
             g_moveCalls = 0;
             g_denyAllMoves = denyAllMoves;
-            IniStore::SwapCallsForTesting().replace = &ReplaceMovingTargetAside;
-            IniStore::SwapCallsForTesting().move = &MoveDenyingReplacement;
+            IniStore::HooksForTesting().replace = &ReplaceMovingTargetAside;
+            IniStore::HooksForTesting().move = &MoveDenyingReplacement;
         }
 
         ~InjectedSwapCalls()
         {
-            IniStore::SwapCallsForTesting() = {};
+            IniStore::HooksForTesting() = {};
             g_denyAllMoves = false;
         }
     };
@@ -827,6 +828,67 @@ FIC2_TEST(IniStore_FailedSwapAfterMovingTheFileAsideKeepsIt)
     FIC2_CHECK(store.GetString(L"A", L"Value") == L"old");
     FIC2_CHECK(store.GetInt(L"B", L"Next") == 2);
     FIC2_CHECK(temp.Names() == std::vector<std::wstring> { L"swap.ini" });
+}
+
+namespace
+{
+    std::wstring g_handoffIni;
+
+    // A transaction restoring the backup exactly between Load's open of the
+    // missing INI and its open of the backup.
+    void RestoreBackupBeforeBackupRead()
+    {
+        (void)MoveFileExW(IniStore::BackupPath(g_handoffIni).c_str(), g_handoffIni.c_str(), MOVEFILE_REPLACE_EXISTING);
+    }
+}
+
+// Load finds the previous file when a backup left by a failed swap is moved
+// back between its two opens (INI missing, then backup missing).
+FIC2_TEST(IniStore_LoadFollowsABackupMovedBackDuringTheRead)
+{
+    const TempDir temp;
+    const std::wstring ini = temp.File(L"handoff.ini");
+    WriteBytes(IniStore::BackupPath(ini), Utf16Bytes(L"[A]\r\nValue=old\r\n"));
+    g_handoffIni = ini;
+    IniStore::HooksForTesting().beforeBackupRead = &RestoreBackupBeforeBackupRead;
+    const IniStore store = IniStore::Load(ini);
+    IniStore::HooksForTesting() = {};
+
+    FIC2_CHECK(store.IsLoaded());
+    FIC2_CHECK(store.GetString(L"A", L"Value") == L"old");
+    FIC2_CHECK(temp.Names() == std::vector<std::wstring> { L"handoff.ini" });
+}
+
+// Startup: an INI present only as the backup of an interrupted save is an
+// existing configuration. It is not a first run, first-run setup does not
+// replace it with defaults, and the next write restores it.
+FIC2_TEST(IniStore_FirstRunSetupKeepsABackupOnlyConfiguration)
+{
+    const TempDir temp;
+    const std::wstring ini = temp.File(L"FICture2.ini");
+    const std::vector<std::uint8_t> saved = Utf16Bytes(
+        L"[General]\r\nInitialized=1\r\n[Image]\r\nZoomStiffness=12.5\r\n"
+        L"[Viewer]\r\nShowNavItems=0\r\n[Window]\r\nBackgroundColor=1,2,3\r\n");
+    WriteBytes(IniStore::BackupPath(ini), saved);
+
+    FIC2_CHECK(!FICture2App::IsFirstRun(ini));
+    FICture2App::CreateIniIfMissing(ini, false);
+    FIC2_CHECK(ReadBytes(IniStore::BackupPath(ini)) == saved);
+    FIC2_CHECK(GetFileAttributesW(ini.c_str()) == INVALID_FILE_ATTRIBUTES);
+
+    FIC2_CHECK(IniStore::SetString(ini, L"Window", L"ShowCmd", L"1") == IniStore::WriteStatus::Committed);
+    const IniStore store = IniStore::Load(ini);
+    FIC2_CHECK(store.GetString(L"Window", L"BackgroundColor") == L"1,2,3");
+    FIC2_CHECK(store.GetString(L"Image", L"ZoomStiffness") == L"12.5");
+    FIC2_CHECK(store.GetInt(L"Viewer", L"ShowNavItems") == 0);
+    FIC2_CHECK(temp.Names() == std::vector<std::wstring> { L"FICture2.ini" });
+
+    // A real first run still gets the defaults.
+    const std::wstring fresh = temp.File(L"fresh.ini");
+    FIC2_CHECK(FICture2App::IsFirstRun(fresh));
+    FICture2App::CreateIniIfMissing(fresh, false);
+    FIC2_CHECK(!FICture2App::IsFirstRun(fresh));
+    FIC2_CHECK(IniStore::Load(fresh).GetString(L"Window", L"BackgroundColor") == L"20,23,23");
 }
 
 // A sharing violation shorter than the retry budget does not fail the commit.

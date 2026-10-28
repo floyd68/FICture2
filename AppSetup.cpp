@@ -71,7 +71,8 @@ namespace
             return;
         }
 
-        if (std::filesystem::exists(iniFile))
+        // A backup left by an interrupted save is an existing configuration.
+        if (IniStore::FileOrBackupExists(iniFile))
         {
             return;
         }
@@ -87,12 +88,20 @@ namespace
         }
 
         // Create an INI with full default settings so the user can see/edit everything,
-        // plus the first-run prompt result, in one write.
+        // plus the first-run prompt result, in one write. Under the lock the
+        // defaults go only into a file that is still empty (another instance,
+        // or a restored backup, may have created it since the check above).
         IniStore::Batch batch;
         AddIniDefaults(batch);
         batch.Put(L"General", L"AskedAssociations", L"1");
         batch.Put(L"General", L"AssociationsEnabled", associationsEnabled ? L"1" : L"0");
-        LogIniWrite(IniStore::Apply(iniFile, batch), "Default settings");
+        LogIniWrite(IniStore::Transact(iniFile, [&batch](IniStore& ini)
+        {
+            if (!ini.IsLoaded())
+            {
+                batch.ApplyTo(ini);
+            }
+        }), "Default settings");
     }
 
     bool SetRegSzValue(HKEY root, const std::wstring& subKey, const wchar_t* valueNameOrNull, const std::wstring& value)
@@ -387,11 +396,20 @@ namespace FICture2App
         return std::wstring(iniPath) + L"\\FICture2\\FICture2.ini";
     }
 
+    bool IsFirstRun(const std::wstring& iniFile)
+    {
+        return !iniFile.empty() && !IniStore::FileOrBackupExists(iniFile);
+    }
+
+    void CreateIniIfMissing(const std::wstring& iniFile, bool associationsEnabled)
+    {
+        EnsureIniFileExists(iniFile, associationsEnabled);
+    }
+
     void RunFirstRunAssociationPromptIfNeeded()
     {
         const std::wstring iniFile = GetIniFilePath();
-        const bool firstRun = !iniFile.empty() && !std::filesystem::exists(iniFile);
-        if (!firstRun)
+        if (!IsFirstRun(iniFile))
         {
             return;
         }

@@ -72,6 +72,9 @@ public:
     // another handle (an editor, a virus scanner) briefly blocks them.
     static constexpr DWORD kReadRetryMs = 500;
     static constexpr DWORD kCommitRetryMs = 1000;
+    // How often Load tries the INI and then its backup when both are missing
+    // (a backup can be moved back between the two opens).
+    static constexpr int kBackupHandoffAttempts = 3;
 
     static const char* StatusName(WriteStatus status)
     {
@@ -95,12 +98,24 @@ public:
         // retried too.
         const Lock lock(path, lockTimeoutMs);
         IniStore ini;
-        if (ini.Read(path, !lock.Acquired()) == ReadResult::Missing)
+        // A commit that failed (or was cut off) after moving the previous file
+        // aside left it under the backup name, which is read then. Without the
+        // lock a transaction may move it back between the two opens, so the
+        // pair is tried a bounded number of times.
+        for (int attempt = 0; attempt < kBackupHandoffAttempts; ++attempt)
         {
-            // A commit that failed (or was cut off) after moving the previous
-            // file aside left it under the backup name; the next transaction
-            // moves it back.
-            (void)ini.Read(BackupPath(path), false);
+            if (ini.Read(path, attempt == 0 && !lock.Acquired()) != ReadResult::Missing)
+            {
+                break;
+            }
+            if (HooksForTesting().beforeBackupRead)
+            {
+                HooksForTesting().beforeBackupRead();
+            }
+            if (ini.Read(BackupPath(path), false) != ReadResult::Missing)
+            {
+                break;
+            }
         }
         return ini;
     }
@@ -340,17 +355,28 @@ public:
         return path + L".replace-backup";
     }
 
-    // Tests only: replaces the file-swap calls of a commit (null: the Windows
-    // APIs), to inject the failures ReplaceFileW and MoveFileExW document.
-    struct SwapCalls
+    // Whether the INI exists, or only its backup after an interrupted commit
+    // (Load reads it and the next transaction restores it): either way the
+    // configuration exists and must not be replaced by first-run defaults.
+    static bool FileOrBackupExists(const std::wstring& path)
+    {
+        return Exists(path) || Exists(BackupPath(path));
+    }
+
+    // Tests only (null: normal behavior): `replace` and `move` replace the
+    // file-swap calls of a commit, to inject the failures ReplaceFileW and
+    // MoveFileExW document; `beforeBackupRead` runs in Load between a missing
+    // INI and the read of its backup.
+    struct TestHooks
     {
         BOOL (WINAPI* replace)(LPCWSTR, LPCWSTR, LPCWSTR, DWORD, LPVOID, LPVOID) = nullptr;
         BOOL (WINAPI* move)(LPCWSTR, LPCWSTR, DWORD) = nullptr;
+        void (*beforeBackupRead)() = nullptr;
     };
-    static SwapCalls& SwapCallsForTesting()
+    static TestHooks& HooksForTesting()
     {
-        static SwapCalls calls;
-        return calls;
+        static TestHooks hooks;
+        return hooks;
     }
 
     static WriteStatus MigrateToUnicode(const std::wstring& path, DWORD lockTimeoutMs = kDefaultLockTimeoutMs)
@@ -647,13 +673,13 @@ private:
 
     static BOOL SwapReplace(const std::wstring& path, const std::wstring& replacement, const std::wstring& backup)
     {
-        const auto replace = SwapCallsForTesting().replace ? SwapCallsForTesting().replace : &ReplaceFileW;
+        const auto replace = HooksForTesting().replace ? HooksForTesting().replace : &ReplaceFileW;
         return replace(path.c_str(), replacement.c_str(), backup.c_str(), REPLACEFILE_IGNORE_MERGE_ERRORS, nullptr, nullptr);
     }
 
     static BOOL SwapMove(const std::wstring& from, const std::wstring& to)
     {
-        const auto move = SwapCallsForTesting().move ? SwapCallsForTesting().move : &MoveFileExW;
+        const auto move = HooksForTesting().move ? HooksForTesting().move : &MoveFileExW;
         return move(from.c_str(), to.c_str(), MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH);
     }
 
