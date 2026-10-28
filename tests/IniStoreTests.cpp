@@ -696,11 +696,17 @@ FIC2_TEST(IniStore_FailedCommitKeepsPreviousFile)
     FIC2_CHECK(temp.Names() == std::vector<std::wstring> { L"failed.ini" });
 
     {
-        // A file that cannot even be read is never overwritten.
-        const HANDLE exclusive = CreateFileW(ini.c_str(), GENERIC_READ, 0, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
-        FIC2_REQUIRE(exclusive != INVALID_HANDLE_VALUE);
+        // A file that cannot be read (here: locked byte range, while it could
+        // still be replaced) is never overwritten.
+        const HANDLE locked = CreateFileW(
+            ini.c_str(), GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+            nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+        FIC2_REQUIRE(locked != INVALID_HANDLE_VALUE);
+        OVERLAPPED range {};
+        FIC2_REQUIRE(LockFileEx(locked, LOCKFILE_EXCLUSIVE_LOCK | LOCKFILE_FAIL_IMMEDIATELY, 0, MAXDWORD, MAXDWORD, &range));
         const IniStore::WriteStatus status = IniStore::SetString(ini, L"A", L"Value", L"lost-too");
-        CloseHandle(exclusive);
+        UnlockFileEx(locked, 0, MAXDWORD, MAXDWORD, &range);
+        CloseHandle(locked);
         FIC2_CHECK(status == IniStore::WriteStatus::CommitFailed);
     }
     FIC2_CHECK(ReadBytes(ini) == before);
