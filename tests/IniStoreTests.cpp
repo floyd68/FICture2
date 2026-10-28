@@ -1,6 +1,8 @@
 #include "TestHarness.h"
 
+#include "ImageBrowserSessionPersistence.h"
 #include "IniStore.h"
+#include "RecentFiles.h"
 
 #include <windows.h>
 
@@ -19,8 +21,8 @@
 
 // IniStore on temporary INI files only (never the user's FICture2.ini):
 // Unicode output, layout kept on rewrite, ANSI migration, the batch API, the
-// transaction lock (abandoned, timed out), failed commits, and two-process
-// races coordinated with named events.
+// transaction lock (abandoned, timed out), failed commits, two-process races
+// coordinated with named events, and the session and recent-files writers.
 
 namespace
 {
@@ -803,11 +805,6 @@ FIC2_CHILD(IniStoreRaceChild)
             {
                 // ReplaceFileW briefly leaves the name missing or unopenable;
                 // an unlocked reader retries (IniStore::Load does the same).
-                const DWORD error = GetLastError();
-                if (unavailable < 4)
-                {
-                    std::printf("  reader: open failed with %lu\n", error);
-                }
                 ++unavailable;
                 continue;
             }
@@ -955,4 +952,165 @@ FIC2_TEST(IniStore_TwoProcessOverlappingKeyUpdates)
 {
     RunTwoProcessRace(false, true, false);
     RunTwoProcessRace(false, false, false);
+}
+
+namespace
+{
+    const std::wstring kEmojiPath = L"C:\\Pictures\\\U0001F600\U0001F308 \u65E5\u672C\u8A9E \u0E20\u0E32\u0E29\u0E32\u0E44\u0E17\u0E22\\photo.png";
+    const std::wstring kSemicolonPath = L"C:\\Pictures\\a;b;c\\img;1.png";
+
+    // An INI as the current release leaves it: ANSI, no BOM.
+    void WriteReleaseAnsiIni(const std::wstring& ini)
+    {
+        const std::wstring text =
+            L"[General]\r\nIniVersion=1\r\nInitialized=1\r\nAskedAssociations=1\r\nAssociationsEnabled=0\r\n"
+            L"[Window]\r\nShowCmd=3\r\nBackgroundColor=30,30,30\r\nLeft=40\r\nTop=50\r\nRight=1240\r\nBottom=850\r\n"
+            L"[Viewer]\r\nShowNavItems=0\r\n"
+            L"[Session]\r\nViewerCount=1\r\nHorizontalSplitRatios=\r\nRecentFiles=C:\\old.png\r\n"
+            L"[Viewer0]\r\nDisplayedFile=C:\\old.png\r\nCurrentFolder=C:\\\r\n";
+        std::vector<std::uint8_t> ansi;
+        ToAnsi(text, ansi);
+        WriteBytes(ini, ansi);
+    }
+}
+
+// Session paths with emoji, Japanese, Thai and ';' round-trip through save
+// and restore unchanged, starting from a release (ANSI) INI whose other
+// settings are kept.
+FIC2_TEST(IniStore_SessionRoundTripsUnicodeAndSemicolonPaths)
+{
+    const TempDir temp;
+    const std::wstring ini = temp.File(L"session.ini");
+    WriteReleaseAnsiIni(ini);
+
+    ImageBrowserSessionPersistence::SavePayload payload {};
+    payload.viewerCount = 3;
+    payload.hasThumbStripHeight = true;
+    payload.thumbStripHeight = 180.0f;
+    payload.horizontalSplitRatios = { 0.25f, 0.5f };
+    payload.viewers = {
+        { kEmojiPath, L"C:\\Pictures\\\U0001F600\U0001F308 \u65E5\u672C\u8A9E \u0E20\u0E32\u0E29\u0E32\u0E44\u0E17\u0E22" },
+        { kSemicolonPath, L"C:\\Pictures\\a;b;c" },
+        { L"", L"D:\\\u0E44\u0E17\u0E22;\u65E5" },
+    };
+    FIC2_CHECK(ImageBrowserSessionPersistence::SaveToIni(ini, payload) == IniStore::WriteStatus::Committed);
+    FIC2_CHECK(HasUtf16Bom(ReadBytes(ini)));
+
+    ImageBrowserSessionPersistence::RestorePayload restored {};
+    FIC2_REQUIRE(ImageBrowserSessionPersistence::TryRestoreFromIni(ini, restored));
+    FIC2_CHECK(restored.viewerCount == 3);
+    FIC2_REQUIRE(restored.viewers.size() == 3);
+    for (std::size_t i = 0; i < 3; ++i)
+    {
+        FIC2_CHECK(restored.viewers[i].filePath == payload.viewers[i].displayedFile);
+        FIC2_CHECK(restored.viewers[i].folderPath == payload.viewers[i].currentFolder);
+    }
+    FIC2_CHECK(restored.hasThumbStripHeight && restored.thumbStripHeight == 180.0f);
+    FIC2_CHECK(restored.horizontalSplitRatios.size() == 2);
+
+    const IniStore store = IniStore::Load(ini);
+    FIC2_CHECK(store.GetInt(L"Window", L"ShowCmd") == 3);
+    FIC2_CHECK(store.GetInt(L"Window", L"Right") == 1240);
+    FIC2_CHECK(store.GetString(L"Window", L"BackgroundColor") == L"30,30,30");
+    FIC2_CHECK(store.GetInt(L"Viewer", L"ShowNavItems", 1) == 0);
+    FIC2_CHECK(store.GetInt(L"General", L"AskedAssociations") == 1);
+    FIC2_CHECK(store.GetString(L"Session", L"RecentFiles") == L"C:\\old.png");
+}
+
+// A session save is one transaction: a concurrent reader never sees the keys
+// of two different saves mixed.
+FIC2_TEST(IniStore_SessionSaveIsOneTransaction)
+{
+    const TempDir temp;
+    const std::wstring ini = temp.File(L"session-atomic.ini");
+    WriteReleaseAnsiIni(ini);
+
+    auto makePayload = [](int generation)
+    {
+        ImageBrowserSessionPersistence::SavePayload payload {};
+        payload.viewerCount = 2;
+        payload.horizontalSplitRatios = { 0.5f };
+        const std::wstring tag = std::to_wstring(generation);
+        payload.viewers = {
+            { L"C:\\" + tag + L"\\a.png", L"C:\\" + tag },
+            { L"D:\\" + tag + L"\\b.png", L"D:\\" + tag },
+        };
+        return payload;
+    };
+
+    constexpr int kSaves = 100;
+    std::atomic<bool> stop { false };
+    std::atomic<int> reads { 0 };
+    std::atomic<int> mixed { 0 };
+    std::thread reader([&]
+    {
+        while (!stop.load())
+        {
+            ImageBrowserSessionPersistence::RestorePayload restored {};
+            if (!ImageBrowserSessionPersistence::TryRestoreFromIni(ini, restored) || restored.viewers.size() != 2)
+            {
+                continue;
+            }
+            const std::wstring tag = restored.viewers[0].folderPath.substr(3);
+            if (restored.viewers[0].filePath != L"C:\\" + tag + L"\\a.png" ||
+                restored.viewers[1].folderPath != L"D:\\" + tag ||
+                restored.viewers[1].filePath != L"D:\\" + tag + L"\\b.png")
+            {
+                mixed.fetch_add(1);
+            }
+            reads.fetch_add(1);
+        }
+    });
+
+    int committed = 0;
+    for (int g = 1; g <= kSaves; ++g)
+    {
+        committed += (ImageBrowserSessionPersistence::SaveToIni(ini, makePayload(g)) == IniStore::WriteStatus::Committed) ? 1 : 0;
+    }
+    stop.store(true);
+    reader.join();
+
+    std::printf("  %d saves committed, %d concurrent restores, %d mixed\n", committed, reads.load(), mixed.load());
+    FIC2_CHECK(committed == kSaves);
+    FIC2_CHECK(mixed.load() == 0);
+    FIC2_CHECK(reads.load() > 0);
+}
+
+// Recent files: entries with emoji, Japanese, Thai and ';' keep their exact
+// paths, and a list in which an entry contains ';' keeps all of its entries.
+FIC2_TEST(IniStore_RecentFilesKeepUnicodeAndSemicolonEntries)
+{
+    const TempDir temp;
+    const std::wstring ini = temp.File(L"recent.ini");
+    WriteReleaseAnsiIni(ini);
+
+    const std::vector<std::wstring> added = {
+        L"C:\\first.png",
+        kSemicolonPath,
+        kEmojiPath,
+        L"C:\\x;y\\last;.png",
+    };
+    for (const std::wstring& path : added)
+    {
+        FIC2_CHECK(RecentFiles::Add(ini, path) == IniStore::WriteStatus::Committed);
+    }
+
+    const std::vector<std::wstring> recent = RecentFiles::Load(ini);
+    FIC2_REQUIRE(recent.size() == added.size() + 1);   // + C:\old.png from the release INI
+    for (std::size_t i = 0; i < added.size(); ++i)
+    {
+        FIC2_CHECK(recent[i] == added[added.size() - 1 - i]);
+    }
+    FIC2_CHECK(recent.back() == L"C:\\old.png");
+    FIC2_CHECK(HasUtf16Bom(ReadBytes(ini)));
+
+    // Re-adding an entry moves it to the front without duplicating it.
+    FIC2_CHECK(RecentFiles::Add(ini, kSemicolonPath) == IniStore::WriteStatus::Committed);
+    const std::vector<std::wstring> again = RecentFiles::Load(ini);
+    FIC2_CHECK(again.size() == recent.size());
+    FIC2_CHECK(!again.empty() && again.front() == kSemicolonPath);
+
+    FIC2_CHECK(RecentFiles::Clear(ini) == IniStore::WriteStatus::Committed);
+    FIC2_CHECK(RecentFiles::Load(ini).empty());
+    FIC2_CHECK(IniStore::Load(ini).GetInt(L"Window", L"ShowCmd") == 3);
 }
