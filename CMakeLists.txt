@@ -284,6 +284,7 @@ target_sources(FICture2 PRIVATE
     ImageBrowserThumbLayout.cpp
     ImageBrowserThumbModel.cpp
     ImageBrowserThumbPayloadCache.cpp
+    ImageBrowserThumbSizePolicy.cpp
     ImageBrowserThumbnailPane.cpp
     ImageBrowserThumbLayoutCoordinator.cpp
     ImageBrowserThumbStripController.cpp

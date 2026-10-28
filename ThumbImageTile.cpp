@@ -29,6 +29,13 @@ ThumbImageTile::ThumbImageTile(const std::wstring& name)
             m_onClick();
         }
     });
+    m_image->SetOnSourceLimited([this](uint32_t height)
+    {
+        if (m_onSourceLimited)
+        {
+            m_onSourceLimited(height);
+        }
+    });
 }
 
 void ThumbImageTile::SetFixedSize(const FD2D::Size& size)
@@ -69,9 +76,9 @@ void ThumbImageTile::SetFixedHeight(float height)
 
     if (m_image)
     {
-        // Keep decode target square to avoid extreme target-width hints.
-        // Aspect ratio is preserved in decode pipeline and render path.
-        m_image->SetThumbnailSize({ height, height });
+        // The decode size follows the row height (ThumbSizePolicy): a square
+        // box until the aspect is known, then the displayed size.
+        m_image->SetRowHeight(height);
     }
     
     Invalidate();
@@ -90,11 +97,22 @@ void ThumbImageTile::SetCaption(const std::wstring& text)
     Invalidate();
 }
 
-void ThumbImageTile::SetSourceFile(const std::wstring& path, const ImageSourceIdentity& identity)
+void ThumbImageTile::SetSourceFile(
+    const std::wstring& path,
+    const ImageSourceIdentity& identity,
+    const ThumbSizePolicy::ItemHint& hint)
 {
     if (m_image)
     {
-        m_image->SetSourceFile(path, identity);
+        m_image->SetSourceFile(path, identity, hint);
+    }
+}
+
+void ThumbImageTile::SetSizeUpgradesDeferred(bool deferred)
+{
+    if (m_image)
+    {
+        m_image->SetSizeUpgradesDeferred(deferred);
     }
 }
 
@@ -107,6 +125,7 @@ void ThumbImageTile::Recycle()
     m_lastBitmapSize = D2D1::SizeF(0.0f, 0.0f);   // the next bitmap reports its aspect
     m_onClick = {};
     m_onAspectChanged = {};
+    m_onSourceLimited = {};
 }
 
 void ThumbImageTile::SetSelected(bool selected)

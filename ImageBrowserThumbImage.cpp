@@ -90,8 +90,31 @@ void ImageBrowserThumbImage::Arrange(FD2D::Rect finalRect)
 
 void ImageBrowserThumbImage::SetThumbnailSize(const FD2D::Size& size)
 {
+    m_rowHeight = 0.0f;
     m_request.targetSize = ImageCore::Size { size.w, size.h };
     m_request.purpose = ImageCore::ImagePurpose::Thumbnail;
+}
+
+void ImageBrowserThumbImage::SetRowHeight(float rowHeight)
+{
+    m_rowHeight = (std::max)(0.0f, rowHeight);
+    // Measured as a square until a request shapes the box.
+    m_request.targetSize = ImageCore::Size { m_rowHeight, m_rowHeight };
+    m_request.purpose = ImageCore::ImagePurpose::Thumbnail;
+}
+
+void ImageBrowserThumbImage::SetSizeUpgradesDeferred(bool deferred)
+{
+    if (m_sizeUpgradesDeferred == deferred)
+    {
+        return;
+    }
+    m_sizeUpgradesDeferred = deferred;
+    if (!deferred)
+    {
+        // The next render evaluates the settled row height.
+        Invalidate();
+    }
 }
 
 bool ImageBrowserThumbImage::SameListing(const ImageSourceIdentity& a, const ImageSourceIdentity& b)
@@ -101,12 +124,21 @@ bool ImageBrowserThumbImage::SameListing(const ImageSourceIdentity& a, const Ima
     return a.known == b.known && a.size == b.size && a.writeTime == b.writeTime;
 }
 
-HRESULT ImageBrowserThumbImage::SetSourceFile(const std::wstring& filePath, const ImageSourceIdentity& identity)
+HRESULT ImageBrowserThumbImage::SetSourceFile(
+    const std::wstring& filePath,
+    const ImageSourceIdentity& identity,
+    const ThumbSizePolicy::ItemHint& hint)
 {
     const std::wstring normalized = CommonUtil::NormalizePath(filePath);
     const bool samePath = !normalized.empty() && normalized == m_filePath;
     if (samePath && SameListing(identity, m_identity))
     {
+        if (m_knownAspect <= 0.0f)
+        {
+            m_knownAspect = hint.aspect;
+        }
+        m_sourceLimitedHeight = (std::max)(m_sourceLimitedHeight, hint.sourceLimitedHeight);
+
         const bool hadFailure = m_binding.ClearFailureIfMatches(normalized);
 
         const bool hasContent = m_texture &&
@@ -134,6 +166,11 @@ HRESULT ImageBrowserThumbImage::SetSourceFile(const std::wstring& filePath, cons
     m_payload.Release();
     m_needsCpuReupload = false;
     m_payloadFromDecode = false;
+    // A new binding: its own upgrade budget, and what the model knows of the
+    // item (nothing for a replaced file, whose size may differ).
+    m_upgrades.Reset();
+    m_knownAspect = samePath ? 0.0f : hint.aspect;
+    m_sourceLimitedHeight = samePath ? 0u : hint.sourceLimitedHeight;
     if (samePath)
     {
         // The file was replaced: what is shown is the old file's thumbnail.
@@ -183,6 +220,9 @@ void ImageBrowserThumbImage::Recycle()
     m_loadedFilePath.clear();
     m_request.source.clear();
     m_requestedBox = { 0.0f, 0.0f };
+    m_upgrades.Reset();
+    m_knownAspect = 0.0f;
+    m_sourceLimitedHeight = 0;
     // The payload becomes evictable, and nothing of this item stays on the tile.
     m_payload.Release();
     m_needsCpuReupload = false;
@@ -266,15 +306,54 @@ D2D1_SIZE_F ImageBrowserThumbImage::GetBitmapSize() const
     return D2D1::SizeF(0.0f, 0.0f);
 }
 
+ThumbPayloadCache::Pin ImageBrowserThumbImage::AcquireCachedFor(float bucket, bool onlyIfSatisfies)
+{
+    if (!m_payloadCache || !ThumbPayloadCache::IsCacheable(m_identity))
+    {
+        return {};
+    }
+    // Looked up by the identity the item was listed with: no file access.
+    // The smallest size that satisfies `bucket` (a larger one included),
+    // else (unless `onlyIfSatisfies`) the largest.
+    const ThumbDecodeOptions options = ThumbDecodeOptions::Of(m_request);
+    const std::vector<ThumbPayloadInfo> infos = m_payloadCache->Find(m_filePath, m_identity, options);
+    std::vector<ThumbSizePolicy::Decoded> sizes;
+    sizes.reserve(infos.size());
+    for (const ThumbPayloadInfo& info : infos)
+    {
+        sizes.push_back({ info.width, info.height, info.sourceLimited });
+    }
+    const ThumbSizePolicy::CacheChoice choice = ThumbSizePolicy::ChooseCached(sizes, bucket, m_sourceLimitedHeight);
+    if (!choice.Found() || (onlyIfSatisfies && !choice.satisfies))
+    {
+        return {};
+    }
+    ThumbPayloadKey key {};
+    key.path = m_filePath;
+    key.identity = m_identity;
+    key.width = sizes[choice.index].width;
+    key.height = sizes[choice.index].height;
+    key.options = options;
+    return m_payloadCache->Acquire(key);
+}
+
 bool ImageBrowserThumbImage::AdoptCachedPayload()
 {
     if (!m_payloadCache || !ThumbPayloadCache::IsCacheable(m_identity))
     {
         return false;
     }
-    // Looked up by the identity the item was listed with: no file access.
-    ThumbPayloadCache::Pin cached = m_payloadCache->AcquireLargest(
-        m_filePath, m_identity, ThumbDecodeOptions::Of(m_request));
+    ThumbPayloadCache::Pin cached {};
+    if (m_rowHeight > 0.0f)
+    {
+        // Shown until its upgrade arrives when no cached size satisfies the
+        // row's bucket.
+        cached = AcquireCachedFor(ThumbSizePolicy::BucketFor(m_rowHeight), false);
+    }
+    else
+    {
+        cached = m_payloadCache->AcquireLargest(m_filePath, m_identity, ThumbDecodeOptions::Of(m_request));
+    }
     if (!cached)
     {
         return false;
@@ -288,7 +367,7 @@ ThumbPayloadCache::Pin ImageBrowserThumbImage::StorePayload(const ImageAsyncBind
 {
     if (!m_payloadCache)
     {
-        return ThumbPayloadCache::Pin::Detached(payload);
+        return ThumbPayloadCache::Pin::Detached(payload, m_requestedBox);
     }
     return m_payloadCache->Insert(
         payload.sourcePath, m_identity, ThumbDecodeOptions::Of(m_request), m_requestedBox, payload);
@@ -324,8 +403,71 @@ void ImageBrowserThumbImage::RequestImageLoad()
     m_request.source = m_filePath;
     m_request.purpose = ImageCore::ImagePurpose::Thumbnail;
     m_request.allowGpuCompressedDDS = false;
+    if (m_rowHeight > 0.0f)
+    {
+        // The row's bucket, square until the aspect is known.
+        m_request.targetSize = ThumbSizePolicy::RequestBox(ThumbSizePolicy::BucketFor(m_rowHeight), m_knownAspect);
+    }
     m_requestedBox = m_request.targetSize;
 
+    m_binding.RequestLoad(m_request, m_filePath, m_loadPriority);
+}
+
+ThumbSizePolicy::Decoded ImageBrowserThumbImage::ShownDecoded() const
+{
+    if (!m_payload || m_payload.Get().sourcePath != m_filePath || m_loadedFilePath != m_filePath)
+    {
+        return {};
+    }
+    const ThumbPayloadInfo& info = m_payload.Info();
+    return { info.width, info.height, info.sourceLimited };
+}
+
+void ImageBrowserThumbImage::RequestSizeUpgradeIfDue()
+{
+    if (m_rowHeight <= 0.0f || m_filePath.empty() || m_needsCpuReupload || m_binding.IsFailedFor(m_filePath))
+    {
+        return;
+    }
+    const ThumbSizePolicy::Decoded shown = ShownDecoded();
+    if (shown.Empty())
+    {
+        return;   // nothing of this item is shown: a first decode is RequestImageLoad's
+    }
+
+    const FD2D::Backplate* bp = BackplateRef();
+    ThumbSizePolicy::Input input {};
+    input.rowHeight = m_rowHeight;
+    input.knownAspect = m_knownAspect;
+    input.shown = shown;
+    input.sourceLimitedHeight = m_sourceLimitedHeight;
+    input.requestInFlight = m_binding.IsLoading();
+    input.deferUpgrades = m_sizeUpgradesDeferred || (bp != nullptr && bp->IsInSizeMove());
+    const ThumbSizePolicy::Decision decision = ThumbSizePolicy::Evaluate(input, m_upgrades);
+    if (decision.action != ThumbSizePolicy::Action::Upgrade)
+    {
+        return;
+    }
+
+    // A cached payload that satisfies the bucket (decoded by another tile or
+    // an earlier binding) replaces the shown one without a decode and without
+    // using the bucket's upgrade; it is uploaded on this render.
+    if (ThumbPayloadCache::Pin cached = AcquireCachedFor(decision.bucket, true);
+        cached && cached.Info().height > shown.height)
+    {
+        m_payload = std::move(cached);
+        m_needsCpuReupload = true;
+        m_payloadFromDecode = false;
+        return;
+    }
+
+    // The shown thumbnail stays until the larger one is admitted and uploaded.
+    m_upgrades.MarkRequested(decision.bucket);
+    m_request.source = m_filePath;
+    m_request.purpose = ImageCore::ImagePurpose::Thumbnail;
+    m_request.allowGpuCompressedDDS = false;
+    m_request.targetSize = decision.box;
+    m_requestedBox = decision.box;
     m_binding.RequestLoad(m_request, m_filePath, m_loadPriority);
 }
 
@@ -389,10 +531,27 @@ bool ImageBrowserThumbImage::AdmitCompletedPayload()
     // recycled. The bitmap is created from the pinned payload, which is the
     // cached entry's when one with the same key already exists, so the
     // picture shown and the one restored after a device loss are the same.
-    m_payload = StorePayload(pending);
+    ThumbPayloadCache::Pin stored = StorePayload(pending);
+    m_binding.MarkSettled();
+    if (stored && stored.Info().sourceLimited)
+    {
+        // This source cannot serve a larger bucket (until it is listed again).
+        m_sourceLimitedHeight = (std::max)(m_sourceLimitedHeight, stored.Info().height);
+        if (m_onSourceLimited)
+        {
+            m_onSourceLimited(stored.Info().height);
+        }
+    }
+    // A payload of this listing never gives way to a smaller one: an obsolete
+    // result stays cached (unpinned) and the larger payload stays shown.
+    if (stored && m_payload && m_payload.Get().sourcePath == m_filePath &&
+        stored.Info().height < m_payload.Info().height)
+    {
+        return false;
+    }
+    m_payload = std::move(stored);
     m_needsCpuReupload = static_cast<bool>(m_payload);
     m_payloadFromDecode = m_needsCpuReupload;
-    m_binding.MarkSettled();
     return m_needsCpuReupload;
 }
 
@@ -567,10 +726,20 @@ void ImageBrowserThumbImage::OnRender(ID2D1RenderTarget* target)
     {
         RequestImageLoad();
     }
+    else if (hasContent)
+    {
+        RequestSizeUpgradeIfDue();
+        if (!deferBitmapUpload)
+        {
+            TryReuploadCpuPayload(target);   // a sufficient cached payload it adopted
+        }
+    }
 
     SyncTextureDrawState();
 
-    const bool shouldShowSpinner = m_loadingSpinnerEnabled && m_binding.IsLoading();
+    // An upgrade loads behind the thumbnail it replaces: no spinner over it.
+    const bool upgrading = static_cast<bool>(m_payload) && m_payload.Get().sourcePath == m_filePath;
+    const bool shouldShowSpinner = m_loadingSpinnerEnabled && m_binding.IsLoading() && !upgrading;
     if (m_spinner)
     {
         m_spinner->SetActive(shouldShowSpinner);

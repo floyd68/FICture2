@@ -99,6 +99,14 @@ public:
     bool SetAspect(const std::wstring& lookupKey, float aspect);
     float AspectOf(const std::wstring& lookupKey) const;
 
+    // The decoded height at which an image's thumbnail was limited by its
+    // source (ThumbSizePolicy): larger buckets are not requested for it. Kept
+    // across merges, cleared when the folder is listed again (Reset or
+    // StageReset, on Commit), so a replaced file is tried again. 0: none.
+    // Records the largest height reported; returns true if changed.
+    bool SetSourceLimited(const std::wstring& lookupKey, uint32_t height);
+    uint32_t SourceLimitedHeightOf(const std::wstring& lookupKey) const;
+
 private:
     static void MergeSorted(std::vector<ThumbModelEntry>& into, std::vector<ThumbModelEntry>&& added);
 
@@ -109,6 +117,7 @@ private:
     std::vector<ThumbModelEntry> m_folders {};
     std::vector<ThumbModelEntry> m_images {};
     std::unordered_map<std::wstring, float> m_aspectByKey {};
+    std::unordered_map<std::wstring, uint32_t> m_sourceLimitedByKey {};
 
     // The listing being staged: classification, de-duplication keys, and what
     // the next Commit applies.

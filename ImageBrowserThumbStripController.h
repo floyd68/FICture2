@@ -53,6 +53,12 @@ public:
         std::function<void(size_t)> onActivateIndex {};
         // An image tile's decoded aspect ratio became known (lookup key, aspect).
         std::function<void(const std::wstring&, float)> onImageAspect {};
+        // An image tile's decode was limited by its source (lookup key,
+        // decoded height): ThumbItemModel::SetSourceLimited.
+        std::function<void(const std::wstring&, uint32_t)> onImageSourceLimited {};
+        // The row height is still moving (splitter drag): image tiles defer
+        // size upgrades (ImageBrowserThumbImage::SetSizeUpgradesDeferred).
+        bool deferSizeUpgrades { false };
         std::function<std::wstring(const wchar_t*, const Floar::VirtualPath&)> makeStableName {};
     };
 
@@ -81,7 +87,9 @@ public:
     // generation, so the late completion of its previous request is never
     // shown. Decoded payloads stay in the payload cache, within its bounds.
     // A tile that stays bound to its item is told the item's listed identity,
-    // so a file replaced at the same path is decoded again.
+    // so a file replaced at the same path is decoded again. A newly bound
+    // image tile gets what the model knows of the item's decoded size
+    // (aspect, source-limited height), which shapes its first request.
     void MaterializeTiles(const MaterializeContext& context);
 
     // Selects model item `index` (clamped to the model) whether or not it has

@@ -5,6 +5,7 @@
 #include "FD2D/Spinner.h"
 #include "ImageAsyncBinding.h"
 #include "ImageBrowserThumbPayloadCache.h"
+#include "ImageBrowserThumbSizePolicy.h"
 #include "ImageCore/ImageRequest.h"
 #include "ImageSourceIdentity.h"
 #include "SelectionStyle.h"
@@ -28,7 +29,20 @@ public:
     FD2D::Size Measure(FD2D::Size available) override;
     void Arrange(FD2D::Rect finalRect) override;
 
+    // Fixed decode box (no size policy): the request targets `size` as is.
     void SetThumbnailSize(const FD2D::Size& size);
+    // Strip row mode: the thumbnail is shown `rowHeight` tall and as wide as
+    // its aspect, and is decoded by ThumbSizePolicy (bucketed request box,
+    // one upgrade when the row grows past what is held). The current
+    // thumbnail stays until a larger one arrives.
+    void SetRowHeight(float rowHeight);
+    // While set, undersized thumbnails are not upgraded (the row height is
+    // still moving: splitter drag). Clearing it evaluates them again.
+    void SetSizeUpgradesDeferred(bool deferred);
+    // Called (with the decoded height) when an admitted decode was limited by
+    // its source rather than its box: no larger bucket can be served.
+    using SourceLimitedHandler = std::function<void(uint32_t height)>;
+    void SetOnSourceLimited(SourceLimitedHandler handler) { m_onSourceLimited = std::move(handler); }
     // The cache of decoded payloads: a presented payload is stored there (and
     // pinned while this control shows it), and a newly bound file with a
     // cached payload is shown from it instead of being requested again. Set
@@ -36,8 +50,14 @@ public:
     void SetPayloadCache(std::shared_ptr<ThumbPayloadCache> cache) { m_payloadCache = std::move(cache); }
     // Binds `filePath`, listed with `identity` (ThumbModelEntry::identity).
     // Cache lookups use that identity and never read the file; an unknown
-    // identity is neither looked up nor cached.
-    HRESULT SetSourceFile(const std::wstring& filePath, const ImageSourceIdentity& identity = {});
+    // identity is neither looked up nor cached. `hint` is what the item model
+    // already knows of the item's decoded size (aspect, source-limited
+    // height): a known aspect shapes the first request, so a non-square image
+    // is not decoded twice.
+    HRESULT SetSourceFile(
+        const std::wstring& filePath,
+        const ImageSourceIdentity& identity = {},
+        const ThumbSizePolicy::ItemHint& hint = {});
     // The bound file was listed again with `identity`. When that differs from
     // the identity it was bound with (the file was replaced), the control
     // rebinds: the current thumbnail stays until the new one is shown.
@@ -81,7 +101,16 @@ public:
 private:
     void InitChildren();
     void RequestImageLoad();
+    // Requests a larger decode when the payload shown is undersized for the
+    // row height (ThumbSizePolicy::Evaluate).
+    void RequestSizeUpgradeIfDue();
+    // The shown payload as the size policy sees it (empty: none).
+    ThumbSizePolicy::Decoded ShownDecoded() const;
     bool AdoptCachedPayload();
+    // The cached size of this item to show for `bucket` (see
+    // ThumbSizePolicy::ChooseCached); with `onlyIfSatisfies`, none unless it
+    // satisfies the bucket.
+    ThumbPayloadCache::Pin AcquireCachedFor(float bucket, bool onlyIfSatisfies);
     // Pins `payload` (decoded for m_requestedBox) in the cache, or holds it
     // alone without one.
     ThumbPayloadCache::Pin StorePayload(const ImageAsyncBinding::Payload& payload);
@@ -103,6 +132,14 @@ private:
     std::wstring m_loadedFilePath {};
     // The box of the request in flight (recorded with its cache entry).
     ImageCore::Size m_requestedBox { 0.0f, 0.0f };
+
+    // Size policy state of the bound item (strip row mode when m_rowHeight > 0).
+    float m_rowHeight { 0.0f };
+    float m_knownAspect { 0.0f };            // before a payload is held
+    uint32_t m_sourceLimitedHeight { 0 };    // 0: none recorded
+    bool m_sizeUpgradesDeferred { false };
+    ThumbSizePolicy::UpgradeTracker m_upgrades {};   // per binding
+    SourceLimitedHandler m_onSourceLimited {};
 
     // The CPU payload shown (or about to be uploaded): the tile's only copy,
     // kept for device-loss and target recovery, pinned in the cache.

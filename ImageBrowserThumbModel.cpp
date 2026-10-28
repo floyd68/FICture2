@@ -49,6 +49,27 @@ float ThumbItemModel::AspectOf(const std::wstring& lookupKey) const
     return (it != m_aspectByKey.end()) ? it->second : 0.0f;
 }
 
+bool ThumbItemModel::SetSourceLimited(const std::wstring& lookupKey, uint32_t height)
+{
+    if (height == 0)
+    {
+        return false;
+    }
+    uint32_t& stored = m_sourceLimitedByKey[lookupKey];
+    if (stored >= height)
+    {
+        return false;
+    }
+    stored = height;
+    return true;
+}
+
+uint32_t ThumbItemModel::SourceLimitedHeightOf(const std::wstring& lookupKey) const
+{
+    const auto it = m_sourceLimitedByKey.find(lookupKey);
+    return (it != m_sourceLimitedByKey.end()) ? it->second : 0u;
+}
+
 void ThumbItemModel::Reset(const Floar::VirtualPath& folder, bool showNavItems, ImageFilter isImage)
 {
     StageReset(folder, showNavItems, std::move(isImage));
@@ -93,6 +114,8 @@ bool ThumbItemModel::Commit()
         {
             m_aspectByKey.clear();
         }
+        // Listed again: sources are tried at larger buckets again.
+        m_sourceLimitedByKey.clear();
         m_folder = std::move(m_pendingFolder);
         m_pendingFolder = {};
         m_showNavItems = m_pendingShowNavItems;
