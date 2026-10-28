@@ -984,6 +984,11 @@ FD2D::Wnd* Ficture2Backplate::FindTargetWnd(const POINT& ptClient)
 
 bool Ficture2Backplate::HandleFileDropPaths(const std::vector<std::wstring>& paths, const POINT& ptClient)
 {
+    // As in FD2D::Backplate::HandleFileDropPaths: a layout change since the
+    // last frame (an IPC open, for example) is arranged before the drop
+    // hit-tests panes. WM_DROPFILES reaches this directly.
+    (void)LayoutIfPending();
+
     if (paths.empty())
     {
         return false;
