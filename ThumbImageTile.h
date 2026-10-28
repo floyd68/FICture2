@@ -21,6 +21,9 @@ public:
     // Called (during render) when the decoded bitmap's aspect ratio becomes
     // known or changes; the strip layout uses it for this tile's width.
     using AspectHandler = std::function<void(float aspect)>;
+    // Called when a decode of the bound item was limited by its source, with
+    // the decoded height (ImageBrowserThumbImage::SetOnSourceLimited).
+    using SourceLimitedHandler = std::function<void(uint32_t height)>;
 
     explicit ThumbImageTile(const std::wstring& name);
 
@@ -29,13 +32,19 @@ public:
     void SetFixedHeight(float height);
     void SetCaption(const std::wstring& text);
 
-    void SetSourceFile(const std::wstring& path, const ImageSourceIdentity& identity = {});
+    void SetSourceFile(
+        const std::wstring& path,
+        const ImageSourceIdentity& identity = {},
+        const ThumbSizePolicy::ItemHint& hint = {});
+    // See ImageBrowserThumbImage::SetSizeUpgradesDeferred.
+    void SetSizeUpgradesDeferred(bool deferred);
     // Releases the bound item (see ImageBrowserThumbImage::Recycle) and the
     // handlers, so the tile can be bound to another item.
     void Recycle();
     void SetSelected(bool selected);
     void SetOnClick(ClickHandler handler);
     void SetOnAspectChanged(AspectHandler handler) { m_onAspectChanged = std::move(handler); }
+    void SetOnSourceLimited(SourceLimitedHandler handler) { m_onSourceLimited = std::move(handler); }
     // Width/height of the decoded bitmap, 0 until one is shown.
     float BitmapAspect() const;
 
@@ -58,6 +67,7 @@ private:
     FD2D::Text m_label;
     ClickHandler m_onClick {};
     AspectHandler m_onAspectChanged {};
+    SourceLimitedHandler m_onSourceLimited {};
 
     D2D1_RECT_F m_labelRect {};
     Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> m_labelBackdropBrush {};

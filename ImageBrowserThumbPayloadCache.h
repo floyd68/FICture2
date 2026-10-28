@@ -132,7 +132,8 @@ public:
         ~Pin();
 
         // A payload held by its owner alone (no cache): accounted nowhere.
-        static Pin Detached(const Payload& payload);
+        // `requestBox` (the box it was decoded for) sets the source-limited flag.
+        static Pin Detached(const Payload& payload, const ImageCore::Size& requestBox = { 0.0f, 0.0f });
 
         explicit operator bool() const { return m_node != nullptr; }
         // The pinned payload (valid while the pin is).

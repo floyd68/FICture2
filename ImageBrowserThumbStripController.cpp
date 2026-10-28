@@ -175,7 +175,11 @@ void ImageBrowserThumbStripController::MaterializeTiles(const MaterializeContext
                 thumbTile->ImageWnd()->SetPayloadCache(context.payloads);
                 thumbTile->ImageWnd()->SetLoadPriority(priority);
                 thumbTile->SetFixedHeight(thumbH);
-                thumbTile->SetSourceFile(p.wstring(), entry.identity);
+                thumbTile->SetSizeUpgradesDeferred(context.deferSizeUpgrades);
+                ThumbSizePolicy::ItemHint hint {};
+                hint.aspect = model.AspectOf(entry.lookupKey);
+                hint.sourceLimitedHeight = model.SourceLimitedHeightOf(entry.lookupKey);
+                thumbTile->SetSourceFile(p.wstring(), entry.identity, hint);
                 thumbTile->SetCaption(p.filename().wstring());
                 (void)panel->AddChild(thumbTile);
             }
@@ -183,6 +187,7 @@ void ImageBrowserThumbStripController::MaterializeTiles(const MaterializeContext
             {
                 thumbTile->ImageWnd()->SetLoadPriority(priority);
                 thumbTile->SetFixedHeight(thumbH);
+                thumbTile->SetSizeUpgradesDeferred(context.deferSizeUpgrades);
                 thumbTile->ImageWnd()->SetSourceIdentity(entry.identity);
             }
 
@@ -198,6 +203,14 @@ void ImageBrowserThumbStripController::MaterializeTiles(const MaterializeContext
                 if (onImageAspect)
                 {
                     onImageAspect(key, aspect);
+                }
+            });
+            thumbTile->SetOnSourceLimited(
+                [onSourceLimited = context.onImageSourceLimited, key = entry.lookupKey](uint32_t height)
+            {
+                if (onSourceLimited)
+                {
+                    onSourceLimited(key, height);
                 }
             });
 

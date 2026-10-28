@@ -150,7 +150,7 @@ ThumbPayloadCache::Pin::~Pin()
     Release();
 }
 
-ThumbPayloadCache::Pin ThumbPayloadCache::Pin::Detached(const Payload& payload)
+ThumbPayloadCache::Pin ThumbPayloadCache::Pin::Detached(const Payload& payload, const ImageCore::Size& requestBox)
 {
     if (!payload.blocks)
     {
@@ -160,6 +160,8 @@ ThumbPayloadCache::Pin ThumbPayloadCache::Pin::Detached(const Payload& payload)
     node->payload = payload;
     node->info.width = payload.width;
     node->info.height = payload.height;
+    node->info.requestBox = requestBox;
+    node->info.sourceLimited = IsSourceLimited(payload.width, payload.height, requestBox);
     node->pins = 1;
     return Pin(nullptr, std::move(node));
 }

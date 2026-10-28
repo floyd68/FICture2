@@ -684,6 +684,7 @@ namespace
             // live while dragging.
             (void)ApplySyncedThumbStripHeightIfNeeded();
             (void)UpdateThumbSizingFromPane();
+            UpdateThumbSizeUpgradeDeferral();
             // Folder listing chunks arrive through CMD_FIC2_ASYNC_THUMB_READY (posted
             // by the loader); this only picks up chunks if a frame happens to render
             // first, and never requests frames itself.
@@ -1522,6 +1523,27 @@ namespace
             }
             m_lastThumbSizingApplyMs = sizing.updatedApplyMs;
             return true;
+        }
+
+        // While the splitter is dragged the row height keeps moving: bound
+        // image tiles keep their thumbnails (scaled) and upgrade undersized
+        // ones once the drag ends, instead of decoding at every bucket the
+        // drag crosses (ThumbSizePolicy). Runs before the tiles render.
+        void UpdateThumbSizeUpgradeDeferral()
+        {
+            const bool deferred = (m_rootSplit != nullptr && m_rootSplit->IsSplitterDragging());
+            if (deferred == m_thumbSizeUpgradesDeferred)
+            {
+                return;
+            }
+            m_thumbSizeUpgradesDeferred = deferred;
+            for (const ThumbTile& tile : m_thumbTiles.Tiles())
+            {
+                if (tile.imageTile)
+                {
+                    tile.imageTile->SetSizeUpgradesDeferred(deferred);
+                }
+            }
         }
 
         // The strip panel's height is the row height, not its tiles' (the
@@ -2900,6 +2922,11 @@ namespace
             {
                 OnThumbImageAspect(key, aspect);
             };
+            context.onImageSourceLimited = [this](const std::wstring& key, uint32_t height)
+            {
+                (void)m_thumbModel.SetSourceLimited(key, height);
+            };
+            context.deferSizeUpgrades = m_thumbSizeUpgradesDeferred;
             context.makeStableName = [this](const wchar_t* prefix, const Floar::VirtualPath& p)
             {
                 return MakeStableThumbName(prefix, p);
@@ -3379,6 +3406,7 @@ namespace
         float m_thumbW { 128.0f };
         float m_thumbH { 128.0f };
         unsigned long long m_lastThumbSizingApplyMs { 0 };
+        bool m_thumbSizeUpgradesDeferred { false };   // splitter drag in progress
         bool m_pendingThumbStripBroadcast { false };
         float m_pendingThumbStripHeight { 0.0f };
         float m_thumbLabelDip { 0.0f };
