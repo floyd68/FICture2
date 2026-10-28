@@ -27,7 +27,11 @@ struct ArchiveEntryHandoff::Core
     {
         std::vector<uint8_t> bytes {};
         // The reader that extracted them: a hit is served only while the
-        // archive cache still returns this reader (the file was not replaced).
+        // archive cache still returns this reader. The cache returns it only
+        // while the path has the identity that reader was opened for (size,
+        // write time, volume serial number and file ID), so a replacement -
+        // also one renamed over the archive with the same size and write
+        // time - gets a new reader and the parked bytes are dropped.
         std::weak_ptr<Floar::IArchiveReader> reader {};
     };
 

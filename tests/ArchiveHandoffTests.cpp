@@ -706,6 +706,70 @@ FIC2_TEST(ArchiveHandoff_ReplacedArchiveDropsParkedBytes)
     FIC2_CHECK(stats.droppedStale == 1);
 }
 
+namespace
+{
+    // Pads the shorter of two archives with zeros (7z ignores bytes after its
+    // end header) and gives both one write time, so `replacement` renamed over
+    // `original` leaves the path's size and write time unchanged: only the
+    // file ID tells the two files apart.
+    bool MakeLookAlike(const std::filesystem::path& original, const std::filesystem::path& replacement)
+    {
+        std::error_code ec;
+        const auto size = (std::max)(std::filesystem::file_size(original, ec), std::filesystem::file_size(replacement, ec));
+        if (ec)
+        {
+            return false;
+        }
+        FILETIME now {};
+        GetSystemTimeAsFileTime(&now);
+        for (const auto& path : { original, replacement })
+        {
+            const HANDLE file = CreateFileW(path.c_str(), GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+                nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+            if (file == INVALID_HANDLE_VALUE)
+            {
+                return false;
+            }
+            LARGE_INTEGER end {};
+            end.QuadPart = static_cast<LONGLONG>(size);
+            const bool ok = SetFilePointerEx(file, end, nullptr, FILE_BEGIN) && SetEndOfFile(file) &&
+                SetFileTime(file, nullptr, nullptr, &now);
+            CloseHandle(file);
+            if (!ok)
+            {
+                return false;
+            }
+        }
+        return std::filesystem::file_size(original, ec) == std::filesystem::file_size(replacement, ec) && !ec;
+    }
+}
+
+// The same with a replacement of the same size and write time (only its file
+// ID differs): the parked bytes of the old archive are never served.
+FIC2_TEST(ArchiveHandoff_LookAlikeReplacementDropsParkedBytes)
+{
+    Env env(L"lookalike");
+    FIC2_REQUIRE(env.written);
+    const auto replacement = env.dir / L"replacement.7z";
+    FIC2_REQUIRE(WriteFixture(replacement, 'B', {}, L".dds"));
+    FIC2_REQUIRE(MakeLookAlike(env.archive, replacement));
+
+    auto window = env.Want(0, 5);
+    FIC2_CHECK(env.Read(5) == env.Expected(5));
+    FIC2_CHECK(env.handoff.CurrentStats().parkedEntries == 5);
+
+    const auto size = std::filesystem::file_size(env.archive);
+    const auto writeTime = std::filesystem::last_write_time(env.archive);
+    FIC2_REQUIRE(MoveFileExW(replacement.c_str(), env.archive.c_str(), MOVEFILE_REPLACE_EXISTING));
+    FIC2_REQUIRE(std::filesystem::file_size(env.archive) == size);
+    FIC2_REQUIRE(std::filesystem::last_write_time(env.archive) == writeTime);
+
+    FIC2_CHECK(env.Read(2) == env.Expected(2, 'B'));
+    const auto stats = env.handoff.CurrentStats();
+    FIC2_CHECK(stats.hits == 0);
+    FIC2_CHECK(stats.droppedStale == 1);
+}
+
 // -------------------------------------------------------------------------
 // Main images and unchanged paths
 // -------------------------------------------------------------------------
