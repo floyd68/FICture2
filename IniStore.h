@@ -17,7 +17,10 @@
 //   cross-process named mutex (LockName(): a hash of the lowercased full path),
 //   the file is re-read from disk, the edits are applied, and the whole file is
 //   written as UTF-16LE with a BOM to a temporary file next to it, then swapped
-//   in with ReplaceFileW (MoveFileExW when the INI does not exist yet). A legacy
+//   in with ReplaceFileW (MoveFileExW when the INI does not exist yet). The
+//   swap moves the previous file to BackupPath() and deletes it on success; a
+//   failed swap moves it back, and a backup that could not be moved back is
+//   read by Load() and restored by the next transaction. A legacy
 //   ANSI or UTF-8 file is therefore migrated on its first write; a transaction
 //   that changes nothing in a UTF-16LE file leaves it untouched.
 //   SetString/SetInt/SetFloat write one key; Apply(Batch) and Transact() apply
@@ -92,7 +95,13 @@ public:
         // retried too.
         const Lock lock(path, lockTimeoutMs);
         IniStore ini;
-        (void)ini.Read(path, !lock.Acquired());
+        if (ini.Read(path, !lock.Acquired()) == ReadResult::Missing)
+        {
+            // A commit that failed (or was cut off) after moving the previous
+            // file aside left it under the backup name; the next transaction
+            // moves it back.
+            (void)ini.Read(BackupPath(path), false);
+        }
         return ini;
     }
 
@@ -285,6 +294,12 @@ public:
             return WriteStatus::LockTimeout;
         }
 
+        if (!RestoreBackup(path))
+        {
+            // The previous file is still only under the backup name.
+            return WriteStatus::CommitFailed;
+        }
+
         IniStore ini;
         const ReadResult read = ini.Read(path, false);
         if (read == ReadResult::Failed)
@@ -316,6 +331,28 @@ public:
 
     // Rewrites a legacy ANSI/UTF-8 INI as UTF-16LE with a BOM. A file that is
     // already UTF-16LE (or missing) is left untouched.
+    // The name the previous file is moved to while a commit swaps in the new
+    // one (ReplaceFileW's backup). It exists after a commit only when that
+    // commit failed and could not move it back; Load reads it then, and the
+    // next transaction restores it.
+    static std::wstring BackupPath(const std::wstring& path)
+    {
+        return path + L".replace-backup";
+    }
+
+    // Tests only: replaces the file-swap calls of a commit (null: the Windows
+    // APIs), to inject the failures ReplaceFileW and MoveFileExW document.
+    struct SwapCalls
+    {
+        BOOL (WINAPI* replace)(LPCWSTR, LPCWSTR, LPCWSTR, DWORD, LPVOID, LPVOID) = nullptr;
+        BOOL (WINAPI* move)(LPCWSTR, LPCWSTR, DWORD) = nullptr;
+    };
+    static SwapCalls& SwapCallsForTesting()
+    {
+        static SwapCalls calls;
+        return calls;
+    }
+
     static WriteStatus MigrateToUnicode(const std::wstring& path, DWORD lockTimeoutMs = kDefaultLockTimeoutMs)
     {
         return Transact(path, nullptr, lockTimeoutMs);
@@ -599,7 +636,44 @@ private:
             error == ERROR_LOCK_VIOLATION ||
             error == ERROR_ACCESS_DENIED ||                 // also a pending delete
             error == ERROR_UNABLE_TO_REMOVE_REPLACED ||     // ReplaceFileW: both files unchanged
-            error == ERROR_UNABLE_TO_MOVE_REPLACEMENT;      // ReplaceFileW: retried as a move
+            error == ERROR_UNABLE_TO_MOVE_REPLACEMENT ||    // ReplaceFileW with a backup: both files unchanged
+            error == ERROR_UNABLE_TO_MOVE_REPLACEMENT_2;    // ReplaceFileW: previous file now the backup; retried as a move
+    }
+
+    static bool Exists(const std::wstring& path)
+    {
+        return GetFileAttributesW(path.c_str()) != INVALID_FILE_ATTRIBUTES;
+    }
+
+    static BOOL SwapReplace(const std::wstring& path, const std::wstring& replacement, const std::wstring& backup)
+    {
+        const auto replace = SwapCallsForTesting().replace ? SwapCallsForTesting().replace : &ReplaceFileW;
+        return replace(path.c_str(), replacement.c_str(), backup.c_str(), REPLACEFILE_IGNORE_MERGE_ERRORS, nullptr, nullptr);
+    }
+
+    static BOOL SwapMove(const std::wstring& from, const std::wstring& to)
+    {
+        const auto move = SwapCallsForTesting().move ? SwapCallsForTesting().move : &MoveFileExW;
+        return move(from.c_str(), to.c_str(), MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH);
+    }
+
+    // Under the lock: when the INI is missing but its backup exists (a commit
+    // failed or was cut off after moving the previous file aside), moves the
+    // backup back, retried for a bounded time. False when it is still only
+    // the backup.
+    static bool RestoreBackup(const std::wstring& path)
+    {
+        const std::wstring backup = BackupPath(path);
+        const ULONGLONG deadline = GetTickCount64() + kCommitRetryMs;
+        while (!Exists(path) && Exists(backup))
+        {
+            if (SwapMove(backup, path) || GetTickCount64() >= deadline)
+            {
+                break;
+            }
+            Sleep(10);
+        }
+        return Exists(path) || !Exists(backup);
     }
 
     static bool ReadAll(HANDLE file, std::vector<std::uint8_t>& out)
@@ -789,20 +863,28 @@ private:
             FlushFileBuffers(temp);
         CloseHandle(temp);
 
+        // ReplaceFileW moves the previous file to the backup name, so a swap
+        // that fails halfway (ERROR_UNABLE_TO_MOVE_REPLACEMENT_2) can be undone
+        // instead of leaving no INI. A leftover backup next to an existing INI
+        // is stale (Transact restored any needed one before reading).
+        const std::wstring backup = BackupPath(path);
         bool committed = false;
         if (wrote)
         {
+            if (Exists(path))
+            {
+                (void)DeleteFileW(backup.c_str());
+            }
             const ULONGLONG deadline = GetTickCount64() + kCommitRetryMs;
             for (;;)
             {
-                committed = (GetFileAttributesW(path.c_str()) != INVALID_FILE_ATTRIBUTES)
-                    ? (ReplaceFileW(path.c_str(), tempPath.c_str(), nullptr, REPLACEFILE_IGNORE_MERGE_ERRORS, nullptr, nullptr) != FALSE)
-                    : (MoveFileExW(tempPath.c_str(), path.c_str(), MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH) != FALSE);
+                committed = (Exists(path) ? SwapReplace(path, tempPath, backup) : SwapMove(tempPath, path)) != FALSE;
                 if (committed)
                 {
                     break;
                 }
-                // A target that disappeared meanwhile is retried as a move.
+                // A target that disappeared meanwhile (or was moved to the
+                // backup) is retried as a move.
                 const DWORD error = GetLastError();
                 if ((!IsTransientError(error) && error != ERROR_FILE_NOT_FOUND) || GetTickCount64() >= deadline)
                 {
@@ -812,8 +894,16 @@ private:
             }
         }
 
-        if (!committed)
+        if (committed)
         {
+            (void)DeleteFileW(backup.c_str());
+        }
+        else
+        {
+            // Keep the previous file: move it back if the swap moved it aside.
+            // If even that fails it stays under the backup name, which Load
+            // reads and the next transaction restores; never delete it here.
+            (void)RestoreBackup(path);
             (void)DeleteFileW(tempPath.c_str());
         }
         return committed;

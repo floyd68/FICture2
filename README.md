@@ -394,7 +394,7 @@ All settings are stored per-user at:
 
 - `%LOCALAPPDATA%\FICture2\FICture2.ini`
 
-The file is saved as Unicode (UTF-16 LE with a BOM); an older ANSI file is converted on the first save. Each save rewrites the whole file at once, keeping comments and key order, so several running instances never leave a half-written file. A line starting with `;` or `#` is a comment; a `;` later in a line is part of the value (paths may contain it).
+The file is saved as Unicode (UTF-16 LE with a BOM); an older ANSI file is converted on the first save. Each save rewrites the whole file at once, keeping comments and key order, so several running instances never leave a half-written file. If a save fails after the previous file was moved aside, it is moved back; if even that fails, it stays as `FICture2.ini.replace-backup`, which FICture2 reads and restores on its next save. A line starting with `;` or `#` is a comment; a `;` later in a line is part of the value (paths may contain it).
 
 ### Important keys
 

@@ -722,6 +722,113 @@ FIC2_TEST(IniStore_FailedCommitKeepsPreviousFile)
     FIC2_CHECK(Utf16Text(ReadBytes(ini)) == L"[A]\r\nValue=external\r\n[B]\r\nNext=1\r\n");
 }
 
+namespace
+{
+    // Injected swap calls for the destructive ReplaceFileW failures, as
+    // documented: the replacement stays under its temporary name, and the
+    // previous file is moved to the backup name
+    // (ERROR_UNABLE_TO_MOVE_REPLACEMENT_2) or, without a backup name, deleted
+    // (ERROR_UNABLE_TO_MOVE_REPLACEMENT). Moves are denied as configured.
+    std::atomic<int> g_replaceCalls { 0 };
+    std::atomic<int> g_moveCalls { 0 };
+    std::atomic<bool> g_denyAllMoves { false };
+
+    BOOL WINAPI ReplaceMovingTargetAside(LPCWSTR replaced, LPCWSTR, LPCWSTR backup, DWORD, LPVOID, LPVOID)
+    {
+        ++g_replaceCalls;
+        if (backup == nullptr || *backup == L'\0')
+        {
+            (void)DeleteFileW(replaced);
+            SetLastError(ERROR_UNABLE_TO_MOVE_REPLACEMENT);
+            return FALSE;
+        }
+        if (!MoveFileExW(replaced, backup, MOVEFILE_REPLACE_EXISTING))
+        {
+            SetLastError(ERROR_UNABLE_TO_MOVE_REPLACEMENT);
+            return FALSE;
+        }
+        SetLastError(ERROR_UNABLE_TO_MOVE_REPLACEMENT_2);
+        return FALSE;
+    }
+
+    // Denies moving the temporary file in (and every move when
+    // g_denyAllMoves is set); other moves are real.
+    BOOL WINAPI MoveDenyingReplacement(LPCWSTR from, LPCWSTR to, DWORD flags)
+    {
+        ++g_moveCalls;
+        const std::wstring source(from);
+        if (g_denyAllMoves || (source.size() > 4 && source.compare(source.size() - 4, 4, L".tmp") == 0))
+        {
+            SetLastError(ERROR_ACCESS_DENIED);
+            return FALSE;
+        }
+        return MoveFileExW(from, to, flags);
+    }
+
+    struct InjectedSwapCalls
+    {
+        InjectedSwapCalls(bool denyAllMoves)
+        {
+            g_replaceCalls = 0;
+            g_moveCalls = 0;
+            g_denyAllMoves = denyAllMoves;
+            IniStore::SwapCallsForTesting().replace = &ReplaceMovingTargetAside;
+            IniStore::SwapCallsForTesting().move = &MoveDenyingReplacement;
+        }
+
+        ~InjectedSwapCalls()
+        {
+            IniStore::SwapCallsForTesting() = {};
+            g_denyAllMoves = false;
+        }
+    };
+}
+
+// A swap that fails after ReplaceFileW moved the previous file aside keeps the
+// previous file: it is moved back; if even that is denied, it stays under the
+// backup name, Load reads it, and the next transaction restores it before
+// writing. The INI is never left missing with its contents lost.
+FIC2_TEST(IniStore_FailedSwapAfterMovingTheFileAsideKeepsIt)
+{
+    const TempDir temp;
+    const std::wstring ini = temp.File(L"swap.ini");
+    const std::wstring backup = IniStore::BackupPath(ini);
+    FIC2_REQUIRE(IniStore::SetString(ini, L"A", L"Value", L"old") == IniStore::WriteStatus::Committed);
+    const std::vector<std::uint8_t> before = ReadBytes(ini);
+    FIC2_CHECK(temp.Names() == std::vector<std::wstring> { L"swap.ini" });   // no backup after a commit
+
+    {
+        // The replacement cannot be moved in, but the previous file can be
+        // moved back: it is in place again, unchanged.
+        const InjectedSwapCalls inject(false);
+        FIC2_CHECK(IniStore::SetString(ini, L"A", L"Value", L"lost") == IniStore::WriteStatus::CommitFailed);
+        FIC2_CHECK(g_replaceCalls == 1);
+        FIC2_CHECK(g_moveCalls > 1);
+    }
+    FIC2_CHECK(ReadBytes(ini) == before);
+    FIC2_CHECK(temp.Names() == std::vector<std::wstring> { L"swap.ini" });
+
+    {
+        // Every move is denied: the previous file stays under the backup name
+        // (never deleted), readers still get it, and a write is refused
+        // rather than starting from an empty file.
+        const InjectedSwapCalls inject(true);
+        FIC2_CHECK(IniStore::SetString(ini, L"A", L"Value", L"lost") == IniStore::WriteStatus::CommitFailed);
+        FIC2_CHECK(GetFileAttributesW(ini.c_str()) == INVALID_FILE_ATTRIBUTES);
+        FIC2_CHECK(ReadBytes(backup) == before);
+        FIC2_CHECK(IniStore::Load(ini).GetString(L"A", L"Value") == L"old");
+        FIC2_CHECK(IniStore::SetString(ini, L"B", L"Next", L"1") == IniStore::WriteStatus::CommitFailed);
+        FIC2_CHECK(ReadBytes(backup) == before);
+    }
+
+    // The next transaction moves the backup back and writes on top of it.
+    FIC2_CHECK(IniStore::SetString(ini, L"B", L"Next", L"2") == IniStore::WriteStatus::Committed);
+    const IniStore store = IniStore::Load(ini);
+    FIC2_CHECK(store.GetString(L"A", L"Value") == L"old");
+    FIC2_CHECK(store.GetInt(L"B", L"Next") == 2);
+    FIC2_CHECK(temp.Names() == std::vector<std::wstring> { L"swap.ini" });
+}
+
 // A sharing violation shorter than the retry budget does not fail the commit.
 FIC2_TEST(IniStore_CommitRetriesBriefSharingViolation)
 {
