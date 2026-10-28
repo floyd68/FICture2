@@ -15,7 +15,9 @@
 // - Workers: a fixed pool (Options::workers, started with the first routed
 //   request) runs the shell calls, each thread with COM initialized as STA;
 //   never on the caller's (UI) thread, and no thread per request. Higher
-//   priority first, then oldest first.
+//   priority first, then oldest first. Each worker dispatches its thread's
+//   messages between calls and while it waits, as an STA must, so a provider
+//   that completes pending work through the apartment can finish it.
 // - Pending: when the provider is still fetching the thumbnail, the request
 //   waits (without holding a worker) and is asked again after a backoff from
 //   Options::firstPoll up to Options::maxPoll, until Options::pendingDeadline
@@ -32,22 +34,28 @@
 //   for no larger one; an upgrade request is again a shell request.
 // - Cancellation (the #45 contract): Cancel removes a queued or waiting
 //   request before its shell call, and drops a running one when its call
-//   returns; a canceled request publishes nothing and never falls back. Late
+//   returns; a canceled request publishes nothing and never falls back: the
+//   fallback checks for a cancel under the job's forward lock before it is
+//   admitted to the inner service, and a Cancel during the admission waits
+//   for it, so the inner request is canceled when Cancel returns. Late
 //   results of superseded requests are dropped by ImageAsyncBinding's
 //   generation gate as for ImageCore completions.
 // - Handles: routed requests get handles with kShellHandleBit set; others are
 //   the inner service's handles, passed through. Cancel and SetPriority of a
-//   request that fell back reach its inner handle.
-// - Shutdown stops the workers (bounded) and drops every request without a
-//   completion; later requests all pass through to the inner service.
+//   request that fell back reach its inner handle, serialized with the
+//   admission by the job's forward lock; each forwarded update sends the
+//   latest priority, so the inner request ends at the last priority set.
+// - Shutdown stops the workers, bounded by their native threads' exit, and
+//   drops every request without a completion; later requests all pass
+//   through to the inner service.
 
 #include "FloarPathByteSource.h"
 #include "ImageAsyncBinding.h"
 #include "ShellThumbnailSource.h"
 
 #include <chrono>
-#include <condition_variable>
 #include <cstdint>
+#include <functional>
 #include <memory>
 #include <mutex>
 #include <thread>
@@ -65,6 +73,9 @@ public:
         std::chrono::milliseconds firstPoll { 50 };
         std::chrono::milliseconds maxPoll { 400 };
         std::chrono::milliseconds pendingDeadline { 15000 };
+        // Tests: runs on the worker after a request is set to fall back and
+        // before its fallback is admitted.
+        std::function<void()> beforeFallbackForTesting {};
     };
 
     struct Stats
@@ -100,8 +111,10 @@ public:
 
     // Stops routing, drops every routed request without a completion
     // (canceling inner handles of those that fell back) and joins the workers
-    // within `bound`. False when a worker is still in a shell call at the
-    // bound (it is detached and publishes nothing).
+    // whose threads exit within `bound`. False when a worker's thread is
+    // still running at the bound (in a shell call, CoUninitialize or its
+    // thread-local cleanup): it publishes nothing and is kept, so a later
+    // Shutdown can join it.
     bool Shutdown(std::chrono::milliseconds bound);
 
     Stats GetStats() const;
@@ -136,10 +149,15 @@ private:
         uint32_t polls { 0 };
         bool canceled { false };   // removed while running or falling back
         ImageCore::ImageHandle innerHandle { 0 };
+        // Held while the fallback is admitted to the inner service and while
+        // Cancel or SetPriority forward to it (not the core mutex: the inner
+        // service may complete synchronously).
+        std::mutex forward;
     };
 
     void StartWorkers_NoLock();
-    void WorkerMain();
+    void WakeWorkers_NoLock();
+    void WorkerMain(HANDLE wake);
     // The due queued job to run next, or null (`wakeAt` then holds the
     // earliest due time of a waiting job, or max when none waits).
     std::shared_ptr<Job> PickDue_NoLock(std::chrono::steady_clock::time_point now,
@@ -162,13 +180,11 @@ private:
 
     // Everything below is guarded by m_core->mutex.
     const std::shared_ptr<Core> m_core { std::make_shared<Core>() };
-    std::condition_variable m_wake;
-    std::condition_variable m_exited;
+    std::vector<HANDLE> m_wakeEvents;   // one auto-reset event per worker
     uint64_t m_nextId { 0 };
     uint64_t m_nextSequence { 0 };
     bool m_stopping { false };
     bool m_shutDown { false };
     std::vector<std::thread> m_workers;
-    size_t m_liveWorkers { 0 };
     Stats m_stats {};
 };

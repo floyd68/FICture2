@@ -17,6 +17,7 @@
 
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <chrono>
 #include <cmath>
 #include <condition_variable>
@@ -750,4 +751,280 @@ FIC2_TEST(CloudThumbnail_ASmallerShellThumbnailIsNotRequestedAgain)
     FIC2_CHECK(strip.BitmapOf(0).height == 120.0f);
     FIC2_CHECK(strip.fixture.shell.Calls().size() == afterGrow);
     FIC2_CHECK(strip.fixture.inner.RequestCount() == 0);
+}
+
+namespace
+{
+    // A recording inner service whose RequestDecoded and SetPriority can be
+    // made to wait, for races around a request's fallback.
+    class GatedDecodeService final : public ThumbTestSupport::RecordingDecodeService
+    {
+    public:
+        // RequestDecoded signals that it is dispatching and waits for
+        // ReleaseDispatch().
+        bool holdDispatch { false };
+        // The first SetPriority to Prefetch signals that it is reconciling and
+        // waits up to `reconcileWait` for a later SetPriority to arrive.
+        bool holdPrefetchUpdate { false };
+        std::chrono::milliseconds reconcileWait { 300 };
+
+        ImageCore::ImageHandle RequestDecoded(
+            const ImageCore::ImageRequest& request,
+            ImageCore::DecodedImageLoadCallback callback,
+            ImageCore::RequestPriority priority) override
+        {
+            if (holdDispatch)
+            {
+                std::unique_lock<std::mutex> lock(m_gate);
+                m_dispatching = true;
+                m_changed.notify_all();
+                m_changed.wait(lock, [this] { return m_dispatchReleased; });
+            }
+            return RecordingDecodeService::RequestDecoded(request, std::move(callback), priority);
+        }
+
+        void SetPriority(ImageCore::ImageHandle handle, ImageCore::RequestPriority priority) override
+        {
+            {
+                std::unique_lock<std::mutex> lock(m_gate);
+                ++m_updates;
+                m_changed.notify_all();
+                if (holdPrefetchUpdate && !m_reconciling && priority == ImageCore::RequestPriority::Prefetch)
+                {
+                    m_reconciling = true;
+                    const size_t updatesAtHold = m_updates;
+                    m_changed.notify_all();
+                    m_changed.wait_for(lock, reconcileWait, [&] { return m_updates > updatesAtHold; });
+                }
+            }
+            RecordingDecodeService::SetPriority(handle, priority);
+        }
+
+        bool WaitDispatching() { return WaitFor([this] { return m_dispatching; }); }
+        bool WaitReconciling() { return WaitFor([this] { return m_reconciling; }); }
+
+        void ReleaseDispatch()
+        {
+            std::lock_guard<std::mutex> lock(m_gate);
+            m_dispatchReleased = true;
+            m_changed.notify_all();
+        }
+
+    private:
+        template <typename Predicate>
+        bool WaitFor(Predicate predicate)
+        {
+            std::unique_lock<std::mutex> lock(m_gate);
+            return m_changed.wait_for(lock, 5s, predicate);
+        }
+
+        std::mutex m_gate;
+        std::condition_variable m_changed;
+        bool m_dispatching { false };
+        bool m_dispatchReleased { false };
+        bool m_reconciling { false };
+        size_t m_updates { 0 };
+    };
+
+    ShellThumbnailResult FailedShell(const std::wstring&, uint32_t, uint32_t)
+    {
+        return FakeShellSource::Status(ShellThumbnailStatus::Failed, E_FAIL);
+    }
+}
+
+// A request canceled after its shell call failed but before its fallback is
+// admitted never reaches the byte path, so it cannot start a download.
+FIC2_TEST(CloudThumbnail_CancelBeforeFallbackAdmissionStartsNoRead)
+{
+    ThumbTestSupport::ComScope com;
+    ThumbTestSupport::RecordingDecodeService inner;
+    FakeQueries queries;
+    FakeShellSource shell;
+    shell.respond = FailedShell;
+
+    std::mutex mutex;
+    std::condition_variable changed;
+    bool atFallback = false;
+    bool proceed = false;
+    CloudThumbnailRouter::Options options = FastOptions(1);
+    options.beforeFallbackForTesting = [&]
+    {
+        std::unique_lock<std::mutex> lock(mutex);
+        atFallback = true;
+        changed.notify_all();
+        changed.wait(lock, [&] { return proceed; });
+    };
+    CloudThumbnailRouter router(inner, shell, &queries, options);
+
+    bool called = false;
+    const ImageCore::ImageHandle handle = router.RequestDecoded(ThumbRequest(kCloud + L"a.dds"),
+        [&called](HRESULT, ImageCore::DecodedImage) { called = true; }, ImageCore::RequestPriority::Visible);
+    {
+        std::unique_lock<std::mutex> lock(mutex);
+        FIC2_REQUIRE(changed.wait_for(lock, 5s, [&] { return atFallback; }));
+    }
+    router.Cancel(handle);   // returns at once: nothing was admitted yet
+    {
+        std::lock_guard<std::mutex> lock(mutex);
+        proceed = true;
+        changed.notify_all();
+    }
+    FIC2_CHECK(router.Shutdown(5s));
+    FIC2_CHECK(inner.RequestCount() == 0);
+    FIC2_CHECK(!called);
+}
+
+// Priority changes that overlap a fallback's admission and its priority
+// reconciliation: the inner request ends at the last priority set.
+FIC2_TEST(CloudThumbnail_TheLatestPriorityWinsAcrossAFallback)
+{
+    ThumbTestSupport::ComScope com;
+    GatedDecodeService inner;
+    inner.holdDispatch = true;
+    inner.holdPrefetchUpdate = true;
+    FakeQueries queries;
+    FakeShellSource shell;
+    shell.respond = FailedShell;
+    CloudThumbnailRouter router(inner, shell, &queries, FastOptions(1));
+
+    const ImageCore::ImageHandle handle = router.RequestDecoded(ThumbRequest(kCloud + L"a.dds"),
+        [](HRESULT, ImageCore::DecodedImage) {}, ImageCore::RequestPriority::Visible);
+    FIC2_REQUIRE(inner.WaitDispatching());
+
+    // Demoted while the fallback is dispatched at Visible...
+    std::thread demote([&] { router.SetPriority(handle, ImageCore::RequestPriority::Prefetch); });
+    std::this_thread::sleep_for(50ms);
+    inner.ReleaseDispatch();
+    // ...and promoted again while the demotion is being forwarded.
+    FIC2_REQUIRE(inner.WaitReconciling());
+    std::thread promote([&] { router.SetPriority(handle, ImageCore::RequestPriority::Visible); });
+    demote.join();
+    promote.join();
+
+    const auto requests = inner.Requests();
+    FIC2_REQUIRE(requests.size() == 1);
+    FIC2_CHECK(requests[0].priority == ImageCore::RequestPriority::Visible);
+    FIC2_CHECK(router.Shutdown(5s));
+}
+
+namespace
+{
+    // A provider that completes a pending thumbnail through the calling
+    // thread's apartment: the first call posts a message to a message-only
+    // window of that thread and returns Pending; the thumbnail is ready once
+    // the message has been dispatched.
+    std::atomic<bool> g_providerCompleted { false };
+    constexpr UINT kProviderCompletion = WM_APP + 59;
+
+    LRESULT CALLBACK ProviderWindowProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam)
+    {
+        if (message == kProviderCompletion)
+        {
+            g_providerCompleted = true;
+            return 0;
+        }
+        return DefWindowProcW(hwnd, message, wParam, lParam);
+    }
+
+    HWND ProviderWindowOfThisThread()
+    {
+        static const ATOM atom = []
+        {
+            WNDCLASSW windowClass {};
+            windowClass.lpfnWndProc = ProviderWindowProc;
+            windowClass.hInstance = GetModuleHandleW(nullptr);
+            windowClass.lpszClassName = L"FICture2TestsShellProvider";
+            return RegisterClassW(&windowClass);
+        }();
+        thread_local const HWND window = atom == 0 ? nullptr
+            : CreateWindowExW(0, L"FICture2TestsShellProvider", L"", 0, 0, 0, 0, 0, HWND_MESSAGE, nullptr,
+                GetModuleHandleW(nullptr), nullptr);
+        return window;
+    }
+
+    // Holds a worker thread's exit (its thread-local cleanup) until opened.
+    struct ExitGate
+    {
+        std::mutex mutex;
+        std::condition_variable changed;
+        bool open { false };
+
+        void Open()
+        {
+            std::lock_guard<std::mutex> lock(mutex);
+            open = true;
+            changed.notify_all();
+        }
+    };
+    ExitGate g_exitGate;
+
+    struct BlockedThreadCleanup
+    {
+        bool armed { false };
+
+        ~BlockedThreadCleanup()
+        {
+            if (armed)
+            {
+                std::unique_lock<std::mutex> lock(g_exitGate.mutex);
+                g_exitGate.changed.wait_for(lock, 10s, [] { return g_exitGate.open; });
+            }
+        }
+    };
+    thread_local BlockedThreadCleanup t_blockedCleanup;
+}
+
+// The workers dispatch their apartment's messages, so a provider that
+// completes pending thumbnails through them finishes without a fallback.
+FIC2_TEST(CloudThumbnail_WorkersPumpTheirApartmentWhilePending)
+{
+    ThumbTestSupport::ComScope com;
+    RouterFixture fixture(FastOptions(1));
+    g_providerCompleted = false;
+    auto posted = std::make_shared<std::atomic<bool>>(false);
+    fixture.shell.respond = [posted](const std::wstring&, uint32_t, uint32_t)
+    {
+        if (g_providerCompleted)
+        {
+            return FakeShellSource::Ready(64, 48);
+        }
+        if (!posted->exchange(true))
+        {
+            PostMessageW(ProviderWindowOfThisThread(), kProviderCompletion, 0, 0);
+        }
+        return FakeShellSource::Status(ShellThumbnailStatus::Pending, static_cast<HRESULT>(0x8004B205));
+    };
+
+    ImageAsyncBinding binding;
+    binding.RequestLoad(ThumbRequest(kCloud + L"a.jpg"), kCloud + L"a.jpg", ImageCore::RequestPriority::Visible);
+    FIC2_REQUIRE(WaitUntil([&] { return fixture.Idle(); }));
+    FIC2_CHECK(posted->load());
+    FIC2_CHECK(binding.CurrentPhase() == ImageAsyncBinding::Phase::Ready);
+    FIC2_CHECK(fixture.router->GetStats().ready == 1);
+    FIC2_CHECK(fixture.inner.RequestCount() == 0);   // no downloading fallback
+}
+
+// Shutdown is bounded by the workers' thread exit, not only by their loop: a
+// worker whose thread-local cleanup blocks makes Shutdown return false at its
+// bound; the worker is kept, and a later Shutdown joins it.
+FIC2_TEST(CloudThumbnail_ShutdownIsBoundedByWorkerThreadExit)
+{
+    ThumbTestSupport::ComScope com;
+    RouterFixture fixture(FastOptions(1));
+    fixture.shell.respond = [](const std::wstring&, uint32_t w, uint32_t h)
+    {
+        t_blockedCleanup.armed = true;
+        return FakeShellSource::Ready(w, h);
+    };
+    ImageAsyncBinding binding;
+    binding.RequestLoad(ThumbRequest(kCloud + L"a.jpg"), kCloud + L"a.jpg", ImageCore::RequestPriority::Visible);
+    FIC2_REQUIRE(WaitForPhase(binding, ImageAsyncBinding::Phase::Ready));
+
+    const auto start = std::chrono::steady_clock::now();
+    const bool stopped = fixture.router->Shutdown(20ms);
+    const auto elapsed = std::chrono::steady_clock::now() - start;
+    g_exitGate.Open();
+    FIC2_CHECK(!stopped);
+    FIC2_CHECK(elapsed < 2s);
+    FIC2_CHECK(fixture.router->Shutdown(5s));
 }

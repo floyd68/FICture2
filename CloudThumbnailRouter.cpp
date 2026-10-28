@@ -50,6 +50,44 @@ namespace
         }
         return (std::min)(kMaxSide, (std::max)(1u, static_cast<uint32_t>(std::ceil(side))));
     }
+
+    // Dispatches the messages queued for this thread: the workers are STAs,
+    // and a provider may complete pending work through them.
+    void PumpMessages()
+    {
+        MSG msg {};
+        while (PeekMessageW(&msg, nullptr, 0, 0, PM_REMOVE))
+        {
+            if (msg.message != WM_QUIT)
+            {
+                TranslateMessage(&msg);
+                DispatchMessageW(&msg);
+            }
+        }
+    }
+
+    // Waits until `wake` is signaled, a message arrives or `timeout` passes,
+    // then dispatches the queued messages.
+    void WaitAndPumpMessages(HANDLE wake, DWORD timeout)
+    {
+        (void)MsgWaitForMultipleObjectsEx(1, &wake, timeout, QS_ALLINPUT, MWMO_INPUTAVAILABLE);
+        PumpMessages();
+    }
+
+    // Milliseconds from `now` until `when` (INFINITE for the max time point).
+    DWORD TimeoutUntil(std::chrono::steady_clock::time_point when, std::chrono::steady_clock::time_point now)
+    {
+        if (when == std::chrono::steady_clock::time_point::max())
+        {
+            return INFINITE;
+        }
+        if (when <= now)
+        {
+            return 0;
+        }
+        const long long ms = std::chrono::ceil<std::chrono::milliseconds>(when - now).count();
+        return static_cast<DWORD>((std::min)(ms, static_cast<long long>(INFINITE - 1)));
+    }
 }
 
 CloudThumbnailRouter::CloudThumbnailRouter(
@@ -67,7 +105,19 @@ CloudThumbnailRouter::CloudThumbnailRouter(
 
 CloudThumbnailRouter::~CloudThumbnailRouter()
 {
-    (void)Shutdown(std::chrono::hours(24));
+    if (!Shutdown(std::chrono::hours(24)))
+    {
+        // A worker that has not exited by now keeps its thread and events.
+        for (std::thread& worker : m_workers)
+        {
+            worker.detach();
+        }
+        return;
+    }
+    for (HANDLE wake : m_wakeEvents)
+    {
+        CloseHandle(wake);
+    }
 }
 
 bool CloudThumbnailRouter::RoutesToShell(const ImageCore::ImageRequest& request) const
@@ -102,6 +152,7 @@ ImageCore::ImageHandle CloudThumbnailRouter::RequestDecoded(
             m_core->jobs.emplace(handle, std::move(job));
             ++m_stats.routed;
             StartWorkers_NoLock();
+            WakeWorkers_NoLock();
         }
     }
     if (handle == 0)
@@ -109,7 +160,6 @@ ImageCore::ImageHandle CloudThumbnailRouter::RequestDecoded(
         // Shut down: everything passes through.
         return m_inner.RequestDecoded(request, std::move(callback), priority);
     }
-    m_wake.notify_one();
     return handle;
 }
 
@@ -121,7 +171,7 @@ void CloudThumbnailRouter::Cancel(ImageCore::ImageHandle handle)
         return;
     }
 
-    ImageCore::ImageHandle innerHandle = 0;
+    std::shared_ptr<Job> fallen;
     {
         std::lock_guard<std::mutex> lock(m_core->mutex);
         const auto it = m_core->jobs.find(handle);
@@ -135,10 +185,22 @@ void CloudThumbnailRouter::Cancel(ImageCore::ImageHandle handle)
         ++m_stats.canceled;
         if (job->state == JobState::Fallback)
         {
-            // 0 while the fallback dispatch is still returning: FallBack
-            // cancels the new handle.
-            innerHandle = job->innerHandle;
+            fallen = job;
         }
+    }
+    if (!fallen)
+    {
+        return;
+    }
+
+    // A fallback not admitted yet sees the cancel and never starts; one being
+    // admitted is waited for (it then cancels its inner request itself), so
+    // no inner request of this job is live when Cancel returns.
+    std::lock_guard<std::mutex> forwardLock(fallen->forward);
+    ImageCore::ImageHandle innerHandle = 0;
+    {
+        std::lock_guard<std::mutex> lock(m_core->mutex);
+        innerHandle = fallen->innerHandle;
     }
     if (innerHandle != 0)
     {
@@ -154,7 +216,7 @@ void CloudThumbnailRouter::SetPriority(ImageCore::ImageHandle handle, ImageCore:
         return;
     }
 
-    ImageCore::ImageHandle innerHandle = 0;
+    std::shared_ptr<Job> fallen;
     {
         std::lock_guard<std::mutex> lock(m_core->mutex);
         const auto it = m_core->jobs.find(handle);
@@ -165,12 +227,31 @@ void CloudThumbnailRouter::SetPriority(ImageCore::ImageHandle handle, ImageCore:
         it->second->priority = priority;
         if (it->second->state == JobState::Fallback)
         {
-            innerHandle = it->second->innerHandle;
+            fallen = it->second;
         }
     }
-    if (innerHandle != 0)
+    if (!fallen)
     {
-        m_inner.SetPriority(innerHandle, priority);
+        return;
+    }
+
+    // Forwarded updates are serialized and each sends the latest priority, so
+    // the last one the inner service receives is the last one requested.
+    std::lock_guard<std::mutex> forwardLock(fallen->forward);
+    ImageCore::ImageHandle innerHandle = 0;
+    ImageCore::RequestPriority latest {};
+    {
+        std::lock_guard<std::mutex> lock(m_core->mutex);
+        if (fallen->canceled)
+        {
+            return;
+        }
+        innerHandle = fallen->innerHandle;
+        latest = fallen->priority;
+    }
+    if (innerHandle != 0)   // 0: not admitted yet; FallBack reads the latest priority
+    {
+        m_inner.SetPriority(innerHandle, latest);
     }
 }
 
@@ -182,8 +263,19 @@ void CloudThumbnailRouter::StartWorkers_NoLock()
     }
     for (size_t i = 0; i < m_options.workers; ++i)
     {
-        m_workers.emplace_back([this] { WorkerMain(); });
-        ++m_liveWorkers;
+        m_wakeEvents.push_back(CreateEventW(nullptr, FALSE, FALSE, nullptr));
+    }
+    for (HANDLE wake : m_wakeEvents)
+    {
+        m_workers.emplace_back([this, wake] { WorkerMain(wake); });
+    }
+}
+
+void CloudThumbnailRouter::WakeWorkers_NoLock()
+{
+    for (HANDLE wake : m_wakeEvents)
+    {
+        SetEvent(wake);
     }
 }
 
@@ -213,26 +305,31 @@ std::shared_ptr<CloudThumbnailRouter::Job> CloudThumbnailRouter::PickDue_NoLock(
     return best;
 }
 
-void CloudThumbnailRouter::WorkerMain()
+void CloudThumbnailRouter::WorkerMain(HANDLE wake)
 {
     const HRESULT hrCom = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED | COINIT_DISABLE_OLE1DDE);
 
     std::unique_lock<std::mutex> lock(m_core->mutex);
     while (!m_stopping)
     {
+        // The apartment's messages are dispatched between calls, also while
+        // there is always work queued.
+        lock.unlock();
+        PumpMessages();
+        lock.lock();
+        if (m_stopping)
+        {
+            break;
+        }
+
         auto now = std::chrono::steady_clock::now();
         std::chrono::steady_clock::time_point wakeAt {};
         const std::shared_ptr<Job> job = PickDue_NoLock(now, wakeAt);
         if (!job)
         {
-            if (wakeAt == std::chrono::steady_clock::time_point::max())
-            {
-                m_wake.wait(lock);
-            }
-            else
-            {
-                m_wake.wait_until(lock, wakeAt);
-            }
+            lock.unlock();
+            WaitAndPumpMessages(wake, TimeoutUntil(wakeAt, now));
+            lock.lock();
             continue;
         }
 
@@ -289,9 +386,7 @@ void CloudThumbnailRouter::WorkerMain()
         lock.lock();
     }
 
-    --m_liveWorkers;
     lock.unlock();
-    m_exited.notify_all();
     if (SUCCEEDED(hrCom))
     {
         CoUninitialize();
@@ -300,9 +395,21 @@ void CloudThumbnailRouter::WorkerMain()
 
 void CloudThumbnailRouter::FallBack(const std::shared_ptr<Job>& job)
 {
+    if (m_options.beforeFallbackForTesting)
+    {
+        m_options.beforeFallbackForTesting();
+    }
+
+    // The admission and its priority reconciliation hold the job's forward
+    // lock, so Cancel and SetPriority wait for them instead of racing them.
+    std::unique_lock<std::mutex> forwardLock(job->forward);
     ImageCore::RequestPriority priority {};
     {
         std::lock_guard<std::mutex> lock(m_core->mutex);
+        if (job->canceled)
+        {
+            return;   // canceled before admission: no read starts
+        }
         priority = job->priority;
     }
 
@@ -334,7 +441,7 @@ void CloudThumbnailRouter::FallBack(const std::shared_ptr<Job>& job)
 
     bool cancelInner = false;
     bool rejected = false;
-    bool reapplyPriority = false;
+    ImageCore::RequestPriority latest = priority;
     {
         std::lock_guard<std::mutex> lock(m_core->mutex);
         if (job->canceled)
@@ -349,18 +456,19 @@ void CloudThumbnailRouter::FallBack(const std::shared_ptr<Job>& job)
         else
         {
             job->innerHandle = innerHandle;
-            reapplyPriority = job->priority != priority;
-            priority = job->priority;
+            latest = job->priority;
         }
     }
     if (cancelInner)
     {
         m_inner.Cancel(innerHandle);
     }
-    if (reapplyPriority)
+    else if (!rejected && latest != priority)
     {
-        m_inner.SetPriority(innerHandle, priority);
+        // Changed during the dispatch (SetPriority waited for it).
+        m_inner.SetPriority(innerHandle, latest);
     }
+    forwardLock.unlock();
     if (rejected)
     {
         // The inner service rejected it (for example after its shutdown) and
@@ -385,37 +493,49 @@ bool CloudThumbnailRouter::Shutdown(std::chrono::milliseconds bound)
             }
         }
         m_core->jobs.clear();
+        WakeWorkers_NoLock();
     }
-    m_wake.notify_all();
     for (const ImageCore::ImageHandle handle : innerHandles)
     {
         m_inner.Cancel(handle);
     }
 
+    // A worker is done only when its thread has terminated (after
+    // CoUninitialize and its thread-local destructors), so the bound waits
+    // on the native threads; a join before that could block past it.
+    const auto deadline = std::chrono::steady_clock::now() + bound;
     std::vector<std::thread> workers;
-    bool joined = false;
     {
-        std::unique_lock<std::mutex> lock(m_core->mutex);
-        joined = m_exited.wait_for(lock, bound, [this] { return m_liveWorkers == 0; });
+        std::lock_guard<std::mutex> lock(m_core->mutex);
         workers = std::move(m_workers);
         m_workers.clear();
     }
+    std::vector<std::thread> running;
     for (std::thread& worker : workers)
     {
-        if (joined)
+        const DWORD timeout = TimeoutUntil(deadline, std::chrono::steady_clock::now());
+        if (WaitForSingleObject(static_cast<HANDLE>(worker.native_handle()), timeout) == WAIT_OBJECT_0)
         {
             worker.join();
         }
         else
         {
-            worker.detach();
+            running.push_back(std::move(worker));
         }
     }
-    if (!joined)
+    if (running.empty())
     {
-        FIC2_LOG_WARN("[CloudThumb] A shell thumbnail call is still running at shutdown.");
+        return true;
     }
-    return joined;
+
+    // Kept, not detached: a later Shutdown can still join them.
+    FIC2_LOG_WARN("[CloudThumb] A shell thumbnail worker has not exited at shutdown.");
+    std::lock_guard<std::mutex> lock(m_core->mutex);
+    for (std::thread& worker : running)
+    {
+        m_workers.push_back(std::move(worker));
+    }
+    return false;
 }
 
 CloudThumbnailRouter::Stats CloudThumbnailRouter::GetStats() const
