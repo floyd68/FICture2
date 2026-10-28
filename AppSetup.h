@@ -13,8 +13,18 @@ namespace FICture2App
     // %LOCALAPPDATA%\FICture2\FICture2.ini
     std::wstring GetIniFilePath();
 
-    // First-run is defined as "INI does not exist".
-    // If first-run, prompts the user and (optionally) registers per-user (HKCU) file associations.
+    // First-run is defined as "INI does not exist": neither the INI nor the
+    // backup an interrupted save left (IniStore::BackupPath), which is an
+    // existing configuration.
+    bool IsFirstRun(const std::wstring& iniFile);
+
+    // Creates `iniFile` with the default settings (and the first-run prompt
+    // result) unless a configuration exists; never overwrites one, including
+    // one only present as a backup.
+    void CreateIniIfMissing(const std::wstring& iniFile, bool associationsEnabled);
+
+    // If first-run (IsFirstRun of GetIniFilePath()), prompts the user and
+    // (optionally) registers per-user (HKCU) file associations.
     // Always creates the INI (best-effort) so the prompt is shown only once.
     void RunFirstRunAssociationPromptIfNeeded();
 

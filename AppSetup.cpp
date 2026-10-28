@@ -3,6 +3,7 @@
 #include "CommonUtil.h"
 #include "ImageCore/ImageDecodeDispatcher.h"
 #include "IniStore.h"
+#include "IniStoreLog.h"
 
 #include "framework.h"
 
@@ -30,42 +31,37 @@ namespace
         return line;
     }
 
-    void WriteIniDefaults(const std::wstring& iniFile)
+    void AddIniDefaults(IniStore::Batch& batch)
     {
-        if (iniFile.empty())
-        {
-            return;
-        }
-
         // General
-        IniStore::SetString(iniFile, L"General", L"IniVersion", L"1");
-        IniStore::SetString(iniFile, L"General", L"Initialized", L"1");
-        IniStore::SetString(iniFile, L"General", L"AskedAssociations", L"0");
-        IniStore::SetString(iniFile, L"General", L"AssociationsEnabled", L"0");
+        batch.Put(L"General", L"IniVersion", L"1");
+        batch.Put(L"General", L"Initialized", L"1");
+        batch.Put(L"General", L"AskedAssociations", L"0");
+        batch.Put(L"General", L"AssociationsEnabled", L"0");
 
         // Image / viewer behavior
-        IniStore::SetString(iniFile, L"Image", L"ZoomStiffness", L"80.0");
+        batch.Put(L"Image", L"ZoomStiffness", L"80.0");
 
         // Viewer defaults (reserved for future expansion)
-        IniStore::SetString(iniFile, L"Viewer", L"PaneCount", L"1");
-        IniStore::SetString(iniFile, L"Viewer", L"ShowNavItems", L"1");
+        batch.Put(L"Viewer", L"PaneCount", L"1");
+        batch.Put(L"Viewer", L"ShowNavItems", L"1");
 
         // Thumbnail strip defaults (reserved for future expansion)
-        IniStore::SetString(iniFile, L"Thumbnails", L"MinSize", L"32");
-        IniStore::SetString(iniFile, L"Thumbnails", L"MaxSize", L"256");
-        IniStore::SetString(iniFile, L"Thumbnails", L"ItemSpacing", L"8");
-        IniStore::SetString(iniFile, L"Thumbnails", L"Padding", L"8");
-        IniStore::SetString(iniFile, L"Thumbnails", L"TileLabelSpacing", L"2");
+        batch.Put(L"Thumbnails", L"MinSize", L"32");
+        batch.Put(L"Thumbnails", L"MaxSize", L"256");
+        batch.Put(L"Thumbnails", L"ItemSpacing", L"8");
+        batch.Put(L"Thumbnails", L"Padding", L"8");
+        batch.Put(L"Thumbnails", L"TileLabelSpacing", L"2");
 
         // Window placement (will be populated on first exit).
-        IniStore::SetString(iniFile, L"Window", L"ShowCmd", L"1"); // SW_SHOWNORMAL
+        batch.Put(L"Window", L"ShowCmd", L"1"); // SW_SHOWNORMAL
 
         // Background color (R,G,B 0-255). Default matches previous clear: (0.09,0.09,0.10) ~ (23,23,26)
-        IniStore::SetString(iniFile, L"Window", L"BackgroundColor", L"20,23,23");
+        batch.Put(L"Window", L"BackgroundColor", L"20,23,23");
 
         // Focused ImageBrowser background color (R,G,B 0-255). Default: dark yellow accent.
         // (0.18,0.16,0.03) ~ (46,41,8)
-        IniStore::SetString(iniFile, L"Window", L"FocusedBackgroundColor", L"35,43,43");
+        batch.Put(L"Window", L"FocusedBackgroundColor", L"35,43,43");
     }
 
     void EnsureIniFileExists(const std::wstring& iniFile, bool associationsEnabled)
@@ -75,7 +71,8 @@ namespace
             return;
         }
 
-        if (std::filesystem::exists(iniFile))
+        // A backup left by an interrupted save is an existing configuration.
+        if (IniStore::FileOrBackupExists(iniFile))
         {
             return;
         }
@@ -90,16 +87,21 @@ namespace
             // Best-effort.
         }
 
-        // Create an INI with full default settings so the user can see/edit everything.
-        WriteIniDefaults(iniFile);
-
-        // First-run prompt result.
-        IniStore::SetString(iniFile, L"General", L"AskedAssociations", L"1");
-        IniStore::SetString(
-            iniFile,
-            L"General",
-            L"AssociationsEnabled",
-            associationsEnabled ? L"1" : L"0");
+        // Create an INI with full default settings so the user can see/edit everything,
+        // plus the first-run prompt result, in one write. Under the lock the
+        // defaults go only into a file that is still empty (another instance,
+        // or a restored backup, may have created it since the check above).
+        IniStore::Batch batch;
+        AddIniDefaults(batch);
+        batch.Put(L"General", L"AskedAssociations", L"1");
+        batch.Put(L"General", L"AssociationsEnabled", associationsEnabled ? L"1" : L"0");
+        LogIniWrite(IniStore::Transact(iniFile, [&batch](IniStore& ini)
+        {
+            if (!ini.IsLoaded())
+            {
+                batch.ApplyTo(ini);
+            }
+        }), "Default settings");
     }
 
     bool SetRegSzValue(HKEY root, const std::wstring& subKey, const wchar_t* valueNameOrNull, const std::wstring& value)
@@ -340,7 +342,7 @@ namespace
             return;
         }
 
-        IniStore::SetInt(iniFile, section, key, value);
+        LogIniWrite(IniStore::SetInt(iniFile, section, key, value), "Setting");
     }
 
     void ClampRectToMonitorWorkArea(RECT& rc, bool enableLog = false)
@@ -394,11 +396,20 @@ namespace FICture2App
         return std::wstring(iniPath) + L"\\FICture2\\FICture2.ini";
     }
 
+    bool IsFirstRun(const std::wstring& iniFile)
+    {
+        return !iniFile.empty() && !IniStore::FileOrBackupExists(iniFile);
+    }
+
+    void CreateIniIfMissing(const std::wstring& iniFile, bool associationsEnabled)
+    {
+        EnsureIniFileExists(iniFile, associationsEnabled);
+    }
+
     void RunFirstRunAssociationPromptIfNeeded()
     {
         const std::wstring iniFile = GetIniFilePath();
-        const bool firstRun = !iniFile.empty() && !std::filesystem::exists(iniFile);
-        if (!firstRun)
+        if (!IsFirstRun(iniFile))
         {
             return;
         }
@@ -498,8 +509,10 @@ namespace FICture2App
         const std::wstring iniFile = GetIniFilePath();
         if (!iniFile.empty())
         {
-            WriteIniInt(iniFile, L"General", L"AskedAssociations", 1);
-            WriteIniInt(iniFile, L"General", L"AssociationsEnabled", enabled ? 1 : 0);
+            IniStore::Batch batch;
+            batch.PutInt(L"General", L"AskedAssociations", 1);
+            batch.PutInt(L"General", L"AssociationsEnabled", enabled ? 1 : 0);
+            LogIniWrite(IniStore::Apply(iniFile, batch), "Association settings");
         }
 
         if (!enabled)
@@ -774,11 +787,13 @@ namespace FICture2App
         }
 
         const RECT rc = wp.rcNormalPosition;
-        WriteIniInt(iniFile, L"Window", L"Left", rc.left);
-        WriteIniInt(iniFile, L"Window", L"Top", rc.top);
-        WriteIniInt(iniFile, L"Window", L"Right", rc.right);
-        WriteIniInt(iniFile, L"Window", L"Bottom", rc.bottom);
-        WriteIniInt(iniFile, L"Window", L"ShowCmd", static_cast<int>(wp.showCmd));
+        IniStore::Batch batch;
+        batch.PutInt(L"Window", L"Left", rc.left);
+        batch.PutInt(L"Window", L"Top", rc.top);
+        batch.PutInt(L"Window", L"Right", rc.right);
+        batch.PutInt(L"Window", L"Bottom", rc.bottom);
+        batch.PutInt(L"Window", L"ShowCmd", static_cast<int>(wp.showCmd));
+        LogIniWrite(IniStore::Apply(iniFile, batch), "Window placement");
     }
 }
 

@@ -50,33 +50,27 @@ namespace ImageBrowserSessionPersistence
         }
     }
 
-    void SaveToIni(const std::wstring& iniFile, const SavePayload& payload)
+    IniStore::WriteStatus SaveToIni(const std::wstring& iniFile, const SavePayload& payload)
     {
         if (iniFile.empty())
         {
-            return;
+            return IniStore::WriteStatus::Committed;
         }
 
         const int clampedCount = (std::max)(
             0,
             (std::min)(static_cast<int>(ImageBrowserSplitCoordinator::kMaxViewers), payload.viewerCount));
 
-        IniStore::SetInt(iniFile, L"Session", L"ViewerCount", clampedCount);
+        // One transaction: another instance's save cannot interleave with this one.
+        IniStore::Batch batch;
+        batch.PutInt(L"Session", L"ViewerCount", clampedCount);
 
         if (payload.hasThumbStripHeight)
         {
-            IniStore::SetString(
-                iniFile,
-                L"Session",
-                L"ThumbStripHeight",
-                std::format(L"{:.2f}", payload.thumbStripHeight));
+            batch.Put(L"Session", L"ThumbStripHeight", std::format(L"{:.2f}", payload.thumbStripHeight));
         }
 
-        IniStore::SetString(
-            iniFile,
-            L"Session",
-            L"HorizontalSplitRatios",
-            JoinFloatsCsv(payload.horizontalSplitRatios));
+        batch.Put(L"Session", L"HorizontalSplitRatios", JoinFloatsCsv(payload.horizontalSplitRatios));
 
         for (int i = 0; i < clampedCount; ++i)
         {
@@ -87,9 +81,11 @@ namespace ImageBrowserSessionPersistence
 
             const auto& viewer = payload.viewers[static_cast<size_t>(i)];
             const std::wstring sec = L"Viewer" + std::to_wstring(i);
-            IniStore::SetString(iniFile, sec, L"DisplayedFile", viewer.displayedFile);
-            IniStore::SetString(iniFile, sec, L"CurrentFolder", viewer.currentFolder);
+            batch.Put(sec, L"DisplayedFile", viewer.displayedFile);
+            batch.Put(sec, L"CurrentFolder", viewer.currentFolder);
         }
+
+        return IniStore::Apply(iniFile, batch);
     }
 
     bool TryRestoreFromIni(const std::wstring& iniFile, RestorePayload& outPayload)

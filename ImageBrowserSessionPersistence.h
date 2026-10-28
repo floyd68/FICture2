@@ -1,5 +1,7 @@
 #pragma once
 
+#include "IniStore.h"
+
 #include <string>
 #include <vector>
 
@@ -36,6 +38,7 @@ namespace ImageBrowserSessionPersistence
         std::vector<float> horizontalSplitRatios {};
     };
 
-    void SaveToIni(const std::wstring& iniFile, const SavePayload& payload);
+    // All keys in one IniStore transaction; the caller logs a status other than Committed.
+    IniStore::WriteStatus SaveToIni(const std::wstring& iniFile, const SavePayload& payload);
     bool TryRestoreFromIni(const std::wstring& iniFile, RestorePayload& outPayload);
 }

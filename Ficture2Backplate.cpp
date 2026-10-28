@@ -5,6 +5,7 @@
 #include "FolderEnumeration.h"
 #include "CommonUtil.h"
 #include "IniStore.h"
+#include "IniStoreLog.h"
 #include "FD2D/Core.h"
 #include "AppSetup.h"
 #include "Resource.h"
@@ -77,7 +78,7 @@ namespace
             CommonUtil::ToByte255(color.r),
             CommonUtil::ToByte255(color.g),
             CommonUtil::ToByte255(color.b));
-        IniStore::SetString(iniFile, section, key, rgb);
+        LogIniWrite(IniStore::SetString(iniFile, section, key, rgb), "Background color");
     }
 
     template <typename T>
@@ -1362,7 +1363,7 @@ void Ficture2Backplate::SynchronizeShowNavItems(FD2D::Wnd* source, bool showNavI
     std::wstring iniFile {};
     if (TryGetIniFilePath(iniFile))
     {
-        IniStore::SetString(iniFile, L"Viewer", L"ShowNavItems", m_showNavItems ? L"1" : L"0");
+        LogIniWrite(IniStore::SetString(iniFile, L"Viewer", L"ShowNavItems", m_showNavItems ? L"1" : L"0"), "ShowNavItems");
     }
 
     const auto targets = SnapshotOtherBrowserSync(m_eventBus, source);
@@ -1994,7 +1995,7 @@ void Ficture2Backplate::SaveImageBrowserSession(const std::wstring& iniFile)
         });
     }
 
-    ImageBrowserSessionPersistence::SaveToIni(iniFile, payload);
+    LogIniWrite(ImageBrowserSessionPersistence::SaveToIni(iniFile, payload), "Session");
 }
 
 bool Ficture2Backplate::TryRestoreImageBrowserSession(const std::wstring& iniFile)

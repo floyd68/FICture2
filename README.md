@@ -19,6 +19,7 @@ FICture2 is available on NexusMods: [https://www.nexusmods.com/fallout4/mods/100
 
 ## What's New in v1.7
 
+- **Fixed:** Images in folders whose names contain characters outside the system code page (for example emoji, Japanese or Thai on a Korean or English system) are restored by the session and listed in Open Recent again: `FICture2.ini` is now saved as Unicode (UTF-16 with a BOM) instead of in the ANSI code page, which replaced those characters with `?`. An existing INI is converted on its first save and keeps all of its settings. Paths containing `;` are also kept whole (they were cut at the `;`, and Open Recent lost every entry after one), and instances that save settings at the same time no longer overwrite each other's changes
 - **Fixed:** Explorer DDS thumbnails: the thumbnail handler now reads a file its stream delivers in several parts instead of failing on the first short read, releases its decoding resources on Explorer's thread after each thumbnail instead of keeping them until the thread exits, and no longer retries a DDS that DirectXTex rejects through the Windows imaging decoder
 - **Improved:** Thumbnails of online-only OneDrive files (Files On-Demand) no longer download the files: like Explorer, FICture2 now shows the thumbnail Windows gets from OneDrive, so browsing and scrolling a cloud folder leaves its files online-only and uses no disk space. In a folder of 157 online-only photos, the visible thumbnails appeared after about 1.4 s the first time and 0.1 s after that, instead of about 5-7 s, and scrolling through the whole strip downloaded no file instead of one per thumbnail shown. Opening an image still downloads it, and a file Windows has no thumbnail for is still read (and downloaded) for its thumbnail
 - **Improved:** Thumbnails in one pane no longer wait for slow reads in another pane: images inside a large solid archive, on a network share or in online-only OneDrive folders are read in their own queues, so a local folder's thumbnails load while those reads continue, and a slow main image inside an archive no longer holds up thumbnail decoding. In a split view with a deep folder of a synthetic 240 MB solid 7z in one pane, the other pane's local thumbnails appeared after about 0.02 s instead of about 11 s
@@ -148,7 +149,7 @@ This repository is the “app shell” that wires the UI and decode pipeline tog
 
 - **`FD2D/` (submodule)**: lightweight Win32 UI framework using Direct2D/DirectWrite (and optional D3D11 swapchain renderer)
 - **`ImageCore/` (submodule)**: async image decode pipeline (WIC + DirectXTex)
-- **`IniStore.h`**: shared header-only INI reader/writer (mirrored to NIFDiff via `scripts/sync-ini-store.ps1`)
+- **`IniStore.h`**: shared header-only Unicode INI reader/writer with cross-process transactions (mirrored to NIFDiff via `scripts/sync-ini-store.ps1`)
 - **`external/DirectXTex/` (submodule)**: DirectXTex library (external dependency)
 - **`external/libarchive/` (submodule)**: ZIP/7Z/RAR archive support (built as a minimal static library)
 
@@ -392,6 +393,8 @@ For details and the exact CMake flags used, see `docs/libarchive_integration.md`
 All settings are stored per-user at:
 
 - `%LOCALAPPDATA%\FICture2\FICture2.ini`
+
+The file is saved as Unicode (UTF-16 LE with a BOM); an older ANSI file is converted on the first save. Each save rewrites the whole file at once, keeping comments and key order, so several running instances never leave a half-written file. If a save fails after the previous file was moved aside, it is moved back; if even that fails, it stays as `FICture2.ini.replace-backup`, which FICture2 reads and restores on its next save. A line starting with `;` or `#` is a comment; a `;` later in a line is part of the value (paths may contain it).
 
 ### Important keys
 
