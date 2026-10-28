@@ -263,6 +263,7 @@ target_sources(FICture2 PRIVATE
     AppSetup.cpp
     AppShutdown.cpp
     ArchiveEntryHandoff.cpp
+    CloudThumbnailRouter.cpp
     FICture2.cpp
     Ficture2Backplate.cpp
     FloarPathByteSource.cpp
@@ -293,6 +294,7 @@ target_sources(FICture2 PRIVATE
     ImageViewUtil.cpp
     RecentFiles.cpp
     ScreenshotUtil.cpp
+    ShellThumbnailSource.cpp
     ThumbImageTile.cpp
     ThumbNavTile.cpp
     app.manifest

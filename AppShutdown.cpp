@@ -3,6 +3,7 @@
 #include "AppLog.h"
 #include "ArchiveCursorPool.h"
 #include "ArchiveEntryHandoff.h"
+#include "CloudThumbnailRouter.h"
 #include "FolderEnumeration.h"
 #include "ImageAsyncBinding.h"
 #include "ImageGpuResourceCache.h"
@@ -11,7 +12,9 @@
 
 #include <ole2.h>
 
+#include <algorithm>
 #include <atomic>
+#include <chrono>
 #include <memory>
 
 const char* AppShutdownStageName(AppShutdownStage stage)
@@ -66,9 +69,16 @@ AppShutdownHooks DefaultAppShutdownHooks(
     hooks.shutdownImageCore = [](std::chrono::milliseconds bound)
     {
         // Supersede every binding first, so no completion is applied, then stop
-        // and join ImageCore without constructing it.
+        // the shell thumbnail workers (whose fallbacks go to ImageCore) and
+        // join ImageCore without constructing it, within one bound.
         ImageAsyncBindingRegistry::Instance().ShutdownPrepare();
-        return ImageCore::ImageLoader::ShutdownIfCreated(bound);
+        const auto start = std::chrono::steady_clock::now();
+        if (!CloudThumbnailRouter::ShutdownSharedIfCreated(bound))
+        {
+            return false;
+        }
+        const auto spent = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - start);
+        return ImageCore::ImageLoader::ShutdownIfCreated((std::max)(std::chrono::milliseconds { 0 }, bound - spent));
     };
 
     hooks.shutdownArchiveOpens = [cache = &archiveCache](std::chrono::milliseconds bound)

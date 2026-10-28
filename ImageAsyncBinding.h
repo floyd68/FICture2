@@ -46,7 +46,8 @@
 
 class ImageAsyncBinding;
 
-// Decode backend used by ImageAsyncBinding. Production uses ImageCore::ImageLoader;
+// Decode backend used by ImageAsyncBinding. Production uses CloudThumbnailRouter
+// (shell thumbnails of online-only cloud files) in front of ImageCore::ImageLoader;
 // tests install a fake through ImageAsyncBinding::SetDecodeServiceForTesting to
 // control when and in which order completions are delivered.
 class IImageDecodeService

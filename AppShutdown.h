@@ -7,10 +7,13 @@
 // Order, one stage each:
 //   1. IPC server stop (no-op placeholder until the IPC server can be stopped);
 //   2. folder enumeration, bounded;
-//   3. ImageCore, bounded: binding invalidation, then the non-constructing
-//      ImageLoader::ShutdownIfCreated(bound), which requests stop on every
-//      request token and joins ImageCore's threads (it creates no loader, so a
-//      path that never used ImageCore starts no decode worker);
+//   3. ImageCore, bounded: binding invalidation, then the shell thumbnail
+//      workers of online-only cloud files (CloudThumbnailRouter, none started
+//      unless one was routed), then the non-constructing
+//      ImageLoader::ShutdownIfCreated with the rest of the bound, which
+//      requests stop on every request token and joins ImageCore's threads (it
+//      creates no loader, so a path that never used ImageCore starts no decode
+//      worker);
 //   4. Floar shared-open service, bounded: the solid-archive handoff's parked
 //      bytes are dropped and the idle forward cursors closed, then
 //      ArchiveReaderCache::Shutdown(bound) joins the archive open workers
@@ -97,7 +100,8 @@ struct AppShutdownBounds
 };
 
 // The real stages: FolderEnumerationService::Shared(), ImageAsyncBindingRegistry
-// plus ImageLoader::ShutdownIfCreated, `archiveCache`, ImageGpuResourceCache,
+// plus CloudThumbnailRouter::ShutdownSharedIfCreated and
+// ImageLoader::ShutdownIfCreated, `archiveCache`, ImageGpuResourceCache,
 // FD2D::Application, AppLog, OleUninitialize (only when `oleInitialized`, and
 // at most once) and EndProcessAfterShutdownTimeout with `beforeForcedExit`.
 AppShutdownHooks DefaultAppShutdownHooks(
