@@ -39,6 +39,7 @@ jobs:
           -DIMAGECORE_BUILD_TESTS=ON
           -DFD2D_BUILD_TESTS=ON
           -DFLOAR_BUILD_TESTS=ON
+          -DTHUMBNAILPROVIDER_BUILD_TESTS=ON
 
       - name: Build
         run: cmake --build build --config ${{ matrix.config }} --parallel

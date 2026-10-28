@@ -344,7 +344,7 @@ namespace
             input.bytes = std::span<const uint8_t>(file.bytes.data(), file.bytes.size());
             input.header = std::span<const uint8_t>(file.bytes.data(), (std::min)(file.bytes.size(), size_t { 512 }));
             ImageCore::ImageDecodeDispatcher dispatcher;
-            ImageCore::PipelineResult result = dispatcher.Decode(request, nullptr, input);
+            ImageCore::PipelineResult result = dispatcher.Decode(request, input);
             FIC2_REQUIRE(SUCCEEDED(result.hr));
             return std::move(result.image);
         }
