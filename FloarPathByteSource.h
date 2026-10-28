@@ -2,6 +2,10 @@
 
 #include "IPathByteSource.h"
 
+#include <array>
+#include <cstdint>
+#include <mutex>
+#include <optional>
 #include <stop_token>
 
 class ArchiveEntryHandoff;
@@ -10,6 +14,21 @@ namespace Floar
 {
 class ArchiveReaderCache;
 }
+
+// Filesystem queries used by FloarPathByteSource::ClassifyPath. System()
+// calls the Win32 functions; tests inject a fake to count and fake them.
+class PathClassificationQueries
+{
+public:
+    virtual ~PathClassificationQueries() = default;
+
+    // GetDriveTypeW(root), root like L"C:\\" (a DRIVE_* value).
+    virtual std::uint32_t DriveType(const std::wstring& root) const = 0;
+    // GetFileAttributesW(path); INVALID_FILE_ATTRIBUTES on failure.
+    virtual std::uint32_t FileAttributes(const std::wstring& path) const = 0;
+
+    static const PathClassificationQueries& System();
+};
 
 // Adapts Floar VFS path parsing/reads to ImageCore's IPathByteSource.
 //
@@ -29,6 +48,28 @@ class ArchiveReaderCache;
 // or by a forward pass that also parks the other demanded thumbnails before
 // it, a main image is read at High cursor priority, and every other read is
 // VirtualFileSystem::ReadFile as before.
+//
+// Path classification (ImageCore's I/O lanes, floyd68/ImageCore#15) uses only
+// cheap signals, synchronously, in this order:
+// - Archive: the path parses as a Floar::VirtualPath inside an archive
+//   (lexical; a folder whose name ends in an archive extension counts, as it
+//   does for Floar's reads).
+// - Remote: a UNC path (lexical), or a drive whose GetDriveTypeW is
+//   DRIVE_REMOTE. The drive type is cached per drive letter for the life of
+//   this source (at most one query per letter).
+// - Remote (cloud placeholder): only on a DRIVE_FIXED drive, GetFileAttributesW
+//   reports FILE_ATTRIBUTE_RECALL_ON_DATA_ACCESS or FILE_ATTRIBUTE_OFFLINE (a
+//   metadata query that does not hydrate the file). Remote and UNC paths never
+//   reach a filesystem query.
+// - Local: any other file on a fixed drive.
+// - Unknown (ImageCore's conservative default, scheduled as Local): an empty
+//   path, another drive type, no drive letter, or a failing query.
+// Accepted risk: GetDriveTypeW and GetFileAttributesW have no documented time
+// bound, so the first query of a drive letter (for example a disconnected
+// mapped drive) and the attribute query on a local fixed drive can take a
+// while on the caller's thread (ImageCore's Enqueue). Classification never
+// queries a remote or UNC path; a strict non-blocking guarantee would need
+// classification off that path (a separate issue).
 class FloarPathByteSource : public ImageCore::IPathByteSource
 {
 public:
@@ -38,16 +79,28 @@ public:
     explicit FloarPathByteSource(Floar::ArchiveReaderCache& cache);
     // Uses `cache` and `handoff`, which must outlive this source.
     FloarPathByteSource(Floar::ArchiveReaderCache& cache, ArchiveEntryHandoff& handoff);
+    // Classifies with `queries` (which must outlive this source); reads as the default.
+    explicit FloarPathByteSource(const PathClassificationQueries& queries);
 
     std::wstring ResolveHostPath(const std::wstring& path) const override;
     // Untokened read (legacy callers): not interruptible.
     std::vector<uint8_t> ReadAll(const std::wstring& path) const override;
     std::vector<uint8_t> ReadAll(const std::wstring& path, std::stop_token stop) const override;
+    // See the class comment.
+    ImageCore::PathSourceKind ClassifyPath(const std::wstring& path) const override;
 
 private:
     Floar::ArchiveReaderCache& Cache() const;
     ArchiveEntryHandoff& Handoff() const;
+    const PathClassificationQueries& Queries() const;
+    std::uint32_t DriveTypeOf(wchar_t letter) const;
 
     Floar::ArchiveReaderCache* m_cache { nullptr };
     ArchiveEntryHandoff* m_handoff { nullptr };
+    const PathClassificationQueries* m_queries { nullptr };
+
+    // GetDriveTypeW results by drive letter (A..Z), guarded by m_driveMutex.
+    // The query runs under the mutex, so each letter is queried at most once.
+    mutable std::mutex m_driveMutex;
+    mutable std::array<std::optional<std::uint32_t>, 26> m_driveTypes {};
 };

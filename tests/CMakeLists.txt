@@ -18,6 +18,7 @@ add_executable(FICture2Tests
     ArchiveCancelTestSupport.h
     ArchiveReadCancelTests.cpp
     ArchiveHandoffTests.cpp
+    PathClassificationTests.cpp
     AppShutdownTests.cpp
     ImageBrowserPathStateTests.cpp
     ThumbItemModelTests.cpp
@@ -143,6 +144,7 @@ add_test(NAME FICture2.FolderEnumeration COMMAND FICture2Tests FolderEnumeration
 add_test(NAME FICture2.FolderEnumerationForcedExit COMMAND FICture2Tests FolderEnumerationForcedExit_)
 add_test(NAME FICture2.ArchiveReadCancel COMMAND FICture2Tests ArchiveReadCancel_)
 add_test(NAME FICture2.ArchiveHandoff COMMAND FICture2Tests ArchiveHandoff_)
+add_test(NAME FICture2.PathClassification COMMAND FICture2Tests PathClassification_)
 add_test(NAME FICture2.AppShutdown COMMAND FICture2Tests AppShutdown_)
 add_test(NAME FICture2.AppShutdownForcedExit COMMAND FICture2Tests AppShutdownForcedExit_)
 # AppLog::Init runs once per process, so each Init scenario gets its own entry.
