@@ -129,3 +129,7 @@ FolderLoadLane* ImageBrowserFolderLoadLane(FD2D::Wnd& browser);
 // Test seam: the thumbnail strip pane of `browser` (nullptr if `browser` is
 // not an image browser).
 ImageBrowserThumbnailPane* ImageBrowserThumbPane(FD2D::Wnd& browser);
+
+// Test seam: deferred actions `browser` has queued but not run yet (0 if
+// `browser` is not an image browser).
+size_t ImageBrowserQueuedDeferredActions(FD2D::Wnd& browser);

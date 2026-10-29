@@ -1,5 +1,6 @@
 #include "TestHarness.h"
 
+#include "BackplateTestAccess.h"
 #include "FD2D/Backplate.h"
 #include "ImageBrowser.h"
 #include "FolderEnumeration.h"
@@ -35,4 +36,56 @@ FIC2_TEST(ImageBrowserRouting_ReadyBroadcastDrainsNestedBrowser)
     event.id = kFolderListingReadyMessage;
     FIC2_CHECK(outer->OnCommandEvent(event));
     FIC2_CHECK(!innerLane->HasChunks());   // the nested browser drained its queue
+}
+
+// Deferred actions queued on several browsers in quick succession (each queue
+// moves focus to its browser) all run, each on the browser that queued it,
+// although the last browser keeps focus: the posted wakeups go through the
+// backplate's real message routing.
+FIC2_TEST(ImageBrowserRouting_DeferredActionsRunOnTheirBrowserWhicheverHasFocus)
+{
+    HWND window = CreateWindowExW(0, L"STATIC", L"", 0, 0, 0, 0, 0, HWND_MESSAGE, nullptr, nullptr, nullptr);
+    FIC2_REQUIRE(window != nullptr);
+    {
+        FD2D::Backplate backplate(L"deferred-routing-test");
+        auto a = CreateImageBrowser(L"deferred_a");
+        auto b = CreateImageBrowser(L"deferred_b");
+        auto nested = CreateImageBrowser(L"deferred_nested");
+        FIC2_REQUIRE(a && b && nested);
+        FIC2_REQUIRE(b->AddChild(nested));   // a side-by-side pane inside B
+        FIC2_REQUIRE(backplate.AddWnd(a));
+        FIC2_REQUIRE(backplate.AddWnd(b));
+        FD2D::BackplateTestAccess::SetWindow(backplate, window);
+
+        auto ops = [](const std::shared_ptr<FD2D::Wnd>& browser)
+        {
+            return dynamic_cast<IImageBrowserOps*>(browser.get());
+        };
+        FIC2_REQUIRE(ops(a) && ops(b) && ops(nested));
+
+        ops(a)->BrowserCmdNavigateUp();
+        ops(a)->BrowserCmdNavigateUp();
+        ops(nested)->BrowserCmdNavigateUp();
+        ops(b)->BrowserCmdNavigateUp();
+        FIC2_CHECK(ImageBrowserQueuedDeferredActions(*a) == 2);
+        FIC2_CHECK(ImageBrowserQueuedDeferredActions(*nested) == 1);
+        FIC2_CHECK(ImageBrowserQueuedDeferredActions(*b) == 1);
+        FIC2_CHECK(backplate.FocusedWnd() == b.get());
+
+        // One wakeup per action; each runs one action on its own browser.
+        size_t wakeups = 0;
+        MSG msg {};
+        while (PeekMessageW(&msg, window, 0, 0, PM_REMOVE))
+        {
+            ++wakeups;
+            (void)FD2D::BackplateTestAccess::HandleMessage(backplate, window, msg.message, msg.wParam, msg.lParam);
+        }
+        FIC2_CHECK(wakeups == 4);
+        FIC2_CHECK(ImageBrowserQueuedDeferredActions(*a) == 0);
+        FIC2_CHECK(ImageBrowserQueuedDeferredActions(*nested) == 0);
+        FIC2_CHECK(ImageBrowserQueuedDeferredActions(*b) == 0);
+
+        FD2D::BackplateTestAccess::SetWindow(backplate, nullptr);
+    }
+    DestroyWindow(window);
 }

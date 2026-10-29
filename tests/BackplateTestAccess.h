@@ -30,6 +30,13 @@ namespace FD2D
             backplate.m_window = window;
         }
 
+        // Routes one window message as the backplate's window procedure does.
+        static bool HandleMessage(Backplate& backplate, HWND window, UINT message, WPARAM wParam, LPARAM lParam)
+        {
+            LRESULT result = 0;
+            return backplate.HandleMessage(window, message, wParam, lParam, result);
+        }
+
         // Gives a windowless backplate a window and a D2D-only target the test
         // created for it (no device, no subclassing): Wnd::Invalidate() then
         // renders synchronously outside a deferred-render scope, as in the

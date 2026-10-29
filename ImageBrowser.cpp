@@ -105,6 +105,7 @@ namespace
 
         FolderLoadLane& FolderLane() { return m_folderLane; }
         ImageBrowserThumbnailPane* ThumbPane() const { return m_thumbPane.get(); }
+        size_t QueuedDeferredActions() const { return m_deferredActions.Size(); }
 
         void OnAttached(FD2D::Backplate& backplate) override
         {
@@ -835,17 +836,14 @@ namespace
 
         bool TryHandleCommandEvent(const FD2D::CommandEvent& event)
         {
-            return HandleCommandId(event.id, event.lParam);
-        }
-
-        bool HandleCommandId(UINT id, LPARAM lParam)
-        {
-            switch (id)
+            switch (event.id)
             {
             case CMD_FIC2_IPC_OPEN:
                 return HandleIpcOpenMessage();
             case CMD_FIC2_DEFERRED_ACTION:
-                return HandleDeferredActionMessage();
+                // Addressed to the browser that queued the action; the others
+                // pass it down to their nested browsers.
+                return event.wParam == m_deferredWakeupId && RunDeferredAction();
             case CMD_FIC2_ASYNC_THUMB_READY:
                 return HandleAsyncThumbReadyMessage();
             default:
@@ -898,11 +896,6 @@ namespace
                 return selected->path;
             }
             return Floar::VirtualPath();
-        }
-
-        bool HandleDeferredActionMessage()
-        {
-            return RunDeferredAction();
         }
 
         size_t CurrentThumbSelectionIndex() const
@@ -3045,18 +3038,34 @@ namespace
                     ImageBrowserDeferredActions::DeferredQueue::kCapacity, static_cast<int>(kind));
                 return;
             }
-            // One message per queued action. A message runs one action on the
-            // focused browser, or on every browser when the focused one has
-            // none queued, so no action outlives the messages posted for it.
-            PostDeferredActionMessage();
+            PostDeferredActionWakeup();
         }
 
-        void PostDeferredActionMessage()
+        // One wakeup per queued action, addressed to this browser and
+        // broadcast so it reaches this browser whichever one has focus (a
+        // plain command goes only to the focused browser). Each wakeup runs
+        // one action, so every queued action runs, here, in order.
+        void PostDeferredActionWakeup()
         {
-            if (BackplateRef() != nullptr)
+            const HWND window = (BackplateRef() != nullptr) ? BackplateRef()->Window() : nullptr;
+            if (window == nullptr)
             {
-                PostMessageW(BackplateRef()->Window(), CMD_FIC2_DEFERRED_ACTION, 0, 0);
+                return;
             }
+            auto* message = new FD2D::Backplate::BroadcastMessage();
+            message->message = CMD_FIC2_DEFERRED_ACTION;
+            message->wParam = m_deferredWakeupId;
+            message->lParam = 0;
+            if (!PostMessageW(window, FD2D::Backplate::WM_FD2D_BROADCAST, 0, reinterpret_cast<LPARAM>(message)))
+            {
+                delete message;
+            }
+        }
+
+        static WPARAM NextDeferredWakeupId()
+        {
+            static std::atomic<WPARAM> next { 1 };
+            return next.fetch_add(1);
         }
 
         // Runs the oldest queued action; false when none is queued. The action
@@ -3411,6 +3420,8 @@ namespace
         float m_thumbOuterSpacing { 8.0f }; // spacing between thumbnail "items" in the horizontal strip
 
         ImageBrowserDeferredActions::DeferredQueue m_deferredActions {};
+        // Never reused, so a wakeup that outlives its browser matches no one.
+        const WPARAM m_deferredWakeupId { NextDeferredWakeupId() };
 
         std::wstring m_initialFile {};
         std::vector<std::shared_ptr<FD2D::Wnd>> m_hPanes {};
@@ -3523,5 +3534,11 @@ ImageBrowserThumbnailPane* ImageBrowserThumbPane(FD2D::Wnd& browser)
 {
     auto* impl = dynamic_cast<ImageBrowserImpl*>(&browser);
     return impl ? impl->ThumbPane() : nullptr;
+}
+
+size_t ImageBrowserQueuedDeferredActions(FD2D::Wnd& browser)
+{
+    auto* impl = dynamic_cast<ImageBrowserImpl*>(&browser);
+    return impl ? impl->QueuedDeferredActions() : 0;
 }
 
