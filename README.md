@@ -19,6 +19,7 @@ FICture2 is available on NexusMods: [https://www.nexusmods.com/fallout4/mods/100
 
 ## What's New in v1.7
 
+- **Fixed:** The selected thumbnail's outline no longer runs under the thumbnail strip's scrollbar or shows below it, and is no longer cut off at the top of the strip: the scrollbar now has its own space below the thumbnails, and the thumbnails leave room for the whole outline (including its pop and breathe). Thumbnails are therefore a little smaller at the same strip height, and the strip can be dragged a little taller so the largest thumbnails still fit
 - **Fixed:** A pane added beside the others (dropping a file or folder on the right side of an image, opening another file side by side, a second instance's compare, or a restored session) now gets the same thumbnail strip height as the existing panes, also after that height was changed by dragging the splitter, instead of the default height that left the strips misaligned
 - **Fixed:** Quick actions in the thumbnail strip no longer cancel each other: clicking a folder and pressing Enter or Backspace right away, double-clicking a file and then a folder, or dropping several files to add panes in quick succession now runs every action once, in the order it was made (previously a second action made before the first had run replaced it)
 - **Fixed:** Closing FICture2 now stops the server that receives files opened in another FICture2 window before anything else shuts down, within 1 s even while another window is connecting or a connection stalls. A connection that sends nothing is dropped after 2 s instead of occupying the server, and up to 8 opens are handled at the same time while further ones wait their turn
@@ -269,7 +270,7 @@ For details and the exact CMake flags used, see `docs/libarchive_integration.md`
 ## Features
 
 - **Thumbnail strip + main image** optimized for DDS-heavy folders
-  - Horizontal **scrollbar** appears when the strip overflows (drag to scroll)
+  - Horizontal **scrollbar** appears below the thumbnails when the strip overflows (drag to scroll); it never covers a thumbnail or its selection outline
 - **Folder navigation** inside the thumbnail strip (includes `..` “up” item)
 - **Archive browsing**: ZIP / 7Z / RAR / BA2 / BSA (images and folders)
   - Archive readers are cached so browsing large BA2/BSA packs stays responsive
