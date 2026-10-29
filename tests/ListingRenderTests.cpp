@@ -764,6 +764,116 @@ FIC2_TEST(ListingRender_AddedViewersTakeTheExistingStripHeight)
     FIC2_CHECK(checkAll("height changed again", kLaterHeight) == 4);
 }
 
+// The thumbnail strip keeps every tile's selection outline, at its largest,
+// inside the scroll view's content viewport and clear of the horizontal
+// scrollbar: at the minimum, a middle and the maximum strip height, with and
+// without overflow. The row height and the viewport do not change from frame
+// to frame once the strip is laid out.
+FIC2_TEST(ListingRender_SelectionOutlinesStayClearOfTheScrollbar)
+{
+    ThumbTestSupport::ScopedDecodeService decodes;
+    const TempRoot root;
+    const DiskFolder many(root.dir / L"many", 3, 80);
+    const DiskFolder few(root.dir / L"few", 0, 2);
+    constexpr float kOutset = FD2D::SelectionMaxOutset(FD2D::SelectionStyle {});
+    constexpr float kChrome = ImageBrowserThumbnailPane::kStripChrome;
+
+    ThumbTestSupport::ComScope com;
+    RenderWindow window;
+    FIC2_REQUIRE(window.Create());
+    Ficture2Backplate backplate(L"strip-gutter-test");
+    backplate.SkipImageBrowserIniForTesting();
+    FD2D::BackplateTestAccess::RenderInto(backplate, window.window, window.target.Get());
+    auto browser = CreateImageBrowser(L"gutter_browser");
+    FIC2_REQUIRE(browser != nullptr);
+    FIC2_REQUIRE(backplate.AddWnd(browser));
+    auto* ops = dynamic_cast<IImageBrowserOps*>(browser.get());
+    FIC2_REQUIRE(ops != nullptr);
+    backplate.Render();
+
+    ImageBrowserThumbnailPane* pane = ImageBrowserThumbPane(*browser);
+    FIC2_REQUIRE(pane != nullptr && pane->Scroll() != nullptr && pane->StripPanel() != nullptr);
+    FD2D::ScrollView& scroll = *pane->Scroll();
+    const auto settle = [&]
+    {
+        for (int i = 0; i < 4; ++i)
+        {
+            backplate.Render();
+        }
+    };
+
+    struct Case
+    {
+        const DiskFolder* folder;
+        size_t items;
+        bool overflows;
+    };
+    const Case cases[] = { { &many, 1 + 3 + 80, true }, { &few, 1 + 2, false } };
+    for (const Case& c : cases)
+    {
+        ops->BrowserRestoreOpenFolder(c.folder->dir.wstring());
+        for (int i = 0; i < 200 && pane->StripPanel()->Layout()->Count() != c.items; ++i)
+        {
+            MSG msg {};
+            while (PeekMessageW(&msg, nullptr, 0, 0, PM_REMOVE))
+            {
+                DispatchMessageW(&msg);
+            }
+            FD2D::CommandEvent ready {};
+            ready.id = kFolderListingReadyMessage;
+            (void)browser->OnCommandEvent(ready);
+            backplate.Render();
+            std::this_thread::sleep_for(std::chrono::milliseconds(5));
+        }
+        FIC2_REQUIRE(pane->StripPanel()->Layout()->Count() == c.items);
+
+        for (const float requested : { 0.0f, 150.0f, 1000.0f })   // clamped to the min and max
+        {
+            backplate.SetSyncedThumbStripHeight(requested);
+            ops->BrowserForceApplySyncedThumbStripHeight();
+            settle();
+
+            D2D1_RECT_F strip {};
+            FIC2_REQUIRE(pane->TryGetStripRect(strip));
+            const float stripH = strip.bottom - strip.top;
+            const float rowH = pane->StripPanel()->RowHeight();
+            const D2D1_RECT_F viewport = scroll.ContentViewportRect();
+            D2D1_RECT_F track {}, thumb {};
+            const bool bar = scroll.HScrollBarRects(track, thumb);
+            std::printf("  %s, strip %.1f: row %.1f, viewport bottom %.1f, bar %s\n",
+                c.overflows ? "overflowing" : "fitting", stripH, rowH, viewport.bottom - strip.top,
+                bar ? "shown" : "none");
+            FIC2_CHECK(bar == c.overflows);
+            FIC2_CHECK(std::fabs(rowH - (stripH - kChrome)) < 1.0f);   // the row fits the strip
+
+            size_t checkedTiles = 0;
+            for (const ThumbTile& tile : pane->StripPanel()->Tiles()->Tiles())
+            {
+                if (!tile.focus)
+                {
+                    continue;
+                }
+                // The outline surrounds the image, which fits in the tile.
+                const D2D1_RECT_F r = tile.focus->LayoutRect();
+                FIC2_CHECK(r.top - kOutset >= viewport.top - 0.01f);
+                FIC2_CHECK(r.bottom + kOutset <= viewport.bottom + 0.01f);
+                if (bar)
+                {
+                    FIC2_CHECK(r.bottom + kOutset <= track.top);
+                }
+                ++checkedTiles;
+            }
+            FIC2_CHECK(checkedTiles > 0);
+
+            // Laid out: further frames change nothing.
+            settle();
+            FIC2_CHECK(pane->StripPanel()->RowHeight() == rowH);
+            const D2D1_RECT_F again = scroll.ContentViewportRect();
+            FIC2_CHECK(again.top == viewport.top && again.bottom == viewport.bottom);
+        }
+    }
+}
+
 // A viewer added while the existing strip is clamped to its max height (the
 // window was enlarged after the height was set) matches it while clamped and
 // after the window shrinks back and the clamp releases.

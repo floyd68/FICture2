@@ -59,11 +59,12 @@ namespace
 {
     class ImageBrowserImpl;
 
-    constexpr float kThumbStripPadding = 8.0f; // matches thumbs->SetPadding(8)
     constexpr float kThumbMinSide = 32.0f;
     constexpr float kThumbMaxSide = 256.0f;
-    constexpr float kThumbStripMinH = (kThumbStripPadding * 2.0f) + kThumbMinSide;
-    constexpr float kThumbStripMaxH = (kThumbStripPadding * 2.0f) + kThumbMaxSide;
+    // A strip fits a row of kThumbMinSide..kThumbMaxSide plus its chrome
+    // (selection room and scrollbar gutter).
+    constexpr float kThumbStripMinH = kThumbMinSide + ImageBrowserThumbnailPane::kStripChrome;
+    constexpr float kThumbStripMaxH = kThumbMaxSide + ImageBrowserThumbnailPane::kStripChrome;
     constexpr float kSplitPanelDefaultHitThickness = 12.0f; // Splitter::m_hitAreaThickness default
 
     static std::wstring MakeStableThumbName(const wchar_t* prefix, const std::wstring& path)
@@ -1469,16 +1470,19 @@ namespace
                     paneH = (std::max)(0.0f, stripRect.bottom - stripRect.top);
                 }
             }
+            // The row gets the strip height without its chrome: the scrollbar
+            // gutter (always budgeted, see kStripChrome) and the selection room
+            // above and below.
             const ImageBrowserThumbLayoutCoordinator::ThumbSizeInput sizingInput
             {
-                paneH,
+                paneH - FD2D::ScrollView::kScrollBarGutter,
                 m_thumbH,
                 (m_rootSplit != nullptr && m_rootSplit->IsSplitterDragging()),
                 CommonUtil::NowMs(),
                 m_lastThumbSizingApplyMs,
                 kThumbMinSide,
                 kThumbMaxSide,
-                4.0f
+                ImageBrowserThumbnailPane::kSelectionRoom
             };
             const auto sizing = ImageBrowserThumbLayoutCoordinator::EvaluateThumbSize(sizingInput);
             if (!sizing.shouldApply)

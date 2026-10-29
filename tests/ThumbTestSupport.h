@@ -183,7 +183,9 @@ namespace ThumbTestSupport
         Microsoft::WRL::ComPtr<IWICBitmap> bitmap;
         Microsoft::WRL::ComPtr<ID2D1RenderTarget> target;
 
-        bool Create(UINT width, UINT height)
+        // `width` x `height` pixels; `dpi` above 96 renders at a display scale
+        // (dpi / 96 pixels per DIP).
+        bool Create(UINT width, UINT height, float dpi = 96.0f)
         {
             if (FAILED(CoCreateInstance(CLSID_WICImagingFactory, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&wic))) ||
                 FAILED(D2D1CreateFactory(D2D1_FACTORY_TYPE_SINGLE_THREADED, d2d.GetAddressOf())) ||
@@ -193,7 +195,7 @@ namespace ThumbTestSupport
             }
             const D2D1_RENDER_TARGET_PROPERTIES props = D2D1::RenderTargetProperties(
                 D2D1_RENDER_TARGET_TYPE_SOFTWARE,
-                D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM, D2D1_ALPHA_MODE_PREMULTIPLIED), 96.0f, 96.0f);
+                D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM, D2D1_ALPHA_MODE_PREMULTIPLIED), dpi, dpi);
             return SUCCEEDED(d2d->CreateWicBitmapRenderTarget(bitmap.Get(), props, &target));
         }
 

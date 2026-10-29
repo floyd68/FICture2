@@ -230,7 +230,8 @@ FIC2_TEST(ThumbStripTiles_PanelPlacesPartialTilesAtTheirModelIndices)
     // The panel spans the whole layout, not just its children.
     const FD2D::Size desired = panel->Measure({ 2000.0f, 200.0f });
     FIC2_CHECK(Near(desired.w, layout.ContentWidth()));
-    FIC2_CHECK(Near(desired.h, 64.0f + 8.0f));
+    constexpr float room = ImageBrowserThumbnailPane::kSelectionRoom;   // above and below the row
+    FIC2_CHECK(Near(desired.h, 64.0f + 2.0f * room));
 
     panel->Arrange({ 10.0f, 0.0f, desired.w, desired.h });
     for (const ThumbTile& tile : tiles.Tiles())
@@ -238,8 +239,8 @@ FIC2_TEST(ThumbStripTiles_PanelPlacesPartialTilesAtTheirModelIndices)
         const D2D1_RECT_F rect = tile.focus->LayoutRect();
         FIC2_CHECK(Near(rect.left, 10.0f + layout.Start(tile.index)));
         FIC2_CHECK(Near(rect.right - rect.left, layout.Extent(tile.index)));
-        FIC2_CHECK(Near(rect.top, 4.0f));
-        FIC2_CHECK(Near(rect.bottom, 4.0f + 64.0f));
+        FIC2_CHECK(Near(rect.top, room));
+        FIC2_CHECK(Near(rect.bottom, room + 64.0f));
     }
     FIC2_CHECK(Near(tiles.Tiles()[0].focus->LayoutRect().left, 10.0f + 366.0f));   // Start(3), not Start(0)
 
@@ -254,10 +255,11 @@ FIC2_TEST(ThumbStripTiles_PanelPlacesPartialTilesAtTheirModelIndices)
     tiles.Clear();
     const FD2D::Size noTilesSize = panel->Measure({ 2000.0f, 200.0f });
     FIC2_CHECK(Near(noTilesSize.w, layout.ContentWidth()));
-    FIC2_CHECK(Near(noTilesSize.h, 64.0f + 8.0f));
+    FIC2_CHECK(Near(noTilesSize.h, 64.0f + 2.0f * room));
     panel->ClearChildren();
 
-    // An empty strip without a row height measures as its padding.
+    // An empty strip without a row height measures as its padding (and the
+    // selection room).
     ThumbStripLayout emptyLayout;
     emptyLayout.Reset({}, 4.0f, 4.0f);
     ThumbTileSet noTiles;
@@ -267,7 +269,7 @@ FIC2_TEST(ThumbStripTiles_PanelPlacesPartialTilesAtTheirModelIndices)
     emptyPanel->SetTiles(&noTiles);
     const FD2D::Size emptySize = emptyPanel->Measure({ 100.0f, 100.0f });
     FIC2_CHECK(Near(emptySize.w, 8.0f));
-    FIC2_CHECK(Near(emptySize.h, 8.0f));
+    FIC2_CHECK(Near(emptySize.h, 2.0f * room));
 }
 
 FIC2_TEST(ThumbStripTiles_MaterializeBindsOnlyTheRange)

@@ -1,6 +1,7 @@
 #pragma once
 
 #include "FD2D/FD2D.h"
+#include "FD2D/ScrollView.h"
 #include "ImageBrowserThumbLayout.h"
 #include "ImageBrowserThumbTypes.h"
 
@@ -68,6 +69,15 @@ public:
     // Panel padding and item spacing that ThumbStripLayout must use.
     static constexpr float kPanelPadding = 4.0f;
     static constexpr float kItemSpacing = 4.0f;
+    // Room kept free above and below the tile row for the selection outline
+    // at its largest (inflated, popping, breathing, stroked), so the strip
+    // never clips it and the scrollbar never covers it.
+    static constexpr float kSelectionRoom = 9.0f;
+    // Strip height the tile row cannot use: the selection room above and below
+    // it, and the scrollbar gutter. The gutter is budgeted whether or not the
+    // strip overflows, so the row height (and with it the strip's width) never
+    // depends on the bar showing, which could otherwise toggle it.
+    static constexpr float kStripChrome = 2.0f * kSelectionRoom + FD2D::ScrollView::kScrollBarGutter;
     bool TryGetStripRect(D2D1_RECT_F& outRect) const;
     size_t PagingStep(float itemExtent) const;
 
