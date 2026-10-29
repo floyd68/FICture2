@@ -684,3 +684,82 @@ FIC2_TEST(ListingRender_RestoredViewersGetTheSavedStripHeight)
         }
     }
 }
+
+// Viewers added beside an existing one (a folder pane, a right-side drop
+// insert, a file split) after its strip height was changed get that height
+// from their first layout on, and the existing strips keep theirs. A later
+// height change still reaches every viewer.
+FIC2_TEST(ListingRender_AddedViewersTakeTheExistingStripHeight)
+{
+    constexpr float kChangedHeight = 230.0f;
+    constexpr float kLaterHeight = 180.0f;
+    ThumbTestSupport::ScopedDecodeService decodes;
+    const TempRoot root;
+    const DiskFolder a(root.dir / L"a", 2, 5);
+    const DiskFolder b(root.dir / L"b", 2, 5);
+    const DiskFolder c(root.dir / L"c", 2, 5);
+
+    ThumbTestSupport::ComScope com;
+    RenderWindow window;
+    FIC2_REQUIRE(window.Create());
+    Ficture2Backplate backplate(L"strip-height-test");
+    backplate.SkipImageBrowserIniForTesting();
+    FD2D::BackplateTestAccess::RenderInto(backplate, window.window, window.target.Get());
+    auto first = CreateImageBrowser(L"strip_root");
+    FIC2_REQUIRE(first != nullptr);
+    FIC2_REQUIRE(backplate.AddWnd(first));
+    auto* ops = dynamic_cast<IImageBrowserOps*>(first.get());
+    FIC2_REQUIRE(ops != nullptr);
+    ops->BrowserRestoreOpenFolder(a.dir.wstring());
+    backplate.Render();
+
+    const auto stripHeight = [](FD2D::Wnd& browser)
+    {
+        D2D1_RECT_F strip {};
+        const ImageBrowserThumbnailPane* pane = ImageBrowserThumbPane(browser);
+        return (pane != nullptr && pane->TryGetStripRect(strip)) ? strip.bottom - strip.top : -1.0f;
+    };
+    const auto settle = [&]
+    {
+        for (int i = 0; i < 3; ++i)
+        {
+            backplate.Render();
+        }
+    };
+    const auto checkAll = [&](const char* step, float expected)
+    {
+        const std::vector<FD2D::Wnd*> browsers = backplate.Bus().ImageBrowsersSnapshot();
+        for (FD2D::Wnd* browser : browsers)
+        {
+            const float height = stripHeight(*browser);
+            std::printf("  %s: %ls strip height %.1f\n", step, browser->Name().c_str(), height);
+            FIC2_CHECK(std::fabs(height - expected) < 1.5f);
+        }
+        return browsers.size();
+    };
+
+    // The height is changed on the only viewer (what a splitter drag stores
+    // and applies).
+    backplate.SetSyncedThumbStripHeight(kChangedHeight);
+    ops->BrowserForceApplySyncedThumbStripHeight();
+    settle();
+    FIC2_REQUIRE(std::fabs(stripHeight(*first) - kChangedHeight) < 1.5f);
+
+    ops->BrowserAddHorizontalViewerForRestoreFolder(b.dir.wstring());
+    settle();
+    FIC2_CHECK(checkAll("folder pane added", kChangedHeight) == 2);
+
+    ops->BrowserOpenAdditionalFilesSideBySideAfterName({ c.dir.wstring() }, first->Name());
+    settle();
+    FIC2_CHECK(checkAll("pane inserted after the first", kChangedHeight) == 3);
+
+    ops->BrowserOpenAdditionalFileInHorizontalSplit((a.dir / L"img000.png").wstring());
+    settle();
+    FIC2_CHECK(checkAll("file split", kChangedHeight) == 4);
+
+    // A later change (another splitter drag) still reaches every viewer.
+    backplate.SynchronizeThumbStripHeight(first.get(), kLaterHeight);
+    ops->BrowserForceApplySyncedThumbStripHeight();
+    settle();
+    FIC2_CHECK(checkAll("height changed again", kLaterHeight) == 4);
+}

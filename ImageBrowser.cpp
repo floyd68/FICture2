@@ -1349,9 +1349,24 @@ namespace
             {
                 newBrowser->RestoreOpenFolder(folderPath);
             }
+            AdoptThumbStripSplit(newWnd);
             m_hPanes.push_back(newWnd);
 
             RefreshHorizontalHostLayout();
+        }
+
+        // A pane added beside this root host starts from the root's thumbnail
+        // split ratio instead of the default one. Side-by-side panes share one
+        // height, so their strips line up from the first layout, also after the
+        // height was changed by a splitter drag (the synced height is pushed to
+        // the panes that exist then, not to later ones).
+        void AdoptThumbStripSplit(const std::shared_ptr<FD2D::Wnd>& pane) const
+        {
+            const auto browser = std::dynamic_pointer_cast<ImageBrowserImpl>(pane);
+            if (browser != nullptr && browser->m_rootSplit != nullptr && m_rootSplit != nullptr)
+            {
+                browser->m_rootSplit->SetSplitRatio(m_rootSplit->SplitRatio());
+            }
         }
 
         void ForceApplySyncedThumbStripHeight()
@@ -3355,6 +3370,7 @@ namespace
                 }
             }
 
+            AdoptThumbStripSplit(newWnd);
             m_hPanes.insert(m_hPanes.begin() + static_cast<std::ptrdiff_t>(insertIndex), newWnd);
             RefreshHorizontalHostLayout();
         }
@@ -3396,6 +3412,7 @@ namespace
 
             const std::wstring childName = ImageBrowserSplitCoordinator::NextSplitBrowserName();
             auto newBrowser = CreateImageBrowser(childName, filePath.wstring());
+            AdoptThumbStripSplit(newBrowser);
             m_hPanes.push_back(newBrowser);
 
             RefreshHorizontalHostLayout();
