@@ -153,13 +153,6 @@ namespace
         return SnapshotBrowsers<IImageBrowserSync>(bus, source);
     }
 
-    std::vector<IImageBrowserOps*> SnapshotOtherBrowserOps(
-        const std::shared_ptr<Ficture2Backplate::EventBus>& bus,
-        FD2D::Wnd* source)
-    {
-        return SnapshotBrowsers<IImageBrowserOps>(bus, source);
-    }
-
     void ShowAboutDialog(HWND hwnd)
     {
         INITCOMMONCONTROLSEX icc {};
@@ -901,32 +894,6 @@ namespace
         (void)TryExecuteSystemAction(action, ownerWindow);
     }
 
-}
-
-Ficture2Backplate::EventBus::HandlerId Ficture2Backplate::EventBus::Subscribe(Handler handler)
-{
-    if (!handler)
-    {
-        return 0;
-    }
-
-    const HandlerId id = m_nextId++;
-    m_handlers.emplace(id, std::move(handler));
-    return id;
-}
-
-void Ficture2Backplate::EventBus::Unsubscribe(HandlerId id)
-{
-    m_handlers.erase(id);
-}
-
-void Ficture2Backplate::EventBus::Publish(const ImageBrowserEvent& event)
-{
-    for (const auto& pair : m_handlers)
-    {
-        if (pair.second)
-            pair.second(event);
-    }
 }
 
 void Ficture2Backplate::EventBus::RegisterImageBrowser(FD2D::Wnd* browser)

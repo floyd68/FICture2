@@ -35,41 +35,6 @@ public:
     virtual void BrowserApplyAlphaCheckerboardForSync(bool checkerEnabled) = 0;
 };
 
-class IImageBrowserCommands
-{
-public:
-    virtual ~IImageBrowserCommands() = default;
-
-    // Command domain: file/viewer lifecycle.
-    virtual void BrowserCmdClose() = 0;
-
-    // Command domain: selection/navigation.
-    virtual void BrowserCmdActivateSelected() = 0;
-    virtual void BrowserCmdSelectPrevious() = 0;
-    virtual void BrowserCmdSelectNext() = 0;
-    virtual void BrowserCmdSelectFirst() = 0;
-    virtual void BrowserCmdSelectLast() = 0;
-    virtual void BrowserCmdPagePrevious() = 0;
-    virtual void BrowserCmdPageNext() = 0;
-    virtual void BrowserCmdNavigateUp() = 0;
-
-    // Command domain: view/appearance toggles.
-    virtual void BrowserCmdFitToScreen() = 0;
-    virtual void BrowserCmdToggleDirectories() = 0;
-    virtual void BrowserCmdToggleAlpha() = 0;
-    virtual void BrowserCmdToggleSampling() = 0;
-    virtual void BrowserCmdRotateLeft()  = 0;
-    virtual void BrowserCmdRotateRight() = 0;
-    virtual void BrowserCmdRotate180()   = 0;
-    virtual void BrowserCmdRotateReset() = 0;
-    virtual void BrowserCmdMipPrevious() = 0;
-    virtual void BrowserCmdMipNext() = 0;
-    virtual void BrowserCmdSelectMip(uint32_t mipLevel) = 0;
-    virtual void BrowserCmdSetChannelMode(int mode) = 0;
-    virtual void BrowserCmdSetAlphaUsageOverride(ImageCore::AlphaUsage usage) = 0;
-    virtual void BrowserCmdShowImageInformation() = 0;
-};
-
 class IImageBrowserQuery
 {
 public:
@@ -101,12 +66,44 @@ public:
     virtual std::wstring BrowserRequestedImageFileNameForTitle() const = 0;
 };
 
-class IImageBrowserOps : public IImageBrowserSync, public IImageBrowserCommands, public IImageBrowserQuery
+// The sync and query facets stay separate interfaces because the backplate
+// uses them on their own (SnapshotOtherBrowserSync, AsImageBrowserQuery);
+// commands are only reached through IImageBrowserOps.
+class IImageBrowserOps : public IImageBrowserSync, public IImageBrowserQuery
 {
 public:
     using ContextMenuSnapshot = IImageBrowserQuery::ContextMenuSnapshot;
 
     virtual ~IImageBrowserOps() = default;
+
+    // Command domain: file/viewer lifecycle.
+    virtual void BrowserCmdClose() = 0;
+
+    // Command domain: selection/navigation.
+    virtual void BrowserCmdActivateSelected() = 0;
+    virtual void BrowserCmdSelectPrevious() = 0;
+    virtual void BrowserCmdSelectNext() = 0;
+    virtual void BrowserCmdSelectFirst() = 0;
+    virtual void BrowserCmdSelectLast() = 0;
+    virtual void BrowserCmdPagePrevious() = 0;
+    virtual void BrowserCmdPageNext() = 0;
+    virtual void BrowserCmdNavigateUp() = 0;
+
+    // Command domain: view/appearance toggles.
+    virtual void BrowserCmdFitToScreen() = 0;
+    virtual void BrowserCmdToggleDirectories() = 0;
+    virtual void BrowserCmdToggleAlpha() = 0;
+    virtual void BrowserCmdToggleSampling() = 0;
+    virtual void BrowserCmdRotateLeft()  = 0;
+    virtual void BrowserCmdRotateRight() = 0;
+    virtual void BrowserCmdRotate180()   = 0;
+    virtual void BrowserCmdRotateReset() = 0;
+    virtual void BrowserCmdMipPrevious() = 0;
+    virtual void BrowserCmdMipNext() = 0;
+    virtual void BrowserCmdSelectMip(uint32_t mipLevel) = 0;
+    virtual void BrowserCmdSetChannelMode(int mode) = 0;
+    virtual void BrowserCmdSetAlphaUsageOverride(ImageCore::AlphaUsage usage) = 0;
+    virtual void BrowserCmdShowImageInformation() = 0;
 
     virtual bool BrowserTryStartCompareWithFileNameMatch(const std::wstring& incomingFilePath) = 0;
     virtual void BrowserRestoreOpenFile(const std::wstring& filePath) = 0;
