@@ -294,7 +294,7 @@ int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
         AllowSetForegroundWindow(ASFW_ANY);
 
         AppIpc::Decision decision = AppIpc::Decision::Ignore;
-        const bool sent = AppIpc::TrySendPath(initialFile, decision);
+        const bool sent = AppIpc::TrySendPath(AppIpc::kPipeName, initialFile, decision);
         FIC2_LOG_INFO("[IPC] Client: TrySendPath result={} decision={}",
             sent, static_cast<int>(decision));
 
@@ -313,13 +313,15 @@ int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
     // pipe-connect budget is 500ms from *its* launch, while this instance still
     // has OleInitialize / FD2D device creation / session restore ahead of it.
     //
-    // The callback (per-client AppIpc worker) decides on the spot against the
+    // The callback (on the client's AppIpc worker) decides on the spot against the
     // shared IpcOpenQueue - same-file-name gate + pane capacity - queues the
     // accepted path, and answers immediately. The UI drains the queue when
     // CMD_FIC2_IPC_OPEN arrives (or right after startup). It never waits for
     // the UI to load anything.
     auto ipcUiWindow = std::make_shared<std::atomic<HWND>>(nullptr);
     auto ipcQueue = std::make_shared<IpcOpenQueue>();
+    // Stopped and joined as the first stage of every cleanup below.
+    AppIpc::Server ipcServer;
     if (!hadExistingInstance)
     {
         FIC2_LOG_INFO("[IPC] Server: starting named-pipe server (pre-UI init).");
@@ -327,7 +329,8 @@ int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
         {
             ipcQueue->SeedExpected({ initialFile });
         }
-        AppIpc::StartServer([ipcUiWindow, ipcQueue](const std::wstring& path) -> AppIpc::Decision
+        const bool serverStarted = ipcServer.Start(AppIpc::kPipeName,
+            [ipcUiWindow, ipcQueue](const std::wstring& path) -> AppIpc::Decision
         {
             FIC2_LOG_INFO("[IPC] Server: incoming request for path: {}",
                 AppLog::ToUtf8(path));
@@ -358,7 +361,17 @@ int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
             FIC2_LOG_INFO("[IPC] Server: queued path (CompareStarted).");
             return AppIpc::Decision::CompareStarted;
         });
+        if (!serverStarted)
+        {
+            FIC2_LOG_ERROR("[IPC] Server: could not start; running without single-instance forwarding.");
+        }
     }
+
+    // The real cleanup stages, including this process's IPC server.
+    auto shutdownHooks = [&ipcServer](bool oleOwned)
+    {
+        return DefaultAppShutdownHooks(oleOwned, {}, Floar::ArchiveReaderCache::Shared(), &ipcServer);
+    };
 
     // Closed by every path that reaches the cleanup below; on a forced exit the
     // process exit releases it.
@@ -393,8 +406,9 @@ int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
     }
     else
     {
-        // Pre-service: nothing started yet, the shared cleanup creates nothing.
-        RunAppShutdown(AppExitPath::OleInitFailed, DefaultAppShutdownHooks(false));
+        // Pre-service: only the IPC server runs; the shared cleanup stops it
+        // and creates nothing.
+        RunAppShutdown(AppExitPath::OleInitFailed, shutdownHooks(false));
         closeInstanceMutex();
         return -1;
     }
@@ -410,7 +424,7 @@ int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
     initContext.instance = hInstance;
     if (FAILED(app.Initialize(initContext)))
     {
-        RunAppShutdown(AppExitPath::Fd2dInitFailed, DefaultAppShutdownHooks(oleInitialized));
+        RunAppShutdown(AppExitPath::Fd2dInitFailed, shutdownHooks(oleInitialized));
         closeInstanceMutex();
         return -1;
     }
@@ -477,7 +491,7 @@ int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
             // started, and the before-destroy callback (session persistence) is
             // not registered yet, so destroying the window saves nothing.
             backplate.reset();
-            RunAppShutdown(AppExitPath::WindowCreationFailed, DefaultAppShutdownHooks(oleInitialized));
+            RunAppShutdown(AppExitPath::WindowCreationFailed, shutdownHooks(oleInitialized));
             closeInstanceMutex();
             return FALSE;
         }
@@ -595,13 +609,14 @@ int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
         // backplate is destroyed here (end of scope), releasing any COM resources it owns.
     }
 
-    // Folder enumeration workers, ImageCore reads and Floar archive opens may be
+    // The IPC server stops first, so no request arrives during teardown. Folder
+    // enumeration workers, ImageCore reads and Floar archive opens may be
     // inside a blocked filesystem, network or archive call. Each stage joins its
     // workers within a bound before any later teardown; otherwise the process
     // ends without static destruction (see AppShutdown.h and FolderEnumeration.h).
     // The session was already saved when the window was destroyed.
     FIC2_LOG_INFO("Message loop result={}", result);
-    RunAppShutdown(AppExitPath::Normal, DefaultAppShutdownHooks(oleInitialized));
+    RunAppShutdown(AppExitPath::Normal, shutdownHooks(oleInitialized));
     closeInstanceMutex();
     return result;
 }

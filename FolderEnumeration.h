@@ -217,6 +217,7 @@ private:
 constexpr UINT kFolderEnumerationForcedExitCode = 0xF1C2;   // folder enumeration workers
 constexpr UINT kImageCoreForcedExitCode = 0xF1C3;           // ImageCore decode/prefetch threads
 constexpr UINT kArchiveOpenForcedExitCode = 0xF1C4;         // Floar archive open workers
+constexpr UINT kIpcServerForcedExitCode = 0xF1C5;           // IPC server accept/client threads
 
 // The forced shutdown path shared by every bounded stage: logs that `stage` is
 // still running `bound` after its shutdown began, runs `beforeForcedExit`

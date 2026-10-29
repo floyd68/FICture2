@@ -48,12 +48,15 @@ const char* AppExitPathName(AppExitPath path)
 AppShutdownHooks DefaultAppShutdownHooks(
     bool oleInitialized,
     std::function<void()> beforeForcedExit,
-    Floar::ArchiveReaderCache& archiveCache)
+    Floar::ArchiveReaderCache& archiveCache,
+    AppIpc::Server* ipcServer)
 {
     AppShutdownHooks hooks {};
 
-    // Placeholder: the IPC server cannot be stopped yet.
-    hooks.stopIpcServer = [] {};
+    hooks.stopIpcServer = [ipcServer](std::chrono::milliseconds bound)
+    {
+        return ipcServer == nullptr || ipcServer->Stop(bound);
+    };
 
     hooks.finishFolderEnumeration = [](std::chrono::milliseconds bound)
     {
@@ -160,10 +163,11 @@ AppShutdownResult RunAppShutdown(
 {
     FIC2_LOG_INFO("=== FICture2 shutdown ({}) ===", AppExitPathName(path));
 
-    Run(hooks.stopIpcServer);
-
-    // Every archive-cache caller stops before the cache's open workers.
-    if (!RunBounded(hooks, AppShutdownStage::FolderEnumeration, hooks.finishFolderEnumeration,
+    // No request arrives once the IPC server stopped. Every archive-cache
+    // caller stops before the cache's open workers.
+    if (!RunBounded(hooks, AppShutdownStage::IpcServer, hooks.stopIpcServer,
+            bounds.ipcServer, kIpcServerForcedExitCode) ||
+        !RunBounded(hooks, AppShutdownStage::FolderEnumeration, hooks.finishFolderEnumeration,
             bounds.folderEnumeration, kFolderEnumerationForcedExitCode) ||
         !RunBounded(hooks, AppShutdownStage::ImageCore, hooks.shutdownImageCore,
             bounds.imageCore, kImageCoreForcedExitCode) ||
