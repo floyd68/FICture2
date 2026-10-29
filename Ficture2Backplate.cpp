@@ -34,6 +34,10 @@
 
 namespace
 {
+    // Recent-files debounce timer on the main window (FD2D's own timers use
+    // 0xFD22 and 0xFD23).
+    constexpr UINT_PTR kRecentFilesFlushTimerId = 0xF149;
+
     bool TryGetIniFilePath(std::wstring& outIniFile)
     {
         outIniFile = FICture2App::GetIniFilePath();
@@ -746,14 +750,14 @@ namespace
         return true;
     }
 
-    bool TryExecuteClearRecentAction(BrowserCommandAction action)
+    bool TryExecuteClearRecentAction(Ficture2Backplate& backplate, BrowserCommandAction action)
     {
         if (action != BrowserCommandAction::ClearRecent)
         {
             return false;
         }
 
-        RecentFiles::Clear(FICture2App::GetIniFilePath());
+        backplate.ClearRecentFiles();
         return true;
     }
 
@@ -889,7 +893,7 @@ namespace
             return;
         }
 
-        if (TryExecuteClearRecentAction(action))
+        if (TryExecuteClearRecentAction(*backplate, action))
         {
             return;
         }
@@ -1132,6 +1136,20 @@ bool Ficture2Backplate::HandleMessage(HWND hWnd, UINT message, WPARAM wParam, LP
 
         (void)HandleFileDropPaths(dropped, pt);
 
+        result = 0;
+        return true;
+    }
+    case WM_TIMER:
+    {
+        if (wParam != kRecentFilesFlushTimerId)
+        {
+            break;
+        }
+        KillTimer(hWnd, kRecentFilesFlushTimerId);
+        if (m_recentFiles)
+        {
+            (void)m_recentFiles->Flush();
+        }
         result = 0;
         return true;
     }
@@ -1511,6 +1529,52 @@ void Ficture2Backplate::SetIpcOpenQueue(std::shared_ptr<IpcOpenQueue> queue)
     // clear SeedExpected from the command line.
 }
 
+void Ficture2Backplate::EnableRecentFiles(const std::wstring& iniPath)
+{
+    m_recentFiles = std::make_unique<RecentFilesStore>(iniPath);
+    // The debounce runs on this window's UI-thread timer (no thread): SetTimer
+    // with the same id re-arms it, and WM_TIMER flushes.
+    m_recentFiles->SetFlushScheduler([this](bool arm)
+    {
+        if (m_window == nullptr)
+        {
+            return;
+        }
+        if (arm)
+        {
+            (void)SetTimer(m_window, kRecentFilesFlushTimerId, RecentFiles::kFlushDelayMs, nullptr);
+        }
+        else
+        {
+            KillTimer(m_window, kRecentFilesFlushTimerId);
+        }
+    });
+}
+
+void Ficture2Backplate::AddRecentFile(const std::wstring& path)
+{
+    if (m_recentFiles)
+    {
+        m_recentFiles->Add(path);
+    }
+}
+
+void Ficture2Backplate::ClearRecentFiles()
+{
+    if (m_recentFiles)
+    {
+        (void)m_recentFiles->Clear();
+    }
+}
+
+void Ficture2Backplate::FlushRecentFilesBeforeDestroy()
+{
+    if (m_recentFiles)
+    {
+        (void)m_recentFiles->FlushBeforeDestroy();
+    }
+}
+
 void Ficture2Backplate::RefreshIpcOpenSnapshot()
 {
     if (!m_ipcQueue || !m_eventBus)
@@ -1729,7 +1793,7 @@ bool Ficture2Backplate::ShowImageBrowserContextMenu(FD2D::Wnd* source, const POI
                 UseOffscreenBuffer() &&
                 browserQuery->BrowserTryGetMainImageClientRect(mainRect);
         }
-        payload.recentFiles = RecentFiles::Load(FICture2App::GetIniFilePath());
+        payload.recentFiles = m_recentFiles ? m_recentFiles->MenuEntries() : std::vector<std::wstring> {};
 #if FICTURE2_ENABLE_REGISTRATION_MENU
         payload.thumbRegistered = FICture2App::IsThumbnailProviderRegistered();
         payload.associationsRegistered = FICture2App::AreFileAssociationsRegistered();

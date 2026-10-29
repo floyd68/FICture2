@@ -1265,12 +1265,14 @@ FIC2_TEST(IniStore_RecentFilesKeepUnicodeAndSemicolonEntries)
         kEmojiPath,
         L"C:\\x;y\\last;.png",
     };
+    RecentFilesStore store(ini);
     for (const std::wstring& path : added)
     {
-        FIC2_CHECK(RecentFiles::Add(ini, path) == IniStore::WriteStatus::Committed);
+        store.Add(path);
+        FIC2_CHECK(store.Flush() == IniStore::WriteStatus::Committed);
     }
 
-    const std::vector<std::wstring> recent = RecentFiles::Load(ini);
+    const std::vector<std::wstring> recent = RecentFilesStore(ini).MenuEntries();
     FIC2_REQUIRE(recent.size() == added.size() + 1);   // + C:\old.png from the release INI
     for (std::size_t i = 0; i < added.size(); ++i)
     {
@@ -1280,12 +1282,13 @@ FIC2_TEST(IniStore_RecentFilesKeepUnicodeAndSemicolonEntries)
     FIC2_CHECK(HasUtf16Bom(ReadBytes(ini)));
 
     // Re-adding an entry moves it to the front without duplicating it.
-    FIC2_CHECK(RecentFiles::Add(ini, kSemicolonPath) == IniStore::WriteStatus::Committed);
-    const std::vector<std::wstring> again = RecentFiles::Load(ini);
+    store.Add(kSemicolonPath);
+    FIC2_CHECK(store.Flush() == IniStore::WriteStatus::Committed);
+    const std::vector<std::wstring> again = RecentFilesStore(ini).MenuEntries();
     FIC2_CHECK(again.size() == recent.size());
     FIC2_CHECK(!again.empty() && again.front() == kSemicolonPath);
 
-    FIC2_CHECK(RecentFiles::Clear(ini) == IniStore::WriteStatus::Committed);
-    FIC2_CHECK(RecentFiles::Load(ini).empty());
+    FIC2_CHECK(store.Clear() == IniStore::WriteStatus::Committed);
+    FIC2_CHECK(RecentFilesStore(ini).MenuEntries().empty());
     FIC2_CHECK(IniStore::Load(ini).GetInt(L"Window", L"ShowCmd") == 3);
 }

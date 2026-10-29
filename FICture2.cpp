@@ -492,6 +492,8 @@ int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
         FIC2_LOG_STEP(t_startup, "Render() warm-up (GPU driver cold start)");
 
         backplate->SetIpcOpenQueue(ipcQueue);
+        // One recent-files store per process, owned by the window's backplate.
+        backplate->EnableRecentFiles(iniFile);
 
         // Persist window placement while the HWND is still valid (before destruction).
         // Session files are only written after startup handoff (restore/CLI/Pictures +
@@ -504,6 +506,13 @@ int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
                 // Stop routing IPC wakes at a window that is about to die.
                 ipcUiWindow->store(kIpcUiWindowGone);
                 FICture2App::SaveWindowPlacement(hwnd);
+                // Before the guard below: the last selections are kept even
+                // when the window closes during the startup handoff. This also
+                // stops the debounce timer, and later selections are ignored.
+                if (auto bp = weakBackplate.lock())
+                {
+                    bp->FlushRecentFilesBeforeDestroy();
+                }
                 if (!sessionPersistReady->load())
                 {
                     FIC2_LOG_INFO("[Session] Skip session save — startup handoff not finished.");

@@ -19,6 +19,7 @@ FICture2 is available on NexusMods: [https://www.nexusmods.com/fallout4/mods/100
 
 ## What's New in v1.7
 
+- **Improved:** Selecting images no longer rewrites `FICture2.ini` for every image: Open Recent is updated in memory and saved once about a second after the last selection, and when the window closes. **Clear Recent Files** now also holds for other open FICture2 windows: entries they selected before the clear are no longer added back when they save their own recent files (the time of the last clear is kept as `RecentFilesClearedAt`)
 - **Fixed:** Images in folders whose names contain characters outside the system code page (for example emoji, Japanese or Thai on a Korean or English system) are restored by the session and listed in Open Recent again: `FICture2.ini` is now saved as Unicode (UTF-16 with a BOM) instead of in the ANSI code page, which replaced those characters with `?`. An existing INI is converted on its first save and keeps all of its settings. Paths containing `;` are also kept whole (they were cut at the `;`, and Open Recent lost every entry after one), and instances that save settings at the same time no longer overwrite each other's changes
 - **Fixed:** Explorer DDS thumbnails: the thumbnail handler now reads a file its stream delivers in several parts instead of failing on the first short read, releases its decoding resources on Explorer's thread after each thumbnail instead of keeping them until the thread exits, and no longer retries a DDS that DirectXTex rejects through the Windows imaging decoder
 - **Improved:** Thumbnails of online-only OneDrive files (Files On-Demand) no longer download the files: like Explorer, FICture2 now shows the thumbnail Windows gets from OneDrive, so browsing and scrolling a cloud folder leaves its files online-only and uses no disk space. In a folder of 157 online-only photos, the visible thumbnails appeared after about 1.4 s the first time and 0.1 s after that, instead of about 5-7 s, and scrolling through the whole strip downloaded no file instead of one per thumbnail shown. Opening an image still downloads it, and a file Windows has no thumbnail for is still read (and downloaded) for its thumbnail
@@ -414,6 +415,7 @@ The file is saved as Unicode (UTF-16 LE with a BOM); an older ANSI file is conve
   - `ThumbStripHeight`
   - `HorizontalSplitRatios` (host-tree splitter ratios, including the two-row vertical split when present)
   - `RecentFiles`: pipe-separated MRU list (max 12) used by **Open Recent**
+  - `RecentFilesClearedAt`: time of the last **Clear Recent Files** (UTC FILETIME as a decimal number); entries selected before it in any instance are not added back
 - **`[Viewer0]..[Viewer7]`** (auto-managed)
   - `CurrentFolder`
   - `DisplayedFile`
