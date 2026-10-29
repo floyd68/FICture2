@@ -44,6 +44,18 @@ namespace FD2D
             a.breatheAlphaAmp == b.breatheAlphaAmp;
     }
 
+    // How far the selection outline can reach outside the selected rect: the
+    // largest inflation (base + pop at its start + breathe at its peak) plus
+    // half the widest stroke (the accent at its thickest, or the shadow) plus
+    // half a pixel of antialiasing.
+    constexpr float SelectionMaxOutset(const SelectionStyle& style)
+    {
+        const float inflate = style.baseInflate + style.popInflate + style.breatheInflateAmp;
+        const float accent = style.accentThickness + 1.0f + style.breatheThicknessAmp;
+        const float stroke = (accent > style.shadowThickness) ? accent : style.shadowThickness;
+        return inflate + 0.5f * stroke + 0.5f;
+    }
+
     // Bounded selection "breathe" amount in [0, 1] at `elapsedMs` after the
     // selection: starts at rest, follows whole cosine cycles so it ends exactly at
     // rest, and stops after `cycles` cycles. `active` is true while another frame

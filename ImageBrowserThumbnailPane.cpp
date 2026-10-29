@@ -1,8 +1,12 @@
 #include "ImageBrowserThumbnailPane.h"
 #include "FD2D/Util.h"
+#include "SelectionStyle.h"
 
 #include <algorithm>
 #include <cmath>
+
+static_assert(ImageBrowserThumbnailPane::kSelectionRoom >= FD2D::SelectionMaxOutset(FD2D::SelectionStyle {}),
+    "the strip must leave room for the default selection outline");
 
 ThumbStripPanel::ThumbStripPanel()
     : FD2D::StackPanel(L"thumbs", FD2D::Orientation::Horizontal)
@@ -15,21 +19,27 @@ FD2D::Size ThumbStripPanel::Measure(FD2D::Size available)
     // the strip keeps its size whichever tiles (if any) are materialized.
     UNREFERENCED_PARAMETER(available);
     const float content = (m_layout != nullptr) ? m_layout->ContentWidth() : 2.0f * m_padding;
-    m_desired = { content + 2.0f * m_margin, m_rowHeight + 2.0f * m_padding + 2.0f * m_margin };
+    constexpr float room = ImageBrowserThumbnailPane::kSelectionRoom;
+    m_desired = { content + 2.0f * m_margin, m_rowHeight + 2.0f * room + 2.0f * m_margin };
     return m_desired;
 }
 
 void ThumbStripPanel::Arrange(FD2D::Rect finalRect)
 {
+    // Tiles sit kSelectionRoom below the top, at the row height, so their
+    // selection outlines stay inside the panel (the scroll view arranges it
+    // above the scrollbar gutter).
+    constexpr float room = ImageBrowserThumbnailPane::kSelectionRoom;
     const FD2D::Rect inset = FD2D::Inset(finalRect, m_margin);
-    const FD2D::Rect childArea = FD2D::Inset(inset, m_padding);
+    const float available = (std::max)(0.0f, inset.h - 2.0f * room);
+    const float rowHeight = (m_rowHeight > 0.0f) ? (std::min)(m_rowHeight, available) : available;
     if (m_layout != nullptr && m_tiles != nullptr)
     {
         for (const ThumbTile& tile : m_tiles->Tiles())
         {
             if (tile.focus && tile.index < m_layout->Count())
             {
-                tile.focus->Arrange({ inset.x + m_layout->Start(tile.index), childArea.y, m_layout->Extent(tile.index), childArea.h });
+                tile.focus->Arrange({ inset.x + m_layout->Start(tile.index), inset.y + room, m_layout->Extent(tile.index), rowHeight });
             }
         }
     }
@@ -74,6 +84,7 @@ void ImageBrowserThumbnailPane::Build(
     m_thumbScroll->SetSmoothTimeMs(110);
     m_thumbScroll->SetVerticalScrollEnabled(false);
     m_thumbScroll->SetScrollBarsVisible(true); // horizontal bar when the strip overflows
+    m_thumbScroll->SetScrollBarGutter(true);   // drawn below the tiles, never over them
     m_thumbScroll->SetContent(m_thumbPanel);
 
     ClearChildren();
