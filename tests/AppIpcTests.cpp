@@ -86,6 +86,23 @@ namespace
             return WriteFile(pipe, data, bytes, &written, nullptr) && written == bytes;
         }
 
+        bool Receive(void* data, DWORD bytes)
+        {
+            DWORD read = 0;
+            return ReadFile(pipe, data, bytes, &read, nullptr) && read == bytes;
+        }
+
+        // Sends a protocol v2 request and reads the Waiting ack only.
+        bool SendRequestAndReadAck(const std::wstring& path)
+        {
+            const std::wstring payload = path + L'\0';
+            const std::uint32_t version = 2;
+            const std::uint32_t payloadBytes = static_cast<std::uint32_t>(payload.size() * sizeof(wchar_t));
+            std::uint32_t ack = 0;
+            return Send(&version, sizeof(version)) && Send(&payloadBytes, sizeof(payloadBytes)) &&
+                Send(payload.data(), payloadBytes) && Receive(&ack, sizeof(ack)) && ack == 0xFFFFFFFFu;
+        }
+
         // The server disconnected or closed its end (no blocking read).
         bool Broken() const
         {
@@ -280,6 +297,55 @@ FIC2_TEST(AppIpc_SilentClientIsDroppedAfterTheExchangeTimeout)
     AppIpc::Decision decision = AppIpc::Decision::Ignore;
     FIC2_CHECK(AppIpc::TrySendPath(name, L"C:\\a.png", decision));
     FIC2_CHECK(decision == AppIpc::Decision::CompareStarted);
+    FIC2_CHECK(server.Stop(1000ms));
+}
+
+// A client that pauses after the Waiting ack still reads the decision the
+// server accepted, whether Stop or the exchange deadline retires the pipe
+// first; otherwise the request is queued in the primary while the second
+// instance also opens the file on its own.
+FIC2_TEST(AppIpc_DecisionSurvivesStopBeforeTheClientReadsIt)
+{
+    const std::wstring name = UniquePipeName();
+    RecordingHandler handler;
+    AppIpc::Server server;
+    FIC2_REQUIRE(server.Start(name, handler.Make()));
+
+    RawClient client;
+    FIC2_REQUIRE(client.Connect(name));
+    FIC2_REQUIRE(client.SendRequestAndReadAck(L"C:\\a.png"));
+    FIC2_REQUIRE(WaitUntil([&] { return handler.Count() == 1; }));
+    std::this_thread::sleep_for(50ms);   // the decision is written right after the handler returns
+
+    FIC2_CHECK(server.Stop(1000ms));
+    std::uint32_t decision = 0;
+    FIC2_CHECK(client.Receive(&decision, sizeof(decision)));
+    FIC2_CHECK(decision == static_cast<std::uint32_t>(AppIpc::Decision::CompareStarted));
+}
+
+FIC2_TEST(AppIpc_DecisionSurvivesTheExchangeDeadlineBeforeTheClientReadsIt)
+{
+    const std::wstring name = UniquePipeName();
+    RecordingHandler handler;
+    AppIpc::Server server;
+    FIC2_REQUIRE(server.Start(name, handler.Make()));
+
+    RawClient client;
+    FIC2_REQUIRE(client.Connect(name));
+    const auto connected = Clock::now();
+    FIC2_REQUIRE(client.SendRequestAndReadAck(L"C:\\a.png"));
+    FIC2_REQUIRE(WaitUntil([&] { return server.ClientWorkerCount() == 0; }, AppIpc::kClientExchangeTimeout + 3s));
+    // Read only after the exchange deadline has passed.
+    const auto pastDeadline = AppIpc::kClientExchangeTimeout + 200ms;
+    if (Since(connected) < pastDeadline)
+    {
+        std::this_thread::sleep_for(pastDeadline - Since(connected));
+    }
+
+    std::uint32_t decision = 0;
+    FIC2_CHECK(client.Receive(&decision, sizeof(decision)));
+    FIC2_CHECK(decision == static_cast<std::uint32_t>(AppIpc::Decision::CompareStarted));
+    FIC2_CHECK(handler.Count() == 1);
     FIC2_CHECK(server.Stop(1000ms));
 }
 

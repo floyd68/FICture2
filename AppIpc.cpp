@@ -203,17 +203,12 @@ struct AppIpc::Server::State
         if (ioEvent != nullptr)
         {
             const Clock::time_point deadline = Clock::now() + kClientExchangeTimeout;
-            if (HandleOneClient(pipe, ioEvent, stopEvent, deadline, onRequest))
-            {
-                // Disconnecting discards a reply the client has not read yet,
-                // so wait until it closed its end (it does once it read the
-                // decision). Bounded, unlike FlushFileBuffers.
-                std::uint8_t ignored = 0;
-                (void)OverlappedIo(pipe, ioEvent, stopEvent, false, &ignored, 1, deadline);
-            }
+            (void)HandleOneClient(pipe, ioEvent, stopEvent, deadline, onRequest);
             CloseHandle(ioEvent);
         }
-        DisconnectNamedPipe(pipe);
+        // Close without DisconnectNamedPipe: disconnecting discards a decision
+        // the client has not read yet (the request is already queued), while a
+        // closed instance keeps it readable. Instances are never reused.
         CloseHandle(pipe);
 
         std::lock_guard<std::mutex> lock(mutex);
