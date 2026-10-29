@@ -101,10 +101,12 @@ namespace
             // Detaches the folder enumeration without waiting for its worker.
             m_folderLane.Close();
             UnregisterFromEventBus();
+            DeferredWakeupTargets().erase(m_deferredWakeupId);
         }
 
         FolderLoadLane& FolderLane() { return m_folderLane; }
         ImageBrowserThumbnailPane* ThumbPane() const { return m_thumbPane.get(); }
+        size_t QueuedDeferredActions() const { return m_deferredActions.Size(); }
 
         void OnAttached(FD2D::Backplate& backplate) override
         {
@@ -835,17 +837,10 @@ namespace
 
         bool TryHandleCommandEvent(const FD2D::CommandEvent& event)
         {
-            return HandleCommandId(event.id, event.lParam);
-        }
-
-        bool HandleCommandId(UINT id, LPARAM lParam)
-        {
-            switch (id)
+            switch (event.id)
             {
             case CMD_FIC2_IPC_OPEN:
                 return HandleIpcOpenMessage();
-            case CMD_FIC2_DEFERRED_ACTION:
-                return HandleDeferredActionMessage();
             case CMD_FIC2_ASYNC_THUMB_READY:
                 return HandleAsyncThumbReadyMessage();
             default:
@@ -898,16 +893,6 @@ namespace
                 return selected->path;
             }
             return Floar::VirtualPath();
-        }
-
-        bool HandleDeferredActionMessage()
-        {
-            if (m_deferredKind != DeferredActionKind::None)
-            {
-                RunDeferredAction();
-                return true;
-            }
-            return false;
         }
 
         size_t CurrentThumbSelectionIndex() const
@@ -1436,7 +1421,6 @@ namespace
 
         enum class DeferredActionKind
         {
-            None,
             ToggleNavItems,
             NavigateToFolder,
             NavigateToFile,
@@ -3045,50 +3029,102 @@ namespace
             const std::wstring& text = L"")
         {
             RequestFocus();
-            auto state = ReadDeferredActionState();
-            ImageBrowserDeferredActions::Queue(
-                state,
-                static_cast<int>(kind),
-                path,
-                text);
-            WriteDeferredActionState(state);
-            PostDeferredActionMessage();
+            if (!m_deferredActions.Push({ static_cast<int>(kind), path, text }))
+            {
+                FIC2_LOG_WARN("[DeferredAction] Queue full ({} actions); dropping action kind={}.",
+                    ImageBrowserDeferredActions::DeferredQueue::kCapacity, static_cast<int>(kind));
+                return;
+            }
+            PostDeferredActionWakeup();
         }
 
-        void PostDeferredActionMessage()
+        // One wakeup per queued action, addressed to this browser, so every
+        // queued action runs here, in order, whichever browser has focus.
+        // Wakeups go to a message-only window of their own instead of the
+        // backplate: an action never runs inside a Wnd-tree traversal, where
+        // inserting or closing a pane would rebuild the split tree and destroy
+        // Wnds whose OnCommandEvent is still running.
+        void PostDeferredActionWakeup()
         {
-            if (BackplateRef() != nullptr)
+            if (BackplateRef() == nullptr)
             {
-                PostMessageW(BackplateRef()->Window(), CMD_FIC2_DEFERRED_ACTION, 0, 0);
+                return;
+            }
+            const HWND window = DeferredWakeupWindow();
+            if (window == nullptr || !PostMessageW(window, CMD_FIC2_DEFERRED_ACTION, m_deferredWakeupId, 0))
+            {
+                FIC2_LOG_WARN("[DeferredAction] Could not post a wakeup (err={}).", GetLastError());
             }
         }
 
-        ImageBrowserDeferredActions::DeferredState ReadDeferredActionState() const
+        static WPARAM NextDeferredWakeupId()
         {
-            ImageBrowserDeferredActions::DeferredState state {};
-            state.kind = static_cast<int>(m_deferredKind);
-            state.path = m_deferredPath;
-            state.text = m_deferredText;
-            return state;
+            static std::atomic<WPARAM> next { 1 };
+            return next.fetch_add(1);
         }
 
-        void WriteDeferredActionState(const ImageBrowserDeferredActions::DeferredState& state)
+        // Browsers by wakeup id. Never destroyed, so a browser outliving
+        // static destruction can still unregister.
+        static std::unordered_map<WPARAM, std::weak_ptr<ImageBrowserImpl>>& DeferredWakeupTargets()
         {
-            m_deferredKind = static_cast<DeferredActionKind>(state.kind);
-            m_deferredPath = state.path;
-            m_deferredText = state.text;
+            static auto* targets = new std::unordered_map<WPARAM, std::weak_ptr<ImageBrowserImpl>>();
+            return *targets;
         }
 
-        void RunDeferredAction()
+        static LRESULT CALLBACK DeferredWakeupProc(HWND window, UINT message, WPARAM wParam, LPARAM lParam)
         {
-            auto state = ReadDeferredActionState();
-            const auto snapshot = ImageBrowserDeferredActions::TakeSnapshotAndClear(
-                state,
-                static_cast<int>(DeferredActionKind::None));
-            WriteDeferredActionState(state);
+            if (message != CMD_FIC2_DEFERRED_ACTION)
+            {
+                return DefWindowProcW(window, message, wParam, lParam);
+            }
+            const auto& targets = DeferredWakeupTargets();
+            const auto it = targets.find(wParam);
+            // Retained while its action runs: the action may close its own pane.
+            const std::shared_ptr<ImageBrowserImpl> browser = (it != targets.end()) ? it->second.lock() : nullptr;
+            if (browser != nullptr)
+            {
+                (void)browser->RunDeferredAction();
+            }
+            return 0;
+        }
+
+        // Created by the UI thread on its first wakeup; lives as long as the process.
+        static HWND DeferredWakeupWindow()
+        {
+            static const HWND window = []
+            {
+                WNDCLASSEXW wc {};
+                wc.cbSize = sizeof(wc);
+                wc.lpfnWndProc = &DeferredWakeupProc;
+                wc.hInstance = GetModuleHandleW(nullptr);
+                wc.lpszClassName = L"FICture2.DeferredBrowserActions";
+                (void)RegisterClassExW(&wc);
+                return CreateWindowExW(0, wc.lpszClassName, L"", 0, 0, 0, 0, 0, HWND_MESSAGE, nullptr,
+                    wc.hInstance, nullptr);
+            }();
+            return window;
+        }
+
+    public:
+        static void RegisterDeferredWakeupTarget(const std::shared_ptr<ImageBrowserImpl>& browser)
+        {
+            DeferredWakeupTargets()[browser->m_deferredWakeupId] = browser;
+        }
+
+    private:
+
+        // Runs the oldest queued action; false when none is queued. The action
+        // leaves the queue before it runs: it may queue more or close this pane.
+        bool RunDeferredAction()
+        {
+            const auto action = m_deferredActions.Pop();
+            if (!action)
+            {
+                return false;
+            }
 
             (void)ImageBrowserDeferredActions::Dispatch(
-                snapshot,
+                *action,
                 [this](int rawKind)
                 {
                     return DispatchDeferredNoPayload(static_cast<DeferredActionKind>(rawKind));
@@ -3101,6 +3137,7 @@ namespace
                 {
                     return DispatchDeferredPathAndText(static_cast<DeferredActionKind>(rawKind), path, text);
                 });
+            return true;
         }
 
         // Deferred actions that do not consume path/text payload.
@@ -3427,9 +3464,9 @@ namespace
         float m_thumbItemSpacing { 0.0f };
         float m_thumbOuterSpacing { 8.0f }; // spacing between thumbnail "items" in the horizontal strip
 
-        DeferredActionKind m_deferredKind { DeferredActionKind::None };
-        Floar::VirtualPath m_deferredPath {};
-        std::wstring m_deferredText {};
+        ImageBrowserDeferredActions::DeferredQueue m_deferredActions {};
+        // Never reused, so a wakeup that outlives its browser matches no one.
+        const WPARAM m_deferredWakeupId { NextDeferredWakeupId() };
 
         std::wstring m_initialFile {};
         std::vector<std::shared_ptr<FD2D::Wnd>> m_hPanes {};
@@ -3529,7 +3566,9 @@ namespace
 
 std::shared_ptr<FD2D::Wnd> CreateImageBrowser(const std::wstring& name, const std::wstring& initialFile)
 {
-    return std::make_shared<ImageBrowserImpl>(name, initialFile);
+    auto browser = std::make_shared<ImageBrowserImpl>(name, initialFile);
+    ImageBrowserImpl::RegisterDeferredWakeupTarget(browser);
+    return browser;
 }
 
 FolderLoadLane* ImageBrowserFolderLoadLane(FD2D::Wnd& browser)
@@ -3542,5 +3581,11 @@ ImageBrowserThumbnailPane* ImageBrowserThumbPane(FD2D::Wnd& browser)
 {
     auto* impl = dynamic_cast<ImageBrowserImpl*>(&browser);
     return impl ? impl->ThumbPane() : nullptr;
+}
+
+size_t ImageBrowserQueuedDeferredActions(FD2D::Wnd& browser)
+{
+    auto* impl = dynamic_cast<ImageBrowserImpl*>(&browser);
+    return impl ? impl->QueuedDeferredActions() : 0;
 }
 
