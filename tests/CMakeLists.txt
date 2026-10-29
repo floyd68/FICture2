@@ -36,6 +36,7 @@ add_executable(FICture2Tests
     ListingPixelTests.cpp
     TestAssets.rc
     IpcOpenQueueTests.cpp
+    ImageBrowserDeferredActionsTests.cpp
     InfoPresenterTests.cpp
     RenderSchedulingTests.cpp
     IniStoreTests.cpp
@@ -126,6 +127,7 @@ if(MSVC)
 endif()
 
 add_test(NAME FICture2.IpcOpenQueue COMMAND FICture2Tests IpcOpenQueue_)
+add_test(NAME FICture2.DeferredActions COMMAND FICture2Tests DeferredActions_)
 add_test(NAME FICture2.AppIpc COMMAND FICture2Tests AppIpc_)
 add_test(NAME FICture2.InfoPresenter COMMAND FICture2Tests InfoPresenter_)
 add_test(NAME FICture2.ImageAsyncBinding COMMAND FICture2Tests ImageAsyncBinding_)

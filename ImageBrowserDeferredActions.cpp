@@ -1,42 +1,45 @@
 #include "ImageBrowserDeferredActions.h"
 
+#include <utility>
+
 namespace ImageBrowserDeferredActions
 {
-    void Queue(DeferredState& state, int kind, const Floar::VirtualPath& path, const std::wstring& text)
+    bool DeferredQueue::Push(DeferredAction action)
     {
-        state.kind = kind;
-        state.path = path;
-        state.text = text;
+        if (m_actions.size() >= kCapacity)
+        {
+            return false;
+        }
+        m_actions.push_back(std::move(action));
+        return true;
     }
 
-    DeferredSnapshot TakeSnapshotAndClear(DeferredState& state, int noneKind)
+    std::optional<DeferredAction> DeferredQueue::Pop()
     {
-        DeferredSnapshot snapshot {};
-        snapshot.kind = state.kind;
-        snapshot.path = state.path;
-        snapshot.text = state.text;
-
-        state.kind = noneKind;
-        state.path = Floar::VirtualPath();
-        state.text.clear();
-        return snapshot;
+        if (m_actions.empty())
+        {
+            return std::nullopt;
+        }
+        DeferredAction action = std::move(m_actions.front());
+        m_actions.pop_front();
+        return action;
     }
 
     bool Dispatch(
-        const DeferredSnapshot& snapshot,
+        const DeferredAction& action,
         const std::function<bool(int)>& noPayloadDispatcher,
         const std::function<bool(int, const Floar::VirtualPath&)>& pathDispatcher,
         const std::function<bool(int, const Floar::VirtualPath&, const std::wstring&)>& pathAndTextDispatcher)
     {
-        if (noPayloadDispatcher && noPayloadDispatcher(snapshot.kind))
+        if (noPayloadDispatcher && noPayloadDispatcher(action.kind))
         {
             return true;
         }
-        if (pathDispatcher && pathDispatcher(snapshot.kind, snapshot.path))
+        if (pathDispatcher && pathDispatcher(action.kind, action.path))
         {
             return true;
         }
-        if (pathAndTextDispatcher && pathAndTextDispatcher(snapshot.kind, snapshot.path, snapshot.text))
+        if (pathAndTextDispatcher && pathAndTextDispatcher(action.kind, action.path, action.text))
         {
             return true;
         }

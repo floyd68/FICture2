@@ -902,12 +902,7 @@ namespace
 
         bool HandleDeferredActionMessage()
         {
-            if (m_deferredKind != DeferredActionKind::None)
-            {
-                RunDeferredAction();
-                return true;
-            }
-            return false;
+            return RunDeferredAction();
         }
 
         size_t CurrentThumbSelectionIndex() const
@@ -1436,7 +1431,6 @@ namespace
 
         enum class DeferredActionKind
         {
-            None,
             ToggleNavItems,
             NavigateToFolder,
             NavigateToFile,
@@ -3045,13 +3039,15 @@ namespace
             const std::wstring& text = L"")
         {
             RequestFocus();
-            auto state = ReadDeferredActionState();
-            ImageBrowserDeferredActions::Queue(
-                state,
-                static_cast<int>(kind),
-                path,
-                text);
-            WriteDeferredActionState(state);
+            if (!m_deferredActions.Push({ static_cast<int>(kind), path, text }))
+            {
+                FIC2_LOG_WARN("[DeferredAction] Queue full ({} actions); dropping action kind={}.",
+                    ImageBrowserDeferredActions::DeferredQueue::kCapacity, static_cast<int>(kind));
+                return;
+            }
+            // One message per queued action. A message runs one action on the
+            // focused browser, or on every browser when the focused one has
+            // none queued, so no action outlives the messages posted for it.
             PostDeferredActionMessage();
         }
 
@@ -3063,32 +3059,18 @@ namespace
             }
         }
 
-        ImageBrowserDeferredActions::DeferredState ReadDeferredActionState() const
+        // Runs the oldest queued action; false when none is queued. The action
+        // leaves the queue before it runs: it may queue more or close this pane.
+        bool RunDeferredAction()
         {
-            ImageBrowserDeferredActions::DeferredState state {};
-            state.kind = static_cast<int>(m_deferredKind);
-            state.path = m_deferredPath;
-            state.text = m_deferredText;
-            return state;
-        }
-
-        void WriteDeferredActionState(const ImageBrowserDeferredActions::DeferredState& state)
-        {
-            m_deferredKind = static_cast<DeferredActionKind>(state.kind);
-            m_deferredPath = state.path;
-            m_deferredText = state.text;
-        }
-
-        void RunDeferredAction()
-        {
-            auto state = ReadDeferredActionState();
-            const auto snapshot = ImageBrowserDeferredActions::TakeSnapshotAndClear(
-                state,
-                static_cast<int>(DeferredActionKind::None));
-            WriteDeferredActionState(state);
+            const auto action = m_deferredActions.Pop();
+            if (!action)
+            {
+                return false;
+            }
 
             (void)ImageBrowserDeferredActions::Dispatch(
-                snapshot,
+                *action,
                 [this](int rawKind)
                 {
                     return DispatchDeferredNoPayload(static_cast<DeferredActionKind>(rawKind));
@@ -3101,6 +3083,7 @@ namespace
                 {
                     return DispatchDeferredPathAndText(static_cast<DeferredActionKind>(rawKind), path, text);
                 });
+            return true;
         }
 
         // Deferred actions that do not consume path/text payload.
@@ -3427,9 +3410,7 @@ namespace
         float m_thumbItemSpacing { 0.0f };
         float m_thumbOuterSpacing { 8.0f }; // spacing between thumbnail "items" in the horizontal strip
 
-        DeferredActionKind m_deferredKind { DeferredActionKind::None };
-        Floar::VirtualPath m_deferredPath {};
-        std::wstring m_deferredText {};
+        ImageBrowserDeferredActions::DeferredQueue m_deferredActions {};
 
         std::wstring m_initialFile {};
         std::vector<std::shared_ptr<FD2D::Wnd>> m_hPanes {};
