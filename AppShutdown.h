@@ -5,7 +5,10 @@
 // notes in FolderEnumeration.h).
 //
 // Order, one stage each:
-//   1. IPC server stop (no-op placeholder until the IPC server can be stopped);
+//   1. IPC server, bounded: the stop event wakes the accept wait and every
+//      client read/write, then the accept and client threads are joined
+//      (AppIpc::Server::Stop), so none of them can log or touch the app
+//      after the log and static teardown;
 //   2. folder enumeration, bounded;
 //   3. ImageCore, bounded: binding invalidation, then the shell thumbnail
 //      workers of online-only cloud files (CloudThumbnailRouter, none started
@@ -34,6 +37,7 @@
 // most once per hook set. The cleanup never persists the session or the window
 // placement; that stays in the window's before-destroy callback.
 
+#include "AppIpc.h"
 #include "ArchiveReaderCache.h"
 
 #include <Windows.h>
@@ -42,6 +46,7 @@
 #include <functional>
 
 // Declared bounds of the bounded stages.
+constexpr std::chrono::milliseconds kIpcServerShutdownBound { 1000 };
 constexpr std::chrono::milliseconds kFolderEnumerationShutdownBound { 2000 };
 constexpr std::chrono::milliseconds kImageCoreShutdownBound { 2000 };
 constexpr std::chrono::milliseconds kArchiveOpenShutdownBound { 2000 };
@@ -75,8 +80,8 @@ const char* AppExitPathName(AppExitPath path);
 // counts as joined).
 struct AppShutdownHooks
 {
-    std::function<void()> stopIpcServer {};
     // Bounded stages: true when every worker joined within the bound.
+    std::function<bool(std::chrono::milliseconds bound)> stopIpcServer {};
     std::function<bool(std::chrono::milliseconds bound)> finishFolderEnumeration {};
     // Binding invalidation plus the ImageCore shutdown.
     std::function<bool(std::chrono::milliseconds bound)> shutdownImageCore {};
@@ -94,12 +99,14 @@ struct AppShutdownHooks
 
 struct AppShutdownBounds
 {
+    std::chrono::milliseconds ipcServer { kIpcServerShutdownBound };
     std::chrono::milliseconds folderEnumeration { kFolderEnumerationShutdownBound };
     std::chrono::milliseconds imageCore { kImageCoreShutdownBound };
     std::chrono::milliseconds archiveOpens { kArchiveOpenShutdownBound };
 };
 
-// The real stages: FolderEnumerationService::Shared(), ImageAsyncBindingRegistry
+// The real stages: `ipcServer` (none when null, as in a second instance or
+// before the server started), FolderEnumerationService::Shared(), ImageAsyncBindingRegistry
 // plus CloudThumbnailRouter::ShutdownSharedIfCreated and
 // ImageLoader::ShutdownIfCreated, `archiveCache`, ImageGpuResourceCache,
 // FD2D::Application, AppLog, OleUninitialize (only when `oleInitialized`, and
@@ -107,7 +114,8 @@ struct AppShutdownBounds
 AppShutdownHooks DefaultAppShutdownHooks(
     bool oleInitialized,
     std::function<void()> beforeForcedExit = {},
-    Floar::ArchiveReaderCache& archiveCache = Floar::ArchiveReaderCache::Shared());
+    Floar::ArchiveReaderCache& archiveCache = Floar::ArchiveReaderCache::Shared(),
+    AppIpc::Server* ipcServer = nullptr);
 
 enum class AppShutdownResult
 {

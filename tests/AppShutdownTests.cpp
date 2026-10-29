@@ -1,5 +1,6 @@
 #include "TestHarness.h"
 
+#include "AppIpc.h"
 #include "AppLog.h"
 #include "AppShutdown.h"
 #include "ArchiveCancelTestSupport.h"
@@ -12,6 +13,7 @@
 
 #include <windows.h>
 #include <shellapi.h>
+#include <tlhelp32.h>
 #include <ole2.h>
 
 #include <atomic>
@@ -21,7 +23,9 @@
 #include <filesystem>
 #include <fstream>
 #include <iterator>
+#include <set>
 #include <string>
+#include <thread>
 #include <vector>
 
 // The post-UI cleanup (RunAppShutdown): stage order on the normal and startup
@@ -40,7 +44,7 @@ namespace
         std::vector<std::string> events {};
         std::vector<std::chrono::milliseconds> bounds {};
         AppShutdownStage timedOut { AppShutdownStage::IpcServer };
-        bool joined[3] { true, true, true };   // enumeration, ImageCore, Floar
+        bool joined[4] { true, true, true, true };   // IPC, enumeration, ImageCore, Floar
 
         struct Forced
         {
@@ -53,24 +57,29 @@ namespace
         AppShutdownHooks Hooks()
         {
             AppShutdownHooks hooks {};
-            hooks.stopIpcServer = [this] { events.push_back("ipc"); };
+            hooks.stopIpcServer = [this](std::chrono::milliseconds bound)
+            {
+                events.push_back("ipc");
+                bounds.push_back(bound);
+                return joined[0];
+            };
             hooks.finishFolderEnumeration = [this](std::chrono::milliseconds bound)
             {
                 events.push_back("enumeration");
                 bounds.push_back(bound);
-                return joined[0];
+                return joined[1];
             };
             hooks.shutdownImageCore = [this](std::chrono::milliseconds bound)
             {
                 events.push_back("imagecore");
                 bounds.push_back(bound);
-                return joined[1];
+                return joined[2];
             };
             hooks.shutdownArchiveOpens = [this](std::chrono::milliseconds bound)
             {
                 events.push_back("floar");
                 bounds.push_back(bound);
-                return joined[2];
+                return joined[3];
             };
             hooks.clearGpuCache = [this] { events.push_back("gpu"); };
             hooks.shutdownFd2d = [this] { events.push_back("fd2d"); };
@@ -244,7 +253,7 @@ FIC2_TEST(AppShutdown_SameStageOrderOnNormalAndFailurePaths)
         FIC2_CHECK(recorder.forced.empty());
         // The declared bounds reach the bounded stages.
         const std::vector<std::chrono::milliseconds> declared {
-            kFolderEnumerationShutdownBound, kImageCoreShutdownBound, kArchiveOpenShutdownBound };
+            kIpcServerShutdownBound, kFolderEnumerationShutdownBound, kImageCoreShutdownBound, kArchiveOpenShutdownBound };
         FIC2_CHECK(recorder.bounds == declared);
     }
 }
@@ -270,15 +279,18 @@ FIC2_TEST(AppShutdown_TimedOutStageTakesForcedExitBeforeAnyLaterStage)
         std::vector<std::string> events;
     };
     const Case cases[] {
-        { 0, AppShutdownStage::FolderEnumeration, kFolderEnumerationForcedExitCode, { "ipc", "enumeration", "forced" } },
-        { 1, AppShutdownStage::ImageCore, kImageCoreForcedExitCode, { "ipc", "enumeration", "imagecore", "forced" } },
-        { 2, AppShutdownStage::ArchiveOpens, kArchiveOpenForcedExitCode, { "ipc", "enumeration", "imagecore", "floar", "forced" } },
+        { 0, AppShutdownStage::IpcServer, kIpcServerForcedExitCode, { "ipc", "forced" } },
+        { 1, AppShutdownStage::FolderEnumeration, kFolderEnumerationForcedExitCode, { "ipc", "enumeration", "forced" } },
+        { 2, AppShutdownStage::ImageCore, kImageCoreForcedExitCode, { "ipc", "enumeration", "imagecore", "forced" } },
+        { 3, AppShutdownStage::ArchiveOpens, kArchiveOpenForcedExitCode, { "ipc", "enumeration", "imagecore", "floar", "forced" } },
     };
     AppShutdownBounds bounds {};
+    bounds.ipcServer = std::chrono::milliseconds(7);
     bounds.folderEnumeration = std::chrono::milliseconds(11);
     bounds.imageCore = std::chrono::milliseconds(22);
     bounds.archiveOpens = std::chrono::milliseconds(33);
-    const std::chrono::milliseconds expectedBound[] { bounds.folderEnumeration, bounds.imageCore, bounds.archiveOpens };
+    const std::chrono::milliseconds expectedBound[] {
+        bounds.ipcServer, bounds.folderEnumeration, bounds.imageCore, bounds.archiveOpens };
 
     for (const Case& c : cases)
     {
@@ -293,9 +305,9 @@ FIC2_TEST(AppShutdown_TimedOutStageTakesForcedExitBeforeAnyLaterStage)
     }
 
     // The exit codes are distinct, so the exit code names the stage.
-    FIC2_CHECK(kFolderEnumerationForcedExitCode != kImageCoreForcedExitCode);
-    FIC2_CHECK(kImageCoreForcedExitCode != kArchiveOpenForcedExitCode);
-    FIC2_CHECK(kFolderEnumerationForcedExitCode != kArchiveOpenForcedExitCode);
+    const std::set<UINT> codes {
+        kIpcServerForcedExitCode, kFolderEnumerationForcedExitCode, kImageCoreForcedExitCode, kArchiveOpenForcedExitCode };
+    FIC2_CHECK(codes.size() == 4);
 }
 
 FIC2_TEST(AppShutdown_DefaultOleStageUninitializesAtMostOnce)
@@ -415,7 +427,7 @@ FIC2_CHILD(AppShutdownCooperativeChild)
     std::vector<std::string> events;
     AppShutdownHooks defaults = DefaultAppShutdownHooks(false, {}, *cache);
     AppShutdownHooks hooks {};
-    hooks.stopIpcServer = [&] { events.push_back("ipc"); };
+    hooks.stopIpcServer = [&](std::chrono::milliseconds) { events.push_back("ipc"); return true; };
     hooks.finishFolderEnumeration = [&](std::chrono::milliseconds bound)
     {
         events.push_back("enumeration");
@@ -627,6 +639,234 @@ FIC2_TEST(AppShutdownForcedExit_StuckImageCoreReadEndsProcessAtImageCoreStage)
 
     const std::string log = ReadLog(dir, run.processId);
     FIC2_CHECK(log.find("ImageCore still running 300 ms after shutdown") != std::string::npos);
+    std::error_code ec;
+    std::filesystem::remove_all(dir, ec);
+}
+
+// -------------------------------------------------------------------------
+// (f) + (g): the IPC server stage. With an idle accept wait and a connected
+// client that sends nothing, the real stage joins every server thread before
+// the log and static teardown; a request handler that never returns takes
+// the forced exit at the IPC stage, before any later stage.
+// -------------------------------------------------------------------------
+
+namespace
+{
+    std::wstring ChildPipeName()
+    {
+        return L"\\\\.\\pipe\\FICture2_IPC_test_" + std::to_wstring(GetCurrentProcessId()) + L"_child";
+    }
+
+    std::set<DWORD> ProcessThreadIds()
+    {
+        std::set<DWORD> ids;
+        HANDLE snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPTHREAD, 0);
+        if (snapshot == INVALID_HANDLE_VALUE)
+        {
+            return ids;
+        }
+        THREADENTRY32 entry { sizeof(entry) };
+        for (BOOL more = Thread32First(snapshot, &entry); more; more = Thread32Next(snapshot, &entry))
+        {
+            if (entry.th32OwnerProcessID == GetCurrentProcessId())
+            {
+                ids.insert(entry.th32ThreadID);
+            }
+        }
+        CloseHandle(snapshot);
+        return ids;
+    }
+
+    bool ThreadAlive(DWORD id)
+    {
+        HANDLE thread = OpenThread(SYNCHRONIZE, FALSE, id);
+        if (thread == nullptr)
+        {
+            return false;   // gone
+        }
+        const bool alive = WaitForSingleObject(thread, 0) == WAIT_TIMEOUT;
+        CloseHandle(thread);
+        return alive;
+    }
+
+    // Connects without sending anything; the handle stays open.
+    HANDLE ConnectSilentClient(const std::wstring& name)
+    {
+        HANDLE pipe = INVALID_HANDLE_VALUE;
+        (void)WaitUntil([&]
+        {
+            pipe = CreateFileW(name.c_str(), GENERIC_READ | GENERIC_WRITE, 0, nullptr, OPEN_EXISTING, 0, nullptr);
+            return pipe != INVALID_HANDLE_VALUE;
+        });
+        return pipe;
+    }
+}
+
+FIC2_CHILD(AppShutdownIpcCleanExitChild)
+{
+    (void)argc;
+    (void)argv;
+    const std::filesystem::path dir = ChildDirArgument();
+    if (dir.empty())
+    {
+        return 3;
+    }
+    static StaticTeardownSentinel sentinel { dir / L"static-teardown.txt" };
+    AppLog::Init(dir.wstring());
+    ChildChecks checks;
+
+    const std::wstring name = ChildPipeName();
+    const std::set<DWORD> before = ProcessThreadIds();
+    AppIpc::Server server;
+    if (!server.Start(name, [](const std::wstring&) { return AppIpc::Decision::CompareStarted; }))
+    {
+        return 4;
+    }
+    // A served request, then a client that connects and sends nothing; the
+    // accept thread is back in its wait for the next client.
+    AppIpc::Decision decision = AppIpc::Decision::Ignore;
+    CHILD_CHECK(checks, AppIpc::TrySendPath(name, L"C:\\a.png", decision));
+    CHILD_CHECK(checks, decision == AppIpc::Decision::CompareStarted);
+    HANDLE silent = ConnectSilentClient(name);
+    if (silent == INVALID_HANDLE_VALUE ||
+        !WaitUntil([&] { return server.ClientWorkerCount() == 1 && WaitNamedPipeW(name.c_str(), 0) != FALSE; }))
+    {
+        return 4;
+    }
+    CHILD_CHECK(checks, server.WorkerCount() == 2);
+    std::set<DWORD> serverThreads;
+    for (const DWORD id : ProcessThreadIds())
+    {
+        if (before.count(id) == 0)
+        {
+            serverThreads.insert(id);
+        }
+    }
+    CHILD_CHECK(checks, serverThreads.size() >= 2);
+
+    AppShutdownHooks hooks = DefaultAppShutdownHooks(false, {}, Floar::ArchiveReaderCache::Shared(), &server);
+    const auto realIpc = hooks.stopIpcServer;
+    hooks.stopIpcServer = [&](std::chrono::milliseconds bound)
+    {
+        const auto start = std::chrono::steady_clock::now();
+        const bool joined = realIpc(bound);
+        const auto elapsed = std::chrono::steady_clock::now() - start;
+        CHILD_CHECK(checks, joined);
+        // The stop event woke the accept wait and the silent client's read.
+        CHILD_CHECK(checks, elapsed < std::chrono::milliseconds(500));
+        CHILD_CHECK(checks, server.WorkerCount() == 0);
+        // No server thread is left when the later stages, the log shutdown
+        // and the static teardown run.
+        for (const DWORD id : serverThreads)
+        {
+            CHILD_CHECK(checks, !ThreadAlive(id));
+        }
+        return joined;
+    };
+    hooks.shutdownLog = [&]
+    {
+        Touch(dir / L"log.txt");
+        AppLog::Shutdown();
+    };
+    CHILD_CHECK(checks, RunAppShutdown(AppExitPath::Normal, hooks) == AppShutdownResult::Completed);
+    CHILD_CHECK(checks, !AppIpc::TrySendPath(name, L"C:\\b.png", decision));
+
+    // The silent client's pipe was closed by the server.
+    DWORD available = 0;
+    CHILD_CHECK(checks, !PeekNamedPipe(silent, nullptr, 0, nullptr, &available, nullptr));
+    CloseHandle(silent);
+    return checks.failures == 0 ? 0 : 1;   // static teardown runs after this
+}
+
+FIC2_TEST(AppShutdown_IpcStageJoinsServerThreadsBeforeLogAndStaticTeardown)
+{
+    const std::filesystem::path dir = MakeTempDir(L"ipcclean");
+    const ChildRun run = RunChild("AppShutdownIpcCleanExitChild", dir);
+    FIC2_CHECK(run.finished);
+    FIC2_CHECK(run.exitCode == 0);
+    FIC2_CHECK(std::filesystem::exists(dir / L"log.txt"));
+    FIC2_CHECK(std::filesystem::exists(dir / L"static-teardown.txt"));
+
+    // No IPC line was logged after the shutdown began.
+    const std::string log = ReadLog(dir, run.processId);
+    const size_t shutdown = log.find("=== FICture2 shutdown (normal exit) ===");
+    FIC2_CHECK(log.find("[IPC] StartServer") != std::string::npos);
+    FIC2_CHECK(shutdown != std::string::npos);
+    FIC2_CHECK(shutdown == std::string::npos || log.find("[IPC]", shutdown) == std::string::npos);
+    std::error_code ec;
+    std::filesystem::remove_all(dir, ec);
+}
+
+FIC2_CHILD(AppShutdownStuckIpcHandlerChild)
+{
+    (void)argc;
+    (void)argv;
+    const std::filesystem::path dir = ChildDirArgument();
+    if (dir.empty())
+    {
+        return 3;
+    }
+    static StaticTeardownSentinel sentinel { dir / L"static-teardown.txt" };
+    AppLog::Init(dir.wstring());
+
+    // Never destroyed: the stuck worker keeps using them until the process ends.
+    HANDLE entered = CreateEventW(nullptr, TRUE, FALSE, nullptr);
+    HANDLE never = CreateEventW(nullptr, TRUE, FALSE, nullptr);
+    auto* server = new AppIpc::Server();
+    const std::wstring name = ChildPipeName();
+    const bool started = server->Start(name, [entered, never](const std::wstring&)
+    {
+        SetEvent(entered);
+        WaitForSingleObject(never, INFINITE);
+        return AppIpc::Decision::Ignore;
+    });
+    if (!started)
+    {
+        return 4;
+    }
+    std::thread([name]
+    {
+        AppIpc::Decision decision = AppIpc::Decision::Ignore;
+        (void)AppIpc::TrySendPath(name, L"C:\\a.png", decision);
+    }).detach();
+    if (WaitForSingleObject(entered, 10000) != WAIT_OBJECT_0)
+    {
+        return 4;
+    }
+
+    AppShutdownHooks hooks = DefaultAppShutdownHooks(
+        false, [dir] { Touch(dir / L"before-forced.txt"); }, Floar::ArchiveReaderCache::Shared(), server);
+    hooks.finishFolderEnumeration = [dir](std::chrono::milliseconds)
+    {
+        Touch(dir / L"enumeration.txt");
+        return true;
+    };
+    UseMarkerTeardown(hooks, dir);
+    AppShutdownBounds bounds {};
+    bounds.ipcServer = kChildBound;
+    RunAppShutdown(AppExitPath::Normal, hooks, bounds);
+    return 5;  // not reached: the forced path ends the process
+}
+
+FIC2_TEST(AppShutdownForcedExit_StuckIpcHandlerEndsProcessAtIpcStage)
+{
+    const std::filesystem::path dir = MakeTempDir(L"stuckipc");
+    const ChildRun run = RunChild("AppShutdownStuckIpcHandlerChild", dir);
+    FIC2_CHECK(run.finished);
+    FIC2_CHECK(run.exitCode == kIpcServerForcedExitCode);
+    FIC2_CHECK(run.elapsed >= kChildBound);
+
+    FIC2_CHECK(std::filesystem::exists(dir / L"before-forced.txt"));
+    // No later stage and no static destructor ran beside the stuck worker.
+    FIC2_CHECK(!std::filesystem::exists(dir / L"enumeration.txt"));
+    FIC2_CHECK(!std::filesystem::exists(dir / L"gpu.txt"));
+    FIC2_CHECK(!std::filesystem::exists(dir / L"fd2d.txt"));
+    FIC2_CHECK(!std::filesystem::exists(dir / L"log.txt"));
+    FIC2_CHECK(!std::filesystem::exists(dir / L"ole.txt"));
+    FIC2_CHECK(!std::filesystem::exists(dir / L"static-teardown.txt"));
+
+    const std::string log = ReadLog(dir, run.processId);
+    FIC2_CHECK(log.find("IPC server still running 300 ms after shutdown") != std::string::npos);
     std::error_code ec;
     std::filesystem::remove_all(dir, ec);
 }

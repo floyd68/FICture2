@@ -21,6 +21,7 @@ add_executable(FICture2Tests
     PathClassificationTests.cpp
     CloudThumbnailTests.cpp
     AppShutdownTests.cpp
+    AppIpcTests.cpp
     ImageBrowserPathStateTests.cpp
     ThumbItemModelTests.cpp
     ThumbStripLayoutTests.cpp
@@ -125,6 +126,7 @@ if(MSVC)
 endif()
 
 add_test(NAME FICture2.IpcOpenQueue COMMAND FICture2Tests IpcOpenQueue_)
+add_test(NAME FICture2.AppIpc COMMAND FICture2Tests AppIpc_)
 add_test(NAME FICture2.InfoPresenter COMMAND FICture2Tests InfoPresenter_)
 add_test(NAME FICture2.ImageAsyncBinding COMMAND FICture2Tests ImageAsyncBinding_)
 add_test(NAME FICture2.PathState COMMAND FICture2Tests PathState_)
