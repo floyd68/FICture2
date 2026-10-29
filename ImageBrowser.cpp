@@ -28,7 +28,6 @@
 #include "AppSetup.h"
 #include "ArchiveEntryHandoff.h"
 #include "DeferredRenderScope.h"
-#include "RecentFiles.h"
 
 #include "FD2D/FD2D.h"
 #include "FD2D/Util.h"
@@ -2283,7 +2282,10 @@ namespace
             {
                 mainImage->SetSourceFile(p);
             });
-            RecentFiles::Add(FICture2App::GetIniFilePath(), p);
+            if (auto* ficBp = FictureBackplateRef())
+            {
+                ficBp->AddRecentFile(p);
+            }
             NotifyIpcOpenSnapshotChanged();
             mainImage->Invalidate();
             RefreshInfoPanel();

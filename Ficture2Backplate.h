@@ -3,6 +3,7 @@
 #include "FD2D/Backplate.h"
 #include "ImageViewTypes.h"
 #include "IpcOpenRequest.h"
+#include "RecentFiles.h"
 
 #include <cstdint>
 #include <functional>
@@ -92,6 +93,16 @@ public:
     bool TryStartCompareWithFileNameMatch(const std::wstring& incomingFilePath);
     void SetIpcOpenQueue(std::shared_ptr<IpcOpenQueue> queue);
 
+    // The process's recent-files list, kept in iniPath and flushed by a debounce
+    // timer on this window. Until this is called (tests) selections are not
+    // recorded.
+    void EnableRecentFiles(const std::wstring& iniPath);
+    void AddRecentFile(const std::wstring& path);
+    void ClearRecentFiles();
+    // The last flush, from the window's before-destroy callback: stops the
+    // timer, and selections after it are ignored.
+    void FlushRecentFilesBeforeDestroy();
+
     // Wakes this window when folder-listing chunks arrive (null before the
     // window exists); disconnected when the window is destroyed.
     std::shared_ptr<FolderListingWakeup> FolderListingWakeupTarget() const { return m_folderListingWakeup; }
@@ -139,6 +150,7 @@ private:
     float m_imageZoomStiffness { 80.0f };
     bool m_imageBrowserIniInitialized { false };
     std::shared_ptr<IpcOpenQueue> m_ipcQueue {};
+    std::unique_ptr<RecentFilesStore> m_recentFiles {};
     // Created with the window, disconnected when it is destroyed.
     std::shared_ptr<FolderListingWakeup> m_folderListingWakeup {};
 
