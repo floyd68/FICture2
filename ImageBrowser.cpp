@@ -1359,13 +1359,16 @@ namespace
         // split ratio instead of the default one. Side-by-side panes share one
         // height, so their strips line up from the first layout, also after the
         // height was changed by a splitter drag (the synced height is pushed to
-        // the panes that exist then, not to later ones).
+        // the panes that exist then, not to later ones). The requested ratio,
+        // not the effective one: while the strip is clamped to its min/max
+        // height they differ, and only the requested one keeps the panes
+        // aligned once a resize releases the clamp.
         void AdoptThumbStripSplit(const std::shared_ptr<FD2D::Wnd>& pane) const
         {
             const auto browser = std::dynamic_pointer_cast<ImageBrowserImpl>(pane);
             if (browser != nullptr && browser->m_rootSplit != nullptr && m_rootSplit != nullptr)
             {
-                browser->m_rootSplit->SetSplitRatio(m_rootSplit->SplitRatio());
+                browser->m_rootSplit->SetSplitRatio(m_rootSplit->RequestedSplitRatio());
             }
         }
 

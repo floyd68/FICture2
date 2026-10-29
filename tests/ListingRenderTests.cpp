@@ -763,3 +763,76 @@ FIC2_TEST(ListingRender_AddedViewersTakeTheExistingStripHeight)
     settle();
     FIC2_CHECK(checkAll("height changed again", kLaterHeight) == 4);
 }
+
+// A viewer added while the existing strip is clamped to its max height (the
+// window was enlarged after the height was set) matches it while clamped and
+// after the window shrinks back and the clamp releases.
+FIC2_TEST(ListingRender_AddedViewerFollowsTheStripThroughAClampedResize)
+{
+    constexpr float kChangedHeight = 230.0f;
+    constexpr UINT kTallHeight = 1200;
+    ThumbTestSupport::ScopedDecodeService decodes;
+    const TempRoot root;
+    const DiskFolder a(root.dir / L"a", 2, 5);
+    const DiskFolder b(root.dir / L"b", 2, 5);
+
+    ThumbTestSupport::ComScope com;
+    RenderWindow window;
+    FIC2_REQUIRE(window.Create());
+    Ficture2Backplate backplate(L"strip-clamp-test");
+    backplate.SkipImageBrowserIniForTesting();
+    FD2D::BackplateTestAccess::RenderInto(backplate, window.window, window.target.Get());
+    auto first = CreateImageBrowser(L"clamp_root");
+    FIC2_REQUIRE(first != nullptr);
+    FIC2_REQUIRE(backplate.AddWnd(first));
+    auto* ops = dynamic_cast<IImageBrowserOps*>(first.get());
+    FIC2_REQUIRE(ops != nullptr);
+    ops->BrowserRestoreOpenFolder(a.dir.wstring());
+    backplate.Render();
+
+    const auto stripHeight = [](FD2D::Wnd& browser)
+    {
+        D2D1_RECT_F strip {};
+        const ImageBrowserThumbnailPane* pane = ImageBrowserThumbPane(browser);
+        return (pane != nullptr && pane->TryGetStripRect(strip)) ? strip.bottom - strip.top : -1.0f;
+    };
+    const auto resize = [&](UINT height)
+    {
+        SetWindowPos(window.window, nullptr, 0, 0, static_cast<int>(kWidth), static_cast<int>(height),
+            SWP_NOZORDER | SWP_NOACTIVATE | SWP_NOMOVE);
+        FIC2_REQUIRE(SUCCEEDED(window.target->Resize(D2D1::SizeU(kWidth, height))));
+        FD2D::BackplateTestAccess::RenderInto(backplate, window.window, window.target.Get());
+        for (int i = 0; i < 3; ++i)
+        {
+            backplate.Render();
+        }
+    };
+
+    backplate.SetSyncedThumbStripHeight(kChangedHeight);
+    ops->BrowserForceApplySyncedThumbStripHeight();
+    resize(kHeight);
+    FIC2_REQUIRE(std::fabs(stripHeight(*first) - kChangedHeight) < 1.5f);
+
+    // Enlarged: the strip grows with the window until its max height clamps it.
+    resize(kTallHeight);
+    const float clamped = stripHeight(*first);
+    std::printf("  enlarged: strip height %.1f\n", clamped);
+    FIC2_REQUIRE(clamped > kChangedHeight + 10.0f);
+
+    ops->BrowserAddHorizontalViewerForRestoreFolder(b.dir.wstring());
+    resize(kTallHeight);
+    const std::vector<FD2D::Wnd*> browsers = backplate.Bus().ImageBrowsersSnapshot();
+    FIC2_REQUIRE(browsers.size() == 2);
+    for (FD2D::Wnd* browser : browsers)
+    {
+        std::printf("  added while clamped: %ls strip height %.1f\n", browser->Name().c_str(), stripHeight(*browser));
+        FIC2_CHECK(std::fabs(stripHeight(*browser) - clamped) < 1.5f);
+    }
+
+    resize(kHeight);
+    for (FD2D::Wnd* browser : browsers)
+    {
+        std::printf("  shrunk back: %ls strip height %.1f\n", browser->Name().c_str(), stripHeight(*browser));
+        FIC2_CHECK(std::fabs(stripHeight(*browser) - kChangedHeight) < 1.5f);
+    }
+}
