@@ -19,6 +19,7 @@ FICture2 is available on NexusMods: [https://www.nexusmods.com/fallout4/mods/100
 
 ## What's New in v1.7
 
+- **Fixed:** Closing FICture2 now stops the server that receives files opened in another FICture2 window before anything else shuts down, within 1 s even while another window is connecting or a connection stalls. A connection that sends nothing is dropped after 2 s instead of occupying the server, and up to 8 opens are handled at the same time while further ones wait their turn
 - **Improved:** Selecting images no longer rewrites `FICture2.ini` for every image: Open Recent is updated in memory and saved once about a second after the last selection, and when the window closes. **Clear Recent Files** now also holds for other open FICture2 windows: entries they selected before the clear are no longer added back when they save their own recent files (the time of the last clear is kept as `RecentFilesClearedAt`)
 - **Fixed:** Images in folders whose names contain characters outside the system code page (for example emoji, Japanese or Thai on a Korean or English system) are restored by the session and listed in Open Recent again: `FICture2.ini` is now saved as Unicode (UTF-16 with a BOM) instead of in the ANSI code page, which replaced those characters with `?`. An existing INI is converted on its first save and keeps all of its settings. Paths containing `;` are also kept whole (they were cut at the `;`, and Open Recent lost every entry after one), and instances that save settings at the same time no longer overwrite each other's changes
 - **Fixed:** Explorer DDS thumbnails: the thumbnail handler now reads a file its stream delivers in several parts instead of failing on the first short read, releases its decoding resources on Explorer's thread after each thumbnail instead of keeping them until the thread exits, and no longer retries a DDS that DirectXTex rejects through the Windows imaging decoder
@@ -309,6 +310,7 @@ For details and the exact CMake flags used, see `docs/libarchive_integration.md`
     - if filenames differ: second instance runs independently
   - additional Explorer opens while a compare is already in progress are queued and applied as soon as capacity frees up (instead of getting stuck)
   - boot-queued IPC opens are drained once before the session becomes eligible to save
+  - the server is stopped first on exit (within 1 s); a connection that sends nothing is dropped after 2 s, and at most 8 connections are served at once
 - **Open Recent**: right-click menu lists recently viewed images (persisted in the INI); includes **Clear Recent Files**
 - **Save Pane Screenshot**: right-click menu saves a PNG of the current main-image pane from the composed offscreen frame (independent of desktop occlusion; suggested filename next to the open file)
 - **Path / info bar**:
