@@ -101,6 +101,7 @@ namespace
             // Detaches the folder enumeration without waiting for its worker.
             m_folderLane.Close();
             UnregisterFromEventBus();
+            DeferredWakeupTargets().erase(m_deferredWakeupId);
         }
 
         FolderLoadLane& FolderLane() { return m_folderLane; }
@@ -840,10 +841,6 @@ namespace
             {
             case CMD_FIC2_IPC_OPEN:
                 return HandleIpcOpenMessage();
-            case CMD_FIC2_DEFERRED_ACTION:
-                // Addressed to the browser that queued the action; the others
-                // pass it down to their nested browsers.
-                return event.wParam == m_deferredWakeupId && RunDeferredAction();
             case CMD_FIC2_ASYNC_THUMB_READY:
                 return HandleAsyncThumbReadyMessage();
             default:
@@ -3041,24 +3038,22 @@ namespace
             PostDeferredActionWakeup();
         }
 
-        // One wakeup per queued action, addressed to this browser and
-        // broadcast so it reaches this browser whichever one has focus (a
-        // plain command goes only to the focused browser). Each wakeup runs
-        // one action, so every queued action runs, here, in order.
+        // One wakeup per queued action, addressed to this browser, so every
+        // queued action runs here, in order, whichever browser has focus.
+        // Wakeups go to a message-only window of their own instead of the
+        // backplate: an action never runs inside a Wnd-tree traversal, where
+        // inserting or closing a pane would rebuild the split tree and destroy
+        // Wnds whose OnCommandEvent is still running.
         void PostDeferredActionWakeup()
         {
-            const HWND window = (BackplateRef() != nullptr) ? BackplateRef()->Window() : nullptr;
-            if (window == nullptr)
+            if (BackplateRef() == nullptr)
             {
                 return;
             }
-            auto* message = new FD2D::Backplate::BroadcastMessage();
-            message->message = CMD_FIC2_DEFERRED_ACTION;
-            message->wParam = m_deferredWakeupId;
-            message->lParam = 0;
-            if (!PostMessageW(window, FD2D::Backplate::WM_FD2D_BROADCAST, 0, reinterpret_cast<LPARAM>(message)))
+            const HWND window = DeferredWakeupWindow();
+            if (window == nullptr || !PostMessageW(window, CMD_FIC2_DEFERRED_ACTION, m_deferredWakeupId, 0))
             {
-                delete message;
+                FIC2_LOG_WARN("[DeferredAction] Could not post a wakeup (err={}).", GetLastError());
             }
         }
 
@@ -3067,6 +3062,56 @@ namespace
             static std::atomic<WPARAM> next { 1 };
             return next.fetch_add(1);
         }
+
+        // Browsers by wakeup id. Never destroyed, so a browser outliving
+        // static destruction can still unregister.
+        static std::unordered_map<WPARAM, std::weak_ptr<ImageBrowserImpl>>& DeferredWakeupTargets()
+        {
+            static auto* targets = new std::unordered_map<WPARAM, std::weak_ptr<ImageBrowserImpl>>();
+            return *targets;
+        }
+
+        static LRESULT CALLBACK DeferredWakeupProc(HWND window, UINT message, WPARAM wParam, LPARAM lParam)
+        {
+            if (message != CMD_FIC2_DEFERRED_ACTION)
+            {
+                return DefWindowProcW(window, message, wParam, lParam);
+            }
+            const auto& targets = DeferredWakeupTargets();
+            const auto it = targets.find(wParam);
+            // Retained while its action runs: the action may close its own pane.
+            const std::shared_ptr<ImageBrowserImpl> browser = (it != targets.end()) ? it->second.lock() : nullptr;
+            if (browser != nullptr)
+            {
+                (void)browser->RunDeferredAction();
+            }
+            return 0;
+        }
+
+        // Created by the UI thread on its first wakeup; lives as long as the process.
+        static HWND DeferredWakeupWindow()
+        {
+            static const HWND window = []
+            {
+                WNDCLASSEXW wc {};
+                wc.cbSize = sizeof(wc);
+                wc.lpfnWndProc = &DeferredWakeupProc;
+                wc.hInstance = GetModuleHandleW(nullptr);
+                wc.lpszClassName = L"FICture2.DeferredBrowserActions";
+                (void)RegisterClassExW(&wc);
+                return CreateWindowExW(0, wc.lpszClassName, L"", 0, 0, 0, 0, 0, HWND_MESSAGE, nullptr,
+                    wc.hInstance, nullptr);
+            }();
+            return window;
+        }
+
+    public:
+        static void RegisterDeferredWakeupTarget(const std::shared_ptr<ImageBrowserImpl>& browser)
+        {
+            DeferredWakeupTargets()[browser->m_deferredWakeupId] = browser;
+        }
+
+    private:
 
         // Runs the oldest queued action; false when none is queued. The action
         // leaves the queue before it runs: it may queue more or close this pane.
@@ -3521,7 +3566,9 @@ namespace
 
 std::shared_ptr<FD2D::Wnd> CreateImageBrowser(const std::wstring& name, const std::wstring& initialFile)
 {
-    return std::make_shared<ImageBrowserImpl>(name, initialFile);
+    auto browser = std::make_shared<ImageBrowserImpl>(name, initialFile);
+    ImageBrowserImpl::RegisterDeferredWakeupTarget(browser);
+    return browser;
 }
 
 FolderLoadLane* ImageBrowserFolderLoadLane(FD2D::Wnd& browser)
