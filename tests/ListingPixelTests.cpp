@@ -8,6 +8,7 @@
 #include "ImageBrowserThumbLayout.h"
 #include "ImageBrowserThumbnailPane.h"
 #include "ImageBrowserThumbTypes.h"
+#include "SelectionStyle.h"
 #include "ThumbImageTile.h"
 #include "ThumbNavTile.h"
 #include "ThumbTestSupport.h"
@@ -428,4 +429,108 @@ FIC2_TEST(ListingPixels_TilesDrawTheirContentAfterEachBulkUpdate)
     strip.Ops().BrowserApplyShowNavItemsForSync(true);
     FIC2_REQUIRE(strip.LoadUntil(kItems));
     CheckListing(strip, full, "nav items on");
+}
+
+// The selection outline drawn in the thumbnail strip, read back while it pops
+// and breathes after a selection, at 100%, 125% and 150% display scale and at
+// the minimum, a middle and the maximum strip height, with the strip
+// overflowing: no outline pixel lands in the scrollbar gutter (the bar's
+// space below the tiles), and its top edge is drawn as fully as its bottom
+// edge (not cut off by the strip). A folder tile and an image tile at the end
+// of the strip (scrolled to) are checked.
+FIC2_TEST(ListingPixels_SelectionOutlineStaysWholeAndClearOfTheScrollbar)
+{
+    ThumbTestSupport::ComScope com;
+    const CoreScope core;
+    ThumbTestSupport::ScopedDecodeService decodes;
+    const TempRoot root;
+    const ImageFolder folder(root.dir, 6, 0, 60);
+    constexpr size_t kItems = 1 + 6 + 60;
+    constexpr float kOutset = FD2D::SelectionMaxOutset(FD2D::SelectionStyle {});
+
+    for (const float dpi : { 96.0f, 120.0f, 144.0f })
+    {
+        const float scale = dpi / 96.0f;
+        for (const float paneHeight : { 300.0f, 900.0f, 2000.0f })   // strip at its min, 135, at its max
+        {
+            ThumbTestSupport::Canvas canvas;
+            FIC2_REQUIRE(canvas.Create(static_cast<UINT>(kWidth * scale), static_cast<UINT>(paneHeight * scale), dpi));
+            FD2D::Backplate backplate(L"outline-pixels-test");
+            PixelStrip strip;
+            strip.canvas = &canvas;
+            strip.height = paneHeight;
+            strip.browser = CreateImageBrowser(L"outline_browser");
+            FIC2_REQUIRE(strip.browser != nullptr);
+            FIC2_REQUIRE(backplate.AddWnd(strip.browser));
+            strip.Ops().BrowserRestoreOpenFolder(root.dir.wstring());
+            FIC2_REQUIRE(strip.LoadUntil(kItems));
+
+            const auto toPixels = [&](D2D1_RECT_F r)
+            {
+                return D2D1::RectF(r.left * scale, r.top * scale, r.right * scale, r.bottom * scale);
+            };
+            const auto sample = [&](const char* what)
+            {
+                size_t worstGutter = 0;
+                size_t frames = 0;
+                double worstTopShare = 1.0;
+                const auto start = std::chrono::steady_clock::now();
+                // The pop, then the breathe up to its first peak (half a period).
+                while (std::chrono::steady_clock::now() - start < std::chrono::milliseconds(600))
+                {
+                    strip.Frame();
+                    FIC2_REQUIRE(strip.pixels.Read(canvas.bitmap.Get()));
+                    ++frames;
+
+                    D2D1_RECT_F stripRect {};
+                    FIC2_REQUIRE(strip.Pane().TryGetStripRect(stripRect));
+                    const D2D1_RECT_F viewport = strip.Pane().Scroll()->ContentViewportRect();
+                    D2D1_RECT_F track {}, thumb {};
+                    FIC2_REQUIRE(strip.Pane().Scroll()->HScrollBarRects(track, thumb));   // overflowing
+                    const size_t gutter = strip.pixels.Count(
+                        toPixels(D2D1::RectF(0.0f, viewport.bottom, static_cast<float>(kWidth), stripRect.bottom)),
+                        &Orange);
+                    worstGutter = (std::max)(worstGutter, gutter);
+                    FIC2_CHECK(gutter == 0);
+
+                    for (const ThumbTile& tile : strip.Tiles().Tiles())
+                    {
+                        const bool selected = tile.navTile ? tile.navTile->Selected() : tile.image->Selected();
+                        const D2D1_RECT_F r = strip.OnCanvas(*tile.focus);
+                        if (!selected || r.left < 0.0f || r.right > static_cast<float>(kWidth))
+                        {
+                            continue;
+                        }
+                        // Bands of equal height across each edge (1 DIP into the tile, so
+                        // pixel rounding treats both edges alike).
+                        const size_t top = strip.pixels.Count(
+                            toPixels(D2D1::RectF(r.left + 8.0f, r.top - kOutset - 1.0f, r.right - 8.0f, r.top + 1.0f)), &Orange);
+                        const size_t bottom = strip.pixels.Count(
+                            toPixels(D2D1::RectF(r.left + 8.0f, r.bottom - 1.0f, r.right - 8.0f, r.bottom + kOutset + 1.0f)),
+                            &Orange);
+                        FIC2_CHECK(bottom > 0);
+                        // An outline cut by the strip's clip would reach its top edge.
+                        FIC2_CHECK(strip.pixels.Count(
+                            toPixels(D2D1::RectF(r.left, viewport.top, r.right, viewport.top + 1.0f)), &Orange) == 0);
+                        if (bottom > 0)
+                        {
+                            const double share = static_cast<double>(top) / static_cast<double>(bottom);
+                            worstTopShare = (std::min)(worstTopShare, share);
+                            FIC2_CHECK(share > 0.6);   // rows round differently at 125% and 150%
+                        }
+                    }
+                    std::this_thread::sleep_for(std::chrono::milliseconds(40));
+                }
+                D2D1_RECT_F stripRect {};
+                (void)strip.Pane().TryGetStripRect(stripRect);
+                std::printf("  %.0f%%, strip %.0f, %s: %zu frames, gutter outline pixels %zu, top/bottom edge %.2f\n",
+                    scale * 100.0f, stripRect.bottom - stripRect.top, what, frames, worstGutter, worstTopShare);
+            };
+
+            strip.Ops().BrowserCmdSelectNext();   // the first folder tile
+            sample("folder tile");
+            strip.Ops().BrowserCmdSelectLast();   // the last image, at the end of the strip
+            sample("last image tile");
+        }
+    }
 }
