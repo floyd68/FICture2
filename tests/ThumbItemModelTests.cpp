@@ -275,3 +275,50 @@ FIC2_TEST(ThumbItemModel_ImageExtensionLookup)
     FIC2_CHECK(!ImageAwareVfs::IsImageFile(std::wstring(L"")));
     FIC2_CHECK(!ImageAwareVfs::IsImageFile(std::wstring(L"trailing.")));
 }
+
+FIC2_TEST(ThumbItemModel_IndexOfFollowsTheCommittedOrder)
+{
+    ThumbItemModel model;
+    model.Reset(kFolder, true, &IsTestImage);
+    (void)model.Merge(Listing());
+    FIC2_REQUIRE(model.DisplayCount() == 7);
+    for (size_t i = 0; i < model.DisplayCount(); ++i)
+    {
+        FIC2_CHECK(model.IndexOf(model.At(i).lookupKey) == i);
+    }
+    // Lookup keys are case-folded; unlisted and unsupported files have none.
+    FIC2_CHECK(model.IndexOf(ThumbItemModel::LookupKeyFor(File(L"B.PNG").path)).has_value());
+    FIC2_CHECK(!model.IndexOf(ThumbItemModel::LookupKeyFor(File(L"readme.txt").path)));
+    FIC2_CHECK(!model.IndexOf(ThumbItemModel::LookupKeyFor(File(L"missing.png").path)));
+
+    // Staged items get an index (and shift later ones) only on the commit.
+    const std::wstring bKey = ThumbItemModel::LookupKeyFor(File(L"b.png").path);
+    const std::wstring aaKey = ThumbItemModel::LookupKeyFor(File(L"aa.png").path);
+    const auto bBefore = model.IndexOf(bKey);
+    FIC2_REQUIRE(bBefore.has_value());
+    FIC2_CHECK(model.Stage({ File(L"aa.png") }) == 1);
+    FIC2_CHECK(!model.IndexOf(aaKey));
+    FIC2_CHECK(model.IndexOf(bKey) == bBefore);
+    FIC2_CHECK(model.Commit());
+    FIC2_CHECK(model.IndexOf(aaKey) == *bBefore);
+    FIC2_CHECK(model.IndexOf(bKey) == *bBefore + 1);
+
+    // A staged reset keeps the displayed indices until it is committed.
+    model.StageReset(kFolder, false, &IsTestImage);
+    FIC2_CHECK(model.Stage({ File(L"c.dds") }) == 1);
+    FIC2_CHECK(model.IndexOf(bKey) == *bBefore + 1);
+    FIC2_CHECK(model.Commit());
+    FIC2_CHECK(!model.IndexOf(bKey));
+    FIC2_CHECK(model.IndexOf(ThumbItemModel::LookupKeyFor(File(L"c.dds").path)) == 0u);
+}
+
+FIC2_TEST(ThumbItemModel_IndexOfSkipsHiddenNavItems)
+{
+    ThumbItemModel model;
+    model.Reset(kFolder, false, &IsTestImage);
+    (void)model.Merge(Listing());
+    FIC2_REQUIRE(model.DisplayCount() == 3);
+    FIC2_CHECK(!model.IndexOf(ThumbItemModel::LookupKeyFor(Dir(L"alpha").path)));
+    FIC2_CHECK(!model.IndexOf(ThumbItemModel::LookupKeyFor(kFolder.GetParent())));
+    FIC2_CHECK(model.IndexOf(ThumbItemModel::LookupKeyFor(File(L"A.png").path)) == 0u);
+}

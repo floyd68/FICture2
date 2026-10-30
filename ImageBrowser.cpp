@@ -457,10 +457,9 @@ namespace
             }
             else if (m_thumbAnchor.valid)
             {
-                const auto it = m_thumbItemIndexByKey.find(m_thumbAnchor.key);
-                if (it != m_thumbItemIndexByKey.end())
+                if (const auto index = m_thumbModel.IndexOf(m_thumbAnchor.key))
                 {
-                    expected = m_thumbLayout.Start(it->second) - m_thumbAnchor.offset;
+                    expected = m_thumbLayout.Start(*index) - m_thumbAnchor.offset;
                 }
             }
             const float maxLeft = (std::max)(0.0f, m_thumbLayout.ContentWidth() - width);
@@ -570,20 +569,16 @@ namespace
             return m_thumbW + 2.0f * kThumbTileMargin;   // nav tiles are square
         }
 
-        // Extents and the key index of every item (after a rebuild or a
-        // row-height change): the per-update work that is linear in the folder.
+        // Extents of every item (after a rebuild or a row-height change): the
+        // per-update work that is linear in the folder.
         void RebuildThumbLayout()
         {
             const size_t count = ThumbItemCount();
             std::vector<float> extents;
             extents.reserve(count);
-            m_thumbItemIndexByKey.clear();
-            m_thumbItemIndexByKey.reserve(count);
             for (size_t i = 0; i < count; ++i)
             {
-                const ThumbModelEntry& item = m_thumbModel.At(i);
-                extents.push_back(ThumbItemExtent(item));
-                m_thumbItemIndexByKey.emplace(item.lookupKey, i);
+                extents.push_back(ThumbItemExtent(m_thumbModel.At(i)));
             }
             m_thumbLayout.Reset(std::move(extents),
                 ImageBrowserThumbnailPane::kItemSpacing, ImageBrowserThumbnailPane::kPanelPadding);
@@ -612,13 +607,13 @@ namespace
             {
                 return;
             }
-            const auto it = m_thumbItemIndexByKey.find(key);
-            if (it == m_thumbItemIndexByKey.end() || !ThumbLayoutReady())
+            const auto index = m_thumbModel.IndexOf(key);
+            if (!index || !ThumbLayoutReady())
             {
                 return;
             }
             CaptureThumbAnchor();
-            m_thumbLayout.SetExtent(it->second, ThumbStripLayout::ImageExtent(m_thumbH, aspect, kThumbTileMargin));
+            m_thumbLayout.SetExtent(*index, ThumbStripLayout::ImageExtent(m_thumbH, aspect, kThumbTileMargin));
             m_thumbArrangePending = true;
             if (BackplateRef() != nullptr)
             {
@@ -656,10 +651,9 @@ namespace
             {
                 const ThumbScrollAnchor anchor = std::move(m_thumbAnchor);
                 m_thumbAnchor = {};
-                const auto it = m_thumbItemIndexByKey.find(anchor.key);
-                if (it != m_thumbItemIndexByKey.end())
+                if (const auto index = m_thumbModel.IndexOf(anchor.key))
                 {
-                    const float wantedLeft = m_thumbLayout.Start(it->second) - anchor.offset;
+                    const float wantedLeft = m_thumbLayout.Start(*index) - anchor.offset;
                     scroll->ShiftScrollX(wantedLeft - left);
                 }
             }
@@ -2880,12 +2874,12 @@ namespace
             {
                 return 0;
             }
-            auto it = m_thumbItemIndexByKey.find(ThumbItemModel::LookupKeyFor(preferSelectPath));
-            if (it == m_thumbItemIndexByKey.end() && !m_thumbPreferKey.empty())
+            auto index = m_thumbModel.IndexOf(ThumbItemModel::LookupKeyFor(preferSelectPath));
+            if (!index && !m_thumbPreferKey.empty())
             {
-                it = m_thumbItemIndexByKey.find(m_thumbPreferKey);
+                index = m_thumbModel.IndexOf(m_thumbPreferKey);
             }
-            return (it != m_thumbItemIndexByKey.end()) ? it->second : 0;
+            return index.value_or(0);
         }
 
         // Remembers the lookup key of the listed entry that is `preferSelectPath`
@@ -3467,7 +3461,6 @@ namespace
         std::wstring m_thumbPreferKey {};   // see ResolveThumbPreferKey
         ThumbItemModel m_thumbModel {};   // the strip's items (committed); a progressive listing is staged in it
         ThumbStripLayout m_thumbLayout {};  // geometry of m_thumbModel's items (see ApplyThumbScrollAfterArrange)
-        std::unordered_map<std::wstring, size_t> m_thumbItemIndexByKey {};
         ThumbScrollAnchor m_thumbAnchor {};
         bool m_thumbCenterPending { false };
         bool m_thumbArrangePending { false };
