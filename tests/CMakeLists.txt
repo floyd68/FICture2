@@ -23,6 +23,7 @@ add_executable(FICture2Tests
     AppShutdownTests.cpp
     AppIpcTests.cpp
     ImageBrowserPathStateTests.cpp
+    ImageBrowserSplitPanesTests.cpp
     ThumbItemModelTests.cpp
     ThumbStripLayoutTests.cpp
     ThumbStripScrollTests.cpp

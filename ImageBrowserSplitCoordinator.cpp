@@ -1,5 +1,6 @@
 #include "ImageBrowserSplitCoordinator.h"
 
+#include <algorithm>
 #include <functional>
 #include <string>
 
@@ -104,4 +105,100 @@ std::shared_ptr<FD2D::Wnd> ImageBrowserSplitCoordinator::BuildEqualWidthHostTree
         0.5f,
         top,
         bottom);
+}
+
+void ImageBrowserSplitPanes::EnsureRoot(const std::shared_ptr<FD2D::Wnd>& root)
+{
+    if (m_panes.empty() && root)
+    {
+        m_panes.push_back(root);
+    }
+}
+
+void ImageBrowserSplitPanes::Append(const std::shared_ptr<FD2D::Wnd>& pane)
+{
+    m_panes.push_back(pane);
+}
+
+void ImageBrowserSplitPanes::InsertAfter(const std::wstring& afterName, const std::shared_ptr<FD2D::Wnd>& pane)
+{
+    const size_t index = ImageBrowserSplitCoordinator::ResolveInsertIndex(m_panes, afterName);
+    m_panes.insert(m_panes.begin() + static_cast<std::ptrdiff_t>(index), pane);
+}
+
+bool ImageBrowserSplitPanes::RemoveAdded(const std::wstring& name)
+{
+    for (size_t i = 1; i < m_panes.size(); ++i)
+    {
+        if (m_panes[i] && m_panes[i]->Name() == name)
+        {
+            m_panes.erase(m_panes.begin() + static_cast<std::ptrdiff_t>(i));
+            return true;
+        }
+    }
+    return false;
+}
+
+std::shared_ptr<FD2D::Wnd> ImageBrowserSplitPanes::RebuildHost()
+{
+    auto host = ImageBrowserSplitCoordinator::BuildEqualWidthHostTree(m_panes);
+    if (host)
+    {
+        m_host = host;
+    }
+    return host;
+}
+
+std::vector<float> ImageBrowserSplitPanes::CaptureRatios() const
+{
+    std::vector<float> out;
+    CaptureRatios(m_host, out);
+    return out;
+}
+
+void ImageBrowserSplitPanes::ApplyRatios(const std::vector<float>& ratios)
+{
+    size_t index = 0;
+    ApplyRatios(m_host, ratios, index);
+}
+
+bool ImageBrowserSplitPanes::IsPane(const std::shared_ptr<FD2D::Wnd>& node) const
+{
+    return std::find(m_panes.begin(), m_panes.end(), node) != m_panes.end();
+}
+
+void ImageBrowserSplitPanes::CaptureRatios(const std::shared_ptr<FD2D::Wnd>& node, std::vector<float>& out) const
+{
+    if (!node || IsPane(node))
+    {
+        return;
+    }
+    if (const auto split = std::dynamic_pointer_cast<FD2D::SplitPanel>(node))
+    {
+        out.push_back(split->SplitRatio());
+    }
+    for (const auto& child : node->ChildrenInOrder())
+    {
+        CaptureRatios(child, out);
+    }
+}
+
+void ImageBrowserSplitPanes::ApplyRatios(const std::shared_ptr<FD2D::Wnd>& node, const std::vector<float>& ratios, size_t& index)
+{
+    if (!node || IsPane(node))
+    {
+        return;
+    }
+    if (const auto split = std::dynamic_pointer_cast<FD2D::SplitPanel>(node))
+    {
+        if (index < ratios.size())
+        {
+            split->SetSplitRatio(ratios[index]);
+        }
+        ++index;
+    }
+    for (const auto& child : node->ChildrenInOrder())
+    {
+        ApplyRatios(child, ratios, index);
+    }
 }
