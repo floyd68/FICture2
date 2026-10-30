@@ -315,10 +315,11 @@ void ThumbImageTile::OnRender(ID2D1RenderTarget* target)
             }
 
             // Force parent container to re-layout. During a render this
-            // requests the next (coalesced) frame, which lays it out.
+            // requests the next (coalesced) frame, which lays it out (not
+            // while the window is resized live; a pure move lays it out).
             if (bp != nullptr)
             {
-                if (!bp->IsInSizeMove())
+                if (!bp->IsInLiveResize())
                 {
                     bp->RequestLayout();
                 }

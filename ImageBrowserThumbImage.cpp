@@ -442,7 +442,8 @@ void ImageBrowserThumbImage::RequestSizeUpgradeIfDue()
     input.shown = shown;
     input.sourceLimitedHeight = m_sourceLimitedHeight;
     input.requestInFlight = m_binding.IsLoading();
-    input.deferUpgrades = m_sizeUpgradesDeferred || (bp != nullptr && bp->IsInSizeMove());
+    // Only a live resize defers upgrades; a pure window move does not.
+    input.deferUpgrades = m_sizeUpgradesDeferred || (bp != nullptr && bp->IsInLiveResize());
     const ThumbSizePolicy::Decision decision = ThumbSizePolicy::Evaluate(input, m_upgrades);
     if (decision.action != ThumbSizePolicy::Action::Upgrade)
     {
@@ -712,7 +713,9 @@ void ImageBrowserThumbImage::OnRender(ID2D1RenderTarget* target)
     }
 
     FD2D::Backplate* bp = BackplateRef();
-    const bool deferBitmapUpload = (bp != nullptr && bp->IsInSizeMove());
+    // Deferred while the window is being resized live; during a pure move
+    // (title-bar drag) completed thumbnails keep appearing.
+    const bool deferBitmapUpload = (bp != nullptr && bp->IsInLiveResize());
 
     // Admitted (and accounted) even while the upload is deferred.
     (void)AdmitCompletedPayload();
