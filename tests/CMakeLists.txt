@@ -26,6 +26,7 @@ add_executable(FICture2Tests
     ThumbItemModelTests.cpp
     ThumbStripLayoutTests.cpp
     ThumbStripScrollTests.cpp
+    ThumbStripViewportTests.cpp
     ThumbPayloadCacheTests.cpp
     ThumbTestSupport.h
     ThumbStripTilesTests.cpp
@@ -52,6 +53,7 @@ add_executable(FICture2Tests
     ${PROJECT_SOURCE_DIR}/ImageBrowserThumbSizePolicy.cpp
     ${PROJECT_SOURCE_DIR}/ImageBrowserThumbLayout.cpp
     ${PROJECT_SOURCE_DIR}/ImageBrowserThumbScroll.cpp
+    ${PROJECT_SOURCE_DIR}/ImageBrowserThumbViewport.cpp
     ${PROJECT_SOURCE_DIR}/ImageBrowserAssets.cpp
     ${PROJECT_SOURCE_DIR}/ThumbImageTile.cpp
     ${PROJECT_SOURCE_DIR}/ThumbNavTile.cpp
