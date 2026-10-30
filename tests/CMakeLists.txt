@@ -28,6 +28,7 @@ add_executable(FICture2Tests
     ThumbStripLayoutTests.cpp
     ThumbStripScrollTests.cpp
     ThumbStripViewportTests.cpp
+    ThumbListingSessionTests.cpp
     ThumbPayloadCacheTests.cpp
     ThumbTestSupport.h
     ThumbStripTilesTests.cpp
