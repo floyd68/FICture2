@@ -39,7 +39,7 @@ public:
     void Arrange(FD2D::Rect finalRect) override;
     // Places the tiles again within the bounds of the last Arrange, for a tile
     // set that changed after the layout pass.
-    void ArrangeTiles() { Arrange(m_bounds); }
+    void ArrangeTiles() { Arrange(BoundsRect()); }
     // Runs at the start of every render of the panel, before its tiles draw.
     // The scroll view renders the panel after advancing a smooth scroll, so
     // the scroll offset seen here is the one this frame presents.

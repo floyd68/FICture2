@@ -43,7 +43,6 @@ void ThumbStripPanel::Arrange(FD2D::Rect finalRect)
             }
         }
     }
-    m_bounds = finalRect;
     m_layoutRect = FD2D::ToD2D(finalRect);
 }
 
