@@ -587,7 +587,7 @@ namespace
             // Folder listing chunks arrive through CMD_FIC2_ASYNC_THUMB_READY (posted
             // by the loader); this only picks up chunks if a frame happens to render
             // first, and never requests frames itself.
-            if (m_thumbListLoading && m_folderLane.HasChunks())
+            if (m_listing.Loading() && m_folderLane.HasChunks())
             {
                 DrainAsyncThumbChunks();
             }
@@ -2472,25 +2472,18 @@ namespace
                 return;
             }
 
-            const unsigned long long requestId = ++m_thumbListRequestId;
+            const unsigned long long requestId = m_listing.Start(preferSelectPath, CommonUtil::NowMs());
             const std::wstring browserName = Name();
             const Floar::VirtualPath folder = m_currentFolder;
             const bool showNavItems = m_showNavItems;
             NoteListedFolder(folder);
 
-            m_thumbListLoading = true;
-            m_progressiveStartMs = CommonUtil::NowMs();
             FIC2_LOG_INFO("[ThumbLoad] Started loading folder '{}' (browser={})",
                 AppLog::ToUtf8(folder.wstring()),
                 AppLog::ToUtf8(browserName));
             // The strip keeps showing the committed items until the first
             // progressive update commits the new listing.
             m_thumbModel.StageReset(folder, showNavItems, ImageFilterForThumbModel());
-            m_progressivePreferSelectPath = preferSelectPath;
-            m_thumbPreferKey.clear();
-            m_progressiveUiDirty = false;
-            m_progressiveLoadCompleted = false;
-            m_progressiveLastApplyMs = 0;
             if (BackplateRef() != nullptr)
             {
                 BackplateRef()->RequestAnimationFrame();
@@ -2514,57 +2507,22 @@ namespace
             return true;
         }
 
-        std::deque<AsyncThumbListChunkPayload> DequeueAsyncThumbChunks()
-        {
-            return m_folderLane.Dequeue();
-        }
-
-        bool MergeAcceptedAsyncThumbChunks(const std::deque<AsyncThumbListChunkPayload>& chunks)
-        {
-            bool anyAccepted = false;
-            for (const auto& chunk : chunks)
-            {
-                if (!ImageBrowserAsyncThumbLoader::AcceptChunk(
-                        chunk,
-                        m_thumbListRequestId.load(),
-                        m_currentFolder,
-                        m_showNavItems))
-                {
-                    continue;
-                }
-
-                anyAccepted = true;
-                ResolveThumbPreferKey(m_progressivePreferSelectPath, chunk.batch);
-                (void)ImageBrowserAsyncThumbLoader::ApplyChunkToProgressive(
-                    chunk,
-                    m_thumbModel,
-                    m_progressiveUiDirty,
-                    m_progressiveLoadCompleted);
-            }
-            return anyAccepted;
-        }
-
         void DrainAsyncThumbChunks()
         {
-            const std::deque<AsyncThumbListChunkPayload> chunks = DequeueAsyncThumbChunks();
+            const std::deque<AsyncThumbListChunkPayload> chunks = m_folderLane.Dequeue();
             if (chunks.empty())
             {
                 return;
             }
 
-            if (!MergeAcceptedAsyncThumbChunks(chunks))
+            if (!m_listing.Merge(chunks, m_currentFolder, m_showNavItems, m_thumbModel))
             {
                 return;
             }
 
-            const unsigned long long now = CommonUtil::NowMs();
-            const bool shouldApplyNow = ImageBrowserAsyncThumbLoader::ShouldApplyNow(
-                m_progressiveLoadCompleted,
-                now,
-                m_progressiveLastApplyMs);
-            if (shouldApplyNow)
+            if (m_listing.ShouldApplyNow(CommonUtil::NowMs()))
             {
-                ApplyProgressiveThumbUpdate(m_progressiveLoadCompleted);
+                ApplyProgressiveThumbUpdate(m_listing.Completed());
             }
             else
             {
@@ -2578,29 +2536,30 @@ namespace
         // render; it stops when the update is applied or the folder completes.
         void ApplyThrottledProgressiveUpdate()
         {
-            if (!m_progressiveUiDirty || m_progressiveLoadCompleted)
+            switch (m_listing.ThrottledUpdate(CommonUtil::NowMs()))
             {
-                return;
-            }
-            const unsigned long long now = CommonUtil::NowMs();
-            if (now - m_progressiveLastApplyMs >= 50)
-            {
+            case ThumbListingSession::Throttle::Apply:
                 ApplyProgressiveThumbUpdate(false);
-            }
-            else if (BackplateRef() != nullptr)
-            {
-                BackplateRef()->RequestAnimationFrame();
+                break;
+            case ThumbListingSession::Throttle::Wait:
+                if (BackplateRef() != nullptr)
+                {
+                    BackplateRef()->RequestAnimationFrame();
+                }
+                break;
+            case ThumbListingSession::Throttle::None:
+                break;
             }
         }
 
         void ApplyProgressiveThumbUpdate(bool finalizeSelection)
         {
-            if (!m_progressiveUiDirty)
+            if (!m_listing.UpdatePending())
             {
                 return;
             }
 
-            const bool applySelection = finalizeSelection && m_progressiveLoadCompleted;
+            const bool applySelection = finalizeSelection && m_listing.Completed();
             // Unconditional (not threshold-gated): this runs both from DrainAsyncThumbChunks
             // (folder enumeration chunks arriving) and from OnRender's ~50ms poll while a
             // list is still loading — the latter has no other timing coverage, and it runs
@@ -2608,20 +2567,17 @@ namespace
             // for "sluggish panning/low FPS for a few seconds after opening a large folder".
             FIC2_TIMER_START(t_apply);
             RebuildThumbListImmediate(
-                m_progressivePreferSelectPath,
+                m_listing.PreferSelectPath(),
                 false,
                 applySelection);
             const auto applyMs = FIC2_ELAPSED_MS(t_apply);
             FIC2_LOG_INFO(
                 "[ThumbLoad] ApplyProgressiveThumbUpdate: {} items in {}ms (finalize={}, entriesAccumulated={})",
-                ThumbItemCount(), applyMs, m_progressiveLoadCompleted, m_thumbModel.ListedCount());
+                ThumbItemCount(), applyMs, m_listing.Completed(), m_thumbModel.ListedCount());
 
-            m_progressiveUiDirty = false;
-            m_progressiveLastApplyMs = CommonUtil::NowMs();
-            if (m_progressiveLoadCompleted)
+            if (m_listing.Applied(CommonUtil::NowMs()))
             {
-                m_thumbListLoading = false;
-                const unsigned long long totalMs = CommonUtil::NowMs() - m_progressiveStartMs;
+                const unsigned long long totalMs = CommonUtil::NowMs() - m_listing.StartMs();
                 FIC2_LOG_INFO("[ThumbLoad] Progressive load complete: {} items in {}ms total",
                     ThumbItemCount(), totalMs);
             }
@@ -2661,7 +2617,7 @@ namespace
             {
                 NoteListedFolder(m_currentFolder);
                 m_thumbModel.Reset(m_currentFolder, m_showNavItems, ImageFilterForThumbModel());
-                m_thumbPreferKey.clear();
+                m_listing.ResetPreferKey();
                 if (!m_currentFolder.hostPath.empty())
                 {
                     // The same listing (and identity capture) as the
@@ -2678,7 +2634,7 @@ namespace
                                 std::make_move_iterator(batch.begin()), std::make_move_iterator(batch.end()));
                             identities.insert(identities.end(), batchIdentities.begin(), batchIdentities.end());
                         });
-                    ResolveThumbPreferKey(preferSelectPath, listing);
+                    m_listing.ResolvePreferKey(preferSelectPath, listing);
                     (void)m_thumbModel.Merge(listing, identities);
                 }
             }
@@ -2696,7 +2652,7 @@ namespace
             // the materialized range with the resolved selection highlighted.
             RebuildThumbLayout();
             const bool hasItems = ThumbItemCount() > 0;
-            const size_t selectIndex = PreferredThumbIndex(preferSelectPath);
+            const size_t selectIndex = m_listing.PreferredIndex(m_thumbModel, preferSelectPath);
             FIC2_LOG_STEP(t_rebuild, "[RebuildImmediate] RebuildThumbLayout");
             // The anchor survives a progressive merge by key; a different (or
             // newly resolved) selection is centered instead. Decided before
@@ -2746,46 +2702,6 @@ namespace
             {
                 DeferredRenderScope::RequestLayout(BackplateRef());
                 Invalidate();
-            }
-        }
-
-        // The display index of `preferSelectPath`, or 0 when it is not listed.
-        // A lookup in the layout's key index, not a scan of the folder; a path
-        // spelled differently from the listing was matched when its entry was
-        // listed (ResolveThumbPreferKey).
-        size_t PreferredThumbIndex(const Floar::VirtualPath& preferSelectPath) const
-        {
-            if (preferSelectPath.empty())
-            {
-                return 0;
-            }
-            auto index = m_thumbModel.IndexOf(ThumbItemModel::LookupKeyFor(preferSelectPath));
-            if (!index && !m_thumbPreferKey.empty())
-            {
-                index = m_thumbModel.IndexOf(m_thumbPreferKey);
-            }
-            return index.value_or(0);
-        }
-
-        // Remembers the lookup key of the listed entry that is `preferSelectPath`
-        // (compared as paths, as the strip always has), once per listing.
-        void ResolveThumbPreferKey(
-            const Floar::VirtualPath& preferSelectPath,
-            const std::vector<Floar::VirtualFileEntry>& entries)
-        {
-            if (preferSelectPath.empty() || !m_thumbPreferKey.empty())
-            {
-                return;
-            }
-            for (const auto& entry : entries)
-            {
-                if (CommonUtil::PathEqualsInsensitive(
-                        entry.path.hostPath, entry.path.archiveInnerPath,
-                        preferSelectPath.hostPath, preferSelectPath.archiveInnerPath))
-                {
-                    m_thumbPreferKey = ThumbItemModel::LookupKeyFor(entry.path);
-                    return;
-                }
             }
         }
 
@@ -3318,17 +3234,10 @@ namespace
         Floar::VirtualPath m_currentFolder {};
         Floar::VirtualPath m_listedFolder {};   // of the last listing started (NoteListedFolder)
         bool m_showNavItems { true };
-        std::atomic<unsigned long long> m_thumbListRequestId { 0 };
-        bool m_thumbListLoading { false };
-        Floar::VirtualPath m_progressivePreferSelectPath {};
-        std::wstring m_thumbPreferKey {};   // see ResolveThumbPreferKey
+        ThumbListingSession m_listing {};   // the progressive listing of m_currentFolder
         ThumbItemModel m_thumbModel {};   // the strip's items (committed); a progressive listing is staged in it
         ThumbStripViewport m_thumbViewport {};  // geometry of m_thumbModel's items and the next layout pass's scroll adjustment
         bool m_thumbKeepScrollOnSelect { false };   // see RebuildThumbListImmediate
-        bool m_progressiveUiDirty { false };
-        bool m_progressiveLoadCompleted { false };
-        unsigned long long m_progressiveLastApplyMs { 0 };
-        unsigned long long m_progressiveStartMs { 0 };
         FolderLoadLane m_folderLane {};
         float m_thumbW { 128.0f };
         float m_thumbH { 128.0f };
