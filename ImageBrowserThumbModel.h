@@ -87,6 +87,8 @@ public:
     size_t DisplayCount() const;
     // Item `index` (< DisplayCount()) in display order.
     const ThumbModelEntry& At(size_t index) const;
+    // Display index of the committed item with `lookupKey`, if displayed.
+    std::optional<size_t> IndexOf(const std::wstring& lookupKey) const;
     // Entries staged since the last reset, before filtering (diagnostics).
     size_t ListedCount() const { return m_listed; }
 
@@ -109,6 +111,7 @@ public:
 
 private:
     static void MergeSorted(std::vector<ThumbModelEntry>& into, std::vector<ThumbModelEntry>&& added);
+    void RebuildIndex();
 
     // Displayed (committed) items.
     Floar::VirtualPath m_folder {};
@@ -116,6 +119,7 @@ private:
     std::optional<ThumbModelEntry> m_up {};
     std::vector<ThumbModelEntry> m_folders {};
     std::vector<ThumbModelEntry> m_images {};
+    std::unordered_map<std::wstring, size_t> m_indexByKey {};   // display index by lookup key
     std::unordered_map<std::wstring, float> m_aspectByKey {};
     std::unordered_map<std::wstring, uint32_t> m_sourceLimitedByKey {};
 

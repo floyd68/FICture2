@@ -133,7 +133,32 @@ bool ThumbItemModel::Commit()
         m_stagedImages.clear();
         changed = true;
     }
+    if (changed)
+    {
+        RebuildIndex();
+    }
     return changed;
+}
+
+void ThumbItemModel::RebuildIndex()
+{
+    const size_t count = DisplayCount();
+    m_indexByKey.clear();
+    m_indexByKey.reserve(count);
+    for (size_t i = 0; i < count; ++i)
+    {
+        m_indexByKey.emplace(At(i).lookupKey, i);
+    }
+}
+
+std::optional<size_t> ThumbItemModel::IndexOf(const std::wstring& lookupKey) const
+{
+    const auto it = m_indexByKey.find(lookupKey);
+    if (it == m_indexByKey.end())
+    {
+        return std::nullopt;
+    }
+    return it->second;
 }
 
 size_t ThumbItemModel::Merge(
