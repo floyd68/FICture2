@@ -383,10 +383,30 @@ namespace
     }
 }
 
+namespace
+{
+    // Set once by a test process before anything reads the INI path.
+    std::wstring& IniFilePathForTesting()
+    {
+        static std::wstring path;
+        return path;
+    }
+}
+
 namespace FICture2App
 {
+    void SetIniFilePathForTesting(std::wstring path)
+    {
+        IniFilePathForTesting() = std::move(path);
+    }
+
     std::wstring GetIniFilePath()
     {
+        if (!IniFilePathForTesting().empty())
+        {
+            return IniFilePathForTesting();
+        }
+
         wchar_t iniPath[MAX_PATH] {};
         if (FAILED(SHGetFolderPathW(nullptr, CSIDL_LOCAL_APPDATA, nullptr, SHGFP_TYPE_CURRENT, iniPath)))
         {
