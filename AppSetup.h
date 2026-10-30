@@ -10,8 +10,13 @@ using RECT = tagRECT;
 
 namespace FICture2App
 {
-    // %LOCALAPPDATA%\FICture2\FICture2.ini
+    // %LOCALAPPDATA%\FICture2\FICture2.ini, or the path set for tests.
     std::wstring GetIniFilePath();
+
+    // Tests: makes GetIniFilePath() return `path` for the whole process, so a
+    // test run never reads or writes the user's INI; an empty path restores
+    // the real one. Production never calls it.
+    void SetIniFilePathForTesting(std::wstring path);
 
     // First-run is defined as "INI does not exist": neither the INI nor the
     // backup an interrupted save left (IniStore::BackupPath), which is an
