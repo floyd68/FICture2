@@ -1124,15 +1124,12 @@ namespace
         // main/thumb vertical splits are not persisted.
         std::vector<float> CaptureHorizontalSplitRatios() const
         {
-            std::vector<float> out;
-            CaptureSplitRatiosRecursive(m_hHost, m_hPanes, out);
-            return out;
+            return m_splitPanes.CaptureRatios();
         }
 
         void ApplyHorizontalSplitRatios(const std::vector<float>& ratios)
         {
-            size_t idx = 0;
-            ApplySplitRatiosRecursive(m_hHost, m_hPanes, ratios, idx);
+            m_splitPanes.ApplyRatios(ratios);
             if (BackplateRef() != nullptr)
             {
                 DeferredRenderScope::RequestLayout(BackplateRef());
@@ -1233,7 +1230,7 @@ namespace
                 newBrowser->RestoreOpenFolder(folderPath);
             }
             AdoptThumbStripSplit(newWnd);
-            m_hPanes.push_back(newWnd);
+            m_splitPanes.Append(newWnd);
 
             RefreshHorizontalHostLayout();
         }
@@ -2843,12 +2840,12 @@ namespace
                 return 1;
             }
 
-            if (rootHost->m_hPanes.empty())
+            if (rootHost->m_splitPanes.Empty())
             {
                 return 1;
             }
 
-            return static_cast<int>(rootHost->m_hPanes.size());
+            return static_cast<int>(rootHost->m_splitPanes.Count());
         }
 
         void FitToScreen()
@@ -3140,13 +3137,13 @@ namespace
 
         bool CanAddHorizontalViewer() const
         {
-            return ImageBrowserSplitCoordinator::CanAddViewer(m_hPanes.size());
+            return m_splitPanes.CanAdd();
         }
 
         bool EnsureHorizontalHostReady(bool enforceCapacity = false, bool showLimitMessage = false)
         {
             EnsureHorizontalHost();
-            if (m_hPanes.empty())
+            if (m_splitPanes.Empty())
             {
                 return false;
             }
@@ -3207,21 +3204,9 @@ namespace
             {
                 return;
             }
-            if (m_hPanes.size() < 2)
+            if (m_splitPanes.RemoveAdded(name))
             {
-                return;
-            }
-
-            // Pane 0 is this root browser's existing UI root, not an ImageBrowserImpl.
-            for (size_t i = 1; i < m_hPanes.size(); ++i)
-            {
-                auto paneBrowser = std::dynamic_pointer_cast<ImageBrowserImpl>(m_hPanes[i]);
-                if (paneBrowser && paneBrowser->Name() == name)
-                {
-                    m_hPanes.erase(m_hPanes.begin() + static_cast<std::ptrdiff_t>(i));
-                    RefreshHorizontalHostLayout();
-                    return;
-                }
+                RefreshHorizontalHostLayout();
             }
         }
 
@@ -3243,7 +3228,6 @@ namespace
                 return;
             }
 
-            const size_t insertIndex = ImageBrowserSplitCoordinator::ResolveInsertIndex(m_hPanes, afterName);
             const std::wstring childName = ImageBrowserSplitCoordinator::NextInsertBrowserName();
             auto newWnd = CreateImageBrowser(childName, L"");
             auto newBrowser = std::dynamic_pointer_cast<ImageBrowserImpl>(newWnd);
@@ -3260,22 +3244,14 @@ namespace
             }
 
             AdoptThumbStripSplit(newWnd);
-            m_hPanes.insert(m_hPanes.begin() + static_cast<std::ptrdiff_t>(insertIndex), newWnd);
+            m_splitPanes.InsertAfter(afterName, newWnd);
             RefreshHorizontalHostLayout();
         }
 
         void EnsureHorizontalHost()
         {
-            if (!m_hPanes.empty())
-            {
-                return;
-            }
-
             // Pane 0 is this browser's existing UI root.
-            if (m_rootSplit)
-            {
-                m_hPanes.push_back(m_rootSplit);
-            }
+            m_splitPanes.EnsureRoot(m_rootSplit);
         }
 
         void SplitHorizontalWithFile(const Floar::VirtualPath& filePath)
@@ -3302,7 +3278,7 @@ namespace
             const std::wstring childName = ImageBrowserSplitCoordinator::NextSplitBrowserName();
             auto newBrowser = CreateImageBrowser(childName, filePath.wstring());
             AdoptThumbStripSplit(newBrowser);
-            m_hPanes.push_back(newBrowser);
+            m_splitPanes.Append(newBrowser);
 
             RefreshHorizontalHostLayout();
         }
@@ -3311,7 +3287,7 @@ namespace
         {
             // Rebuild the full host so all panes become equal width.
             // (Nested splits with 0.5 ratios produce 50/25/25 otherwise.)
-            const auto host = ImageBrowserSplitCoordinator::BuildEqualWidthHostTree(m_hPanes);
+            const auto host = m_splitPanes.RebuildHost();
             if (!host)
             {
                 return;
@@ -3320,7 +3296,6 @@ namespace
             // Replace this Wnd's children with the new host tree.
             ClearChildren();
             AddChild(host);
-            m_hHost = host;
         }
 
         std::shared_ptr<FD2D::SplitPanel> m_rootSplit {};
@@ -3370,8 +3345,7 @@ namespace
         const WPARAM m_deferredWakeupId { NextDeferredWakeupId() };
 
         std::wstring m_initialFile {};
-        std::vector<std::shared_ptr<FD2D::Wnd>> m_hPanes {};
-        std::shared_ptr<FD2D::Wnd> m_hHost {};
+        ImageBrowserSplitPanes m_splitPanes {};   // root host only: side-by-side panes and their host tree
 
         // (no focus-background state)
         bool m_syncSuppressBroadcast { false };
@@ -3397,71 +3371,6 @@ namespace
         D2D1_COLOR_F m_browserFocusedBackgroundColor { 0.18f, 0.16f, 0.03f, 1.0f };
         Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> m_browserBackgroundBrush {};
         FD2D::GraphicsResourceStamp m_browserBackgroundBrushStamp {};
-
-        static void CaptureSplitRatiosRecursive(
-            const std::shared_ptr<FD2D::Wnd>& node,
-            const std::vector<std::shared_ptr<FD2D::Wnd>>& paneLeaves,
-            std::vector<float>& out)
-        {
-            if (!node)
-            {
-                return;
-            }
-
-            // Stop at each compare pane root so we do not persist the vertical
-            // main/thumb SplitPanel inside an ImageBrowser.
-            for (const auto& leaf : paneLeaves)
-            {
-                if (node == leaf)
-                {
-                    return;
-                }
-            }
-
-            if (auto sp = std::dynamic_pointer_cast<FD2D::SplitPanel>(node))
-            {
-                out.push_back(sp->SplitRatio());
-            }
-
-            for (const auto& ch : node->ChildrenInOrder())
-            {
-                CaptureSplitRatiosRecursive(ch, paneLeaves, out);
-            }
-        }
-
-        static void ApplySplitRatiosRecursive(
-            const std::shared_ptr<FD2D::Wnd>& node,
-            const std::vector<std::shared_ptr<FD2D::Wnd>>& paneLeaves,
-            const std::vector<float>& ratios,
-            size_t& idx)
-        {
-            if (!node)
-            {
-                return;
-            }
-
-            for (const auto& leaf : paneLeaves)
-            {
-                if (node == leaf)
-                {
-                    return;
-                }
-            }
-
-            if (auto sp = std::dynamic_pointer_cast<FD2D::SplitPanel>(node))
-            {
-                if (idx < ratios.size())
-                {
-                    sp->SetSplitRatio(ratios[idx]);
-                }
-                idx++;
-            }
-
-            for (const auto& ch : node->ChildrenInOrder())
-            {
-                ApplySplitRatiosRecursive(ch, paneLeaves, ratios, idx);
-            }
-        }
     };
 }
 
