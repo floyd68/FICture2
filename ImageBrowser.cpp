@@ -9,7 +9,7 @@
 #include "ImageBrowserMainPane.h"
 #include "ImageBrowserThumbnailPane.h"
 #include "ImageBrowserThumbLayout.h"
-#include "ImageBrowserThumbScroll.h"
+#include "ImageBrowserThumbViewport.h"
 #include "ImageBrowserThumbPayloadCache.h"
 #include "ImageBrowserAsyncThumbLoader.h"
 #include "FolderEnumeration.h"
@@ -363,11 +363,11 @@ namespace
         }
 
         // ------------------------------------------------------------------
-        // Strip geometry from ThumbStripLayout (model extents), not tile windows.
-        // The scroll adjustment after a layout pass (centering the selection,
-        // or keeping the anchor item's viewport offset) is ThumbStripScroll's;
-        // a shift keeps a smooth scroll in progress running
-        // (ScrollView::ShiftScrollX).
+        // Strip geometry (model extents, not tile windows), the scroll
+        // adjustment after a layout pass and the item ranges for the viewport
+        // are ThumbStripViewport's. This class reads the viewport from the
+        // scroll view and applies the results; a shift keeps a smooth scroll
+        // in progress running (ScrollView::ShiftScrollX).
         // ------------------------------------------------------------------
 
         // Tiles have no margin: their extent is their content width.
@@ -386,54 +386,13 @@ namespace
 
         bool ThumbLayoutReady() const
         {
-            return ThumbItemCount() > 0 && m_thumbLayout.Count() == ThumbItemCount();
+            return m_thumbViewport.Ready(m_thumbModel);
         }
 
-        struct ThumbRanges
-        {
-            ThumbIndexRange materialized {};   // items that have tiles
-            ThumbIndexRange visible {};        // items in the viewport
-        };
-
-        // Which strip viewport the materialized range follows.
-        enum class ThumbViewportBasis
-        {
-            // The one the next layout pass settles on (a list rebuild, before
-            // its pending centering or anchor adjustment is applied).
-            Expected,
-            // The scroll offset the frame being rendered presents.
-            Presented,
-        };
-
-        // The model indices that have tiles: the items in the strip viewport
-        // plus a prefetch margin of at most ThumbStripLayout::kMaxPrefetchItems
-        // items on each side (ThumbStripLayout::MaterializeRange), so
-        // far-offscreen items have neither a tile nor a decode request. Before
-        // the first layout pass: the selection and the margin around it.
+        // The model indices that have tiles (ThumbStripViewport::Ranges).
         ThumbRanges MaterializedThumbRange(size_t selectedIndex, ThumbViewportBasis basis) const
         {
-            ThumbRanges ranges {};
-            if (!ThumbLayoutReady())
-            {
-                return ranges;
-            }
-            float left = 0.0f;
-            float width = 0.0f;
-            if (!ThumbViewport(left, width))
-            {
-                const auto [first, last] = m_thumbLayout.RangeAround((selectedIndex < ThumbItemCount()) ? selectedIndex : 0);
-                ranges.materialized = { first, last };
-                return ranges;
-            }
-            if (basis == ThumbViewportBasis::Expected)
-            {
-                left = m_thumbScroll.ExpectedLeft(m_thumbModel, m_thumbLayout, left, width, selectedIndex);
-            }
-            const auto [first, last] = m_thumbLayout.MaterializeRange(left, left + width);
-            const auto [visibleFirst, visibleLast] = m_thumbLayout.Range(left, left + width);
-            ranges.materialized = { first, last };
-            ranges.visible = { visibleFirst, visibleLast };
-            return ranges;
+            return m_thumbViewport.Ranges(m_thumbModel, ThumbViewport(), selectedIndex, basis);
         }
 
         // Binds tiles for MaterializedThumbRange(), highlighting `selectedIndex`.
@@ -487,7 +446,7 @@ namespace
         void SettleThumbStripGeometry()
         {
             const auto scroll = m_thumbPane ? m_thumbPane->Scroll() : nullptr;
-            if (!scroll || !(m_thumbArrangePending || m_thumbScroll.Pending()))
+            if (!scroll || !m_thumbViewport.SettlePending())
             {
                 return;
             }
@@ -500,19 +459,25 @@ namespace
             ApplyThumbScrollAfterArrange();
         }
 
-        // The strip viewport in panel coordinates: [left, left + width).
-        bool ThumbViewport(float& left, float& width) const
+        // The strip viewport in panel coordinates; none before the first
+        // layout pass.
+        std::optional<ThumbViewportSpan> ThumbViewport() const
         {
             const auto scroll = m_thumbPane ? m_thumbPane->Scroll() : nullptr;
             const auto panel = m_thumbPane ? m_thumbPane->Panel() : nullptr;
             if (!scroll || !panel)
             {
-                return false;
+                return std::nullopt;
             }
             const D2D1_RECT_F view = scroll->LayoutRect();
-            width = view.right - view.left;
-            left = view.left + scroll->ScrollX() - panel->LayoutRect().left;
-            return width > 1.0f;
+            const ThumbViewportSpan span {
+                view.left + scroll->ScrollX() - panel->LayoutRect().left,
+                view.right - view.left };
+            if (span.width <= 1.0f)
+            {
+                return std::nullopt;
+            }
+            return span;
         }
 
         // Client rectangle of item `index`, as the panel arranges it.
@@ -520,8 +485,8 @@ namespace
         {
             const D2D1_RECT_F panel = m_thumbPane->Panel()->LayoutRect();
             return D2D1::RectF(
-                panel.left + m_thumbLayout.Start(index), panel.top,
-                panel.left + m_thumbLayout.End(index), panel.bottom);
+                panel.left + m_thumbViewport.Layout().Start(index), panel.top,
+                panel.left + m_thumbViewport.Layout().End(index), panel.bottom);
         }
 
         std::wstring ThumbItemKey(size_t index) const
@@ -550,20 +515,14 @@ namespace
             {
                 extents.push_back(ThumbItemExtent(m_thumbModel.At(i)));
             }
-            m_thumbLayout.Reset(std::move(extents),
+            m_thumbViewport.Rebuild(std::move(extents),
                 ImageBrowserThumbnailPane::kItemSpacing, ImageBrowserThumbnailPane::kPanelPadding);
-            m_thumbArrangePending = true;
         }
 
         // Remembers the anchor before extents change (once per layout pass).
         void CaptureThumbAnchor()
         {
-            float left = 0.0f;
-            float width = 0.0f;
-            if (ThumbViewport(left, width))
-            {
-                m_thumbScroll.CaptureAnchor(m_thumbModel, m_thumbLayout, left, width, m_selectedIndex);
-            }
+            m_thumbViewport.CaptureAnchor(m_thumbModel, ThumbViewport(), m_selectedIndex);
         }
 
         void OnThumbImageAspect(const std::wstring& key, float aspect)
@@ -573,13 +532,11 @@ namespace
                 return;
             }
             const auto index = m_thumbModel.IndexOf(key);
-            if (!index || !ThumbLayoutReady())
+            if (!index || !m_thumbViewport.SetExtent(m_thumbModel, *index,
+                    ThumbStripLayout::ImageExtent(m_thumbH, aspect, kThumbTileMargin), ThumbViewport(), m_selectedIndex))
             {
                 return;
             }
-            CaptureThumbAnchor();
-            m_thumbLayout.SetExtent(*index, ThumbStripLayout::ImageExtent(m_thumbH, aspect, kThumbTileMargin));
-            m_thumbArrangePending = true;
             if (BackplateRef() != nullptr)
             {
                 DeferredRenderScope::RequestLayout(BackplateRef());
@@ -588,15 +545,9 @@ namespace
 
         void ApplyThumbScrollAfterArrange()
         {
-            m_thumbArrangePending = false;
             const auto scroll = m_thumbPane ? m_thumbPane->Scroll() : nullptr;
-            float left = 0.0f;
-            float width = 0.0f;
-            if (!scroll || !ThumbLayoutReady() || !ThumbViewport(left, width))
-            {
-                return;
-            }
-            const ThumbStripScroll::Adjustment adjustment = m_thumbScroll.Take(m_thumbModel, m_thumbLayout, left, width);
+            const ThumbStripScroll::Adjustment adjustment =
+                m_thumbViewport.TakeAfterArrange(m_thumbModel, scroll ? ThumbViewport() : std::nullopt);
             if (adjustment.kind == ThumbStripScroll::Adjustment::Kind::CenterSelection)
             {
                 if (m_selectedIndex < ThumbItemCount())
@@ -991,19 +942,16 @@ namespace
         // Runs every frame over the materialized tiles only.
         void UpdateThumbLoadPriorities()
         {
-            float left = 0.0f;
-            float width = 0.0f;
-            if (!ThumbLayoutReady() || !ThumbViewport(left, width))
+            const auto visible = m_thumbViewport.VisibleRange(m_thumbModel, ThumbViewport());
+            if (!visible)
             {
                 return;
             }
-            const auto [first, last] = m_thumbLayout.Range(left, left + width);
-            const ThumbIndexRange visible { first, last };
             for (const ThumbTile& tile : m_thumbTiles.Tiles())
             {
                 if (tile.image)
                 {
-                    tile.image->SetLoadPriority(visible.Contains(tile.index) ? ImageCore::RequestPriority::Visible : ImageCore::RequestPriority::Prefetch);
+                    tile.image->SetLoadPriority(visible->Contains(tile.index) ? ImageCore::RequestPriority::Visible : ImageCore::RequestPriority::Prefetch);
                 }
             }
         }
@@ -1011,27 +959,16 @@ namespace
         // Items fully inside the viewport (at least 1).
         size_t PagingStepFromThumbViewport() const
         {
-            float left = 0.0f;
-            float width = 0.0f;
-            if (!ThumbLayoutReady() || !ThumbViewport(left, width))
+            if (const auto full = m_thumbViewport.FullyVisibleCount(m_thumbModel, ThumbViewport()))
             {
-                if (m_thumbPane == nullptr)
-                {
-                    return 1;
-                }
-                const float itemExtent = (std::max)(1.0f, m_thumbW + m_thumbOuterSpacing);
-                return m_thumbPane->PagingStep(itemExtent);
+                return *full;
             }
-            const auto [first, last] = m_thumbLayout.Range(left, left + width);
-            size_t full = 0;
-            for (size_t i = first; i < last; ++i)
+            if (m_thumbPane == nullptr)
             {
-                if (m_thumbLayout.Start(i) >= left - 0.5f && m_thumbLayout.End(i) <= left + width + 0.5f)
-                {
-                    ++full;
-                }
+                return 1;
             }
-            return (std::max)(static_cast<size_t>(1), full);
+            const float itemExtent = (std::max)(1.0f, m_thumbW + m_thumbOuterSpacing);
+            return m_thumbPane->PagingStep(itemExtent);
         }
 
         bool OnFileDrop(const std::wstring& path, const POINT& clientPt) override
@@ -1907,7 +1844,7 @@ namespace
             FIC2_LOG_STEP(t_build, "[BuildUi] ImageBrowserThumbnailPane::Build");
             if (auto strip = m_thumbPane->StripPanel())
             {
-                strip->SetLayout(&m_thumbLayout);
+                strip->SetLayout(&m_thumbViewport.Layout());
                 strip->SetTiles(&m_thumbTiles);
                 strip->SetOnBeforeRenderTiles([this]()
                 {
@@ -2258,9 +2195,9 @@ namespace
                 // Before the next layout pass (list or extents just rebuilt) the
                 // panel does not match the layout yet: center when it does.
                 D2D1_RECT_F stripRect {};
-                if (m_thumbArrangePending || !ThumbLayoutReady() || !m_thumbPane->TryGetStripRect(stripRect))
+                if (m_thumbViewport.ArrangePending() || !ThumbLayoutReady() || !m_thumbPane->TryGetStripRect(stripRect))
                 {
-                    m_thumbScroll.RequestCenter();
+                    m_thumbViewport.RequestCenter();
                     return;
                 }
                 if (auto scroll = m_thumbPane->Scroll())
@@ -2771,7 +2708,7 @@ namespace
                 previousSelectedKey, ThumbItemKey(selectIndex), hasItems);
             if (centerSelection)
             {
-                m_thumbScroll.RequestCenter();
+                m_thumbViewport.RequestCenter();
             }
             MaterializeThumbTiles(selectIndex);
             FIC2_LOG_STEP(t_rebuild, "[RebuildImmediate] MaterializeThumbTiles");
@@ -3411,9 +3348,7 @@ namespace
         Floar::VirtualPath m_progressivePreferSelectPath {};
         std::wstring m_thumbPreferKey {};   // see ResolveThumbPreferKey
         ThumbItemModel m_thumbModel {};   // the strip's items (committed); a progressive listing is staged in it
-        ThumbStripLayout m_thumbLayout {};  // geometry of m_thumbModel's items (see ApplyThumbScrollAfterArrange)
-        ThumbStripScroll m_thumbScroll {};  // the scroll adjustment of the next layout pass
-        bool m_thumbArrangePending { false };
+        ThumbStripViewport m_thumbViewport {};  // geometry of m_thumbModel's items and the next layout pass's scroll adjustment
         bool m_thumbKeepScrollOnSelect { false };   // see RebuildThumbListImmediate
         bool m_progressiveUiDirty { false };
         bool m_progressiveLoadCompleted { false };
