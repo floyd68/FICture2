@@ -5,6 +5,7 @@
 #include "FD2D/Spinner.h"
 #include "ImageAlphaPresentation.h"
 #include "ImageAsyncBinding.h"
+#include "ImageBrowserMainImageView.h"
 #include "ImagePresentationRecovery.h"
 #include "ImageSourceIdentity.h"
 #include "ImageViewTypes.h"
@@ -65,10 +66,10 @@ public:
     bool LoadingSpinnerEnabled() const { return m_loadingSpinnerEnabled; }
 
     void SetZoomScale(float scale);
-    float ZoomScale() const { return m_zoomScale; }
+    float ZoomScale() const { return m_view.Zoom(); }
     void ResetZoom();
     void SetZoomStiffness(float stiffness);
-    float ZoomStiffness() const { return m_zoomStiffness; }
+    float ZoomStiffness() const { return m_view.Stiffness(); }
     void AdvanceZoomAnimation(unsigned long long nowMs);
 
     ImageLoadedInfo GetLoadedInfo() const;
@@ -156,6 +157,8 @@ private:
     bool IsBetweenRenderPasses() const;
     bool HasStagedContentForCurrentRequest() const;
     bool TryGetContentSize(D2D1_SIZE_F& outSize) const;
+    // The rectangles the pan is clamped against; none without content or a layout.
+    std::optional<MainImageView::PanBounds> PanBounds() const;
     void ClampPanToVisible();
     bool HasDisplayedContentForCurrentPath() const;
     uint64_t DeviceGeneration() const;
@@ -227,27 +230,7 @@ private:
     ClickHandler m_onClick {};
     bool m_loadingSpinnerEnabled { true };
 
-    float m_zoomScale { 1.0f };
-    float m_targetZoomScale { 1.0f };
-    float m_zoomVelocity { 0.0f };
-    unsigned long long m_lastZoomAnimMs { 0 };
-    float m_zoomStiffness { 100.0f };
-
-    float m_panX { 0.0f };
-    float m_panY { 0.0f };
-    bool m_panning { false };
-    bool m_panArmed { false };
-    float m_panStartX { 0.0f };
-    float m_panStartY { 0.0f };
-    float m_panStartOffsetX { 0.0f };
-    float m_panStartOffsetY { 0.0f };
-
-    bool m_pointerZoomActive { false };
-    float m_pointerZoomStartZoom { 1.0f };
-    float m_pointerZoomStartPanX { 0.0f };
-    float m_pointerZoomStartPanY { 0.0f };
-    float m_pointerZoomMouseX { 0.0f };
-    float m_pointerZoomMouseY { 0.0f };
+    MainImageView m_view {};   // zoom, pan, rotation and the drag / wheel gestures
 
     ViewChangedHandler m_onViewChanged {};
     PresentedPathHandler m_onPresentedPathChanged {};
@@ -260,5 +243,4 @@ private:
     // Single place where the presented path changes; notifies the owner.
     void SetLoadedFilePath(const std::wstring& path);
     bool m_suppressViewNotify { false };
-    int m_rotationQuarters { 0 };
 };
