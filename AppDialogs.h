@@ -2,7 +2,9 @@
 
 #include <d2d1.h>
 #include <windows.h>
+#include <commctrl.h>
 
+#include <functional>
 #include <memory>
 #include <string>
 #include <vector>
@@ -25,6 +27,13 @@ public:
     virtual void ShowAbout(HWND owner) = 0;
 
     static std::shared_ptr<AppDialogs> Native();
+
+    // The About dialog: builds its content and hands it to `show`
+    // (TaskDialogIndirect natively) and returns what `show` returns. The icon
+    // in the content is loaded for this call and released when `show`
+    // returns, whatever it returns.
+    using ShowTaskDialog = std::function<HRESULT(const TASKDIALOGCONFIG&)>;
+    static HRESULT ShowAboutWith(HWND owner, const ShowTaskDialog& show);
 
     // The open-file filter: "Supported images (*.a;*.b)" then "All files
     // (*.*)", each as a description/pattern pair, double-null terminated.

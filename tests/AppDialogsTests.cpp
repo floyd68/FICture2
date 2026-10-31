@@ -2,6 +2,9 @@
 
 #include "AppDialogs.h"
 
+#include <windows.h>
+
+#include <cstdio>
 #include <filesystem>
 #include <string>
 #include <vector>
@@ -62,4 +65,47 @@ FIC2_TEST(AppDialogs_InitialDirIsAnExistingFolder)
     FIC2_CHECK(AppDialogs::InitialDir(file.wstring()).empty());
     std::error_code ec;
     std::filesystem::remove(file, ec);
+}
+
+// The About dialog's icon is loaded for one dialog and released when it
+// returns (also when it fails), so repeated About dialogs keep no icons.
+FIC2_TEST(AppDialogs_AboutReleasesItsIcon)
+{
+    const HANDLE process = GetCurrentProcess();
+    int shown = 0;
+    int iconsValidWhileShown = 0;
+    const auto show = [&](HRESULT result)
+    {
+        return [&, result](const TASKDIALOGCONFIG& config)
+        {
+            ++shown;
+            FIC2_CHECK(config.cbSize == sizeof(TASKDIALOGCONFIG));
+            FIC2_CHECK((config.dwFlags & TDF_USE_HICON_MAIN) != 0);
+            FIC2_CHECK(std::wstring(config.pszWindowTitle) == L"About FICture2");
+            FIC2_CHECK(std::wstring(config.pszContent).find(L"Version: ") == 0);
+            ICONINFO info {};
+            if (config.hMainIcon != nullptr && GetIconInfo(config.hMainIcon, &info))
+            {
+                ++iconsValidWhileShown;
+                DeleteObject(info.hbmColor);
+                DeleteObject(info.hbmMask);
+            }
+            return result;
+        };
+    };
+
+    // The first call may create per-process USER state; count from after it.
+    FIC2_CHECK(AppDialogs::ShowAboutWith(nullptr, show(S_OK)) == S_OK);
+    const DWORD before = GetGuiResources(process, GR_USEROBJECTS);
+    for (int i = 0; i < 25; ++i)
+    {
+        FIC2_CHECK(AppDialogs::ShowAboutWith(nullptr, show(S_OK)) == S_OK);
+        FIC2_CHECK(AppDialogs::ShowAboutWith(nullptr, show(E_FAIL)) == E_FAIL);
+    }
+    const DWORD after = GetGuiResources(process, GR_USEROBJECTS);
+
+    FIC2_CHECK(shown == 51);
+    FIC2_CHECK(iconsValidWhileShown == 51);   // the dialog gets the app icon
+    std::printf("  USER objects: %lu before, %lu after 50 About dialogs\n", before, after);
+    FIC2_CHECK(after == before);
 }
