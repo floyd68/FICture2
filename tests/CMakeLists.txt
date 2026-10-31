@@ -32,6 +32,7 @@ add_executable(FICture2Tests
     ThumbStripScrollTests.cpp
     ThumbStripViewportTests.cpp
     ThumbStripSizingTests.cpp
+    TypeToSelectTests.cpp
     ThumbListingSessionTests.cpp
     ImageBrowserSessionPlanTests.cpp
     ThumbPayloadCacheTests.cpp
@@ -181,6 +182,7 @@ fic2_add_test_group(ThumbStripLayout ThumbStripLayout_)
 fic2_add_test_group(ThumbStripScroll ThumbStripScroll_)
 fic2_add_test_group(ThumbStripViewport ThumbStripViewport_)
 fic2_add_test_group(ThumbStripSizing ThumbStripSizing_)
+fic2_add_test_group(TypeToSelect TypeToSelect_)
 fic2_add_test_group(ThumbListingSession ThumbListingSession_)
 fic2_add_test_group(ImageBrowserSessionPlan ImageBrowserSessionPlan_)
 fic2_add_test_group(ThumbPayloadCache ThumbPayloadCache_)

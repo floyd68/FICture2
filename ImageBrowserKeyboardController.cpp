@@ -139,10 +139,7 @@ bool ImageBrowserKeyboardController::HandleTypeToSelect(
         return false;
     }
 
-    if (nowMs - state.lastInputMs > 1200)
-    {
-        state.query.clear();
-    }
+    ExpireTypeToSelect(nowMs, state);
 
     if (IsNavigationOrSystemKey(event.keyCode))
     {
@@ -155,6 +152,29 @@ bool ImageBrowserKeyboardController::HandleTypeToSelect(
         return false;
     }
 
+    TypeToSelectCharacter(ch, nowMs, itemCount, currentSelection, labelAt, selectIndex, state);
+    return true;
+}
+
+void ImageBrowserKeyboardController::ExpireTypeToSelect(unsigned long long nowMs, TypeToSelectState& state)
+{
+    if (nowMs - state.lastInputMs > kTypeToSelectTimeoutMs)
+    {
+        state.query.clear();
+    }
+}
+
+void ImageBrowserKeyboardController::TypeToSelectCharacter(
+    wchar_t ch,
+    unsigned long long nowMs,
+    size_t itemCount,
+    size_t currentSelection,
+    const std::function<std::wstring(size_t)>& labelAt,
+    const std::function<void(size_t)>& selectIndex,
+    TypeToSelectState& state)
+{
+    ExpireTypeToSelect(nowMs, state);
+
     std::wstring nextQuery = state.query;
     nextQuery.push_back(ch);
     if (!TrySelectByQuery(nextQuery, itemCount, currentSelection, labelAt, selectIndex) && nextQuery.size() > 1)
@@ -165,40 +185,4 @@ bool ImageBrowserKeyboardController::HandleTypeToSelect(
 
     state.query = nextQuery;
     state.lastInputMs = nowMs;
-    return true;
-}
-
-bool ImageBrowserKeyboardController::HandleTypeToSelectWithStateStorage(
-    UINT keyCode,
-    UINT scanCode,
-    bool control,
-    bool alt,
-    unsigned long long nowMs,
-    size_t itemCount,
-    size_t currentSelection,
-    const std::function<std::wstring(size_t)>& labelAt,
-    const std::function<void(size_t)>& selectIndex,
-    std::wstring& ioQuery,
-    unsigned long long& ioLastInputMs)
-{
-    KeyEvent keyEvent {};
-    keyEvent.keyCode = keyCode;
-    keyEvent.scanCode = scanCode;
-    keyEvent.control = control;
-    keyEvent.alt = alt;
-
-    TypeToSelectState state {};
-    state.query = ioQuery;
-    state.lastInputMs = ioLastInputMs;
-    const bool handled = HandleTypeToSelect(
-        keyEvent,
-        nowMs,
-        itemCount,
-        currentSelection,
-        labelAt,
-        selectIndex,
-        state);
-    ioQuery = state.query;
-    ioLastInputMs = state.lastInputMs;
-    return handled;
 }
