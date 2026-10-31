@@ -11,11 +11,21 @@
 #include <shlobj.h>
 
 #include <filesystem>
+#include <type_traits>
 #include <iterator>
 #include <sstream>
 
 namespace
 {
+    struct IconDeleter
+    {
+        void operator()(HICON icon) const
+        {
+            DestroyIcon(icon);
+        }
+    };
+    using UniqueIcon = std::unique_ptr<std::remove_pointer_t<HICON>, IconDeleter>;
+
     class NativeDialogs final : public AppDialogs
     {
     public:
@@ -121,29 +131,38 @@ namespace
             icc.dwICC = ICC_STANDARD_CLASSES;
             InitCommonControlsEx(&icc);
 
-            const HINSTANCE instance = GetModuleHandleW(nullptr);
-            const HICON appIcon = static_cast<HICON>(
-                LoadImageW(instance, MAKEINTRESOURCEW(IDI_FICTURE2), IMAGE_ICON, 0, 0, LR_DEFAULTSIZE));
-
-            // Plain text version without hyperlinks to avoid network connection attempts
-            const wchar_t* taskDialogContent =
-                L"Version: " FICTURE2_VERSION_STRING_W L" (" FICTURE2_BUILD_FLAVOR_W L")\n"
-                L"Author: floyd Lee (floydles@gmail.com)\n"
-                L"GitHub: https://github.com/floyd68/FICture2";
-
-            TASKDIALOGCONFIG config {};
-            config.cbSize = sizeof(config);
-            config.hwndParent = owner;
-            config.dwFlags = TDF_ALLOW_DIALOG_CANCELLATION | TDF_USE_HICON_MAIN;
-            config.pszWindowTitle = L"About FICture2";
-            config.pszMainInstruction = L"FICture2";
-            config.pszContent = taskDialogContent;
-            config.dwCommonButtons = TDCBF_OK_BUTTON;
-            config.hMainIcon = appIcon;
-
-            TaskDialogIndirect(&config, nullptr, nullptr, nullptr);
+            (void)ShowAboutWith(owner, [](const TASKDIALOGCONFIG& config)
+            {
+                return TaskDialogIndirect(&config, nullptr, nullptr, nullptr);
+            });
         }
     };
+}
+
+HRESULT AppDialogs::ShowAboutWith(HWND owner, const ShowTaskDialog& show)
+{
+    // Loaded without LR_SHARED, so this call owns (and releases) the icon.
+    const HINSTANCE instance = GetModuleHandleW(nullptr);
+    const UniqueIcon appIcon { static_cast<HICON>(
+        LoadImageW(instance, MAKEINTRESOURCEW(IDI_FICTURE2), IMAGE_ICON, 0, 0, LR_DEFAULTSIZE)) };
+
+    // Plain text version without hyperlinks to avoid network connection attempts
+    const wchar_t* taskDialogContent =
+        L"Version: " FICTURE2_VERSION_STRING_W L" (" FICTURE2_BUILD_FLAVOR_W L")\n"
+        L"Author: floyd Lee (floydles@gmail.com)\n"
+        L"GitHub: https://github.com/floyd68/FICture2";
+
+    TASKDIALOGCONFIG config {};
+    config.cbSize = sizeof(config);
+    config.hwndParent = owner;
+    config.dwFlags = TDF_ALLOW_DIALOG_CANCELLATION | TDF_USE_HICON_MAIN;
+    config.pszWindowTitle = L"About FICture2";
+    config.pszMainInstruction = L"FICture2";
+    config.pszContent = taskDialogContent;
+    config.dwCommonButtons = TDCBF_OK_BUTTON;
+    config.hMainIcon = appIcon.get();
+
+    return show(config);
 }
 
 std::shared_ptr<AppDialogs> AppDialogs::Native()

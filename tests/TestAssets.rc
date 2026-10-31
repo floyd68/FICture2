@@ -1,5 +1,7 @@
-// The app's folder icons (FICture2.rc), so thumbnail tiles draw them in tests.
+// The app's folder icons (FICture2.rc), so thumbnail tiles draw them in tests,
+// and its icon (the About dialog).
 #include "Resource.h"
 
 IDR_PNG_FOLDER          RCDATA                  "assets/lucide-folder-256.png"
 IDR_PNG_FOLDER_UP       RCDATA                  "assets/lucide-folder-up-256.png"
+IDI_FICTURE2            ICON                    "F2.ico"
