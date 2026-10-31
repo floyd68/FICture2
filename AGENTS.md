@@ -84,11 +84,17 @@
   | `Floar standalone (Debug)` / `(MinSizeRel)` | `cmake -S Floar -B build-floar -A x64 -DFLOAR_BUILD_TESTS=ON`, `cmake --build build-floar --config <cfg>`, `ctest --test-dir build-floar -C <cfg> --output-on-failure` |
   | `Submodule pins on default branches` | for each first-party submodule, `git -C <sm> merge-base --is-ancestor HEAD origin/<default branch>` after a fetch |
 
-  Branch protection on `master` requires all five jobs to pass on the PR's
-  head, requires the branch to be up to date with `master`, applies to
-  administrators too, and blocks force pushes and deletion. So every change
-  reaches `master` through a PR with green checks; nothing is pushed to
-  `master` directly. The required CI checks are the build/test gate for review.
+  Branch protection on `master` enforces these rules, administrators
+  included:
+  - every change must come through a pull request; no approval is required,
+    because GitHub does not allow approving one's own PR, and review state
+    stays with labels;
+  - all five jobs must pass on the PR's head;
+  - the branch must be up to date with `master`;
+  - force pushes and deletion are blocked.
+
+  Direct pushes to `master` are therefore rejected, even for commits whose
+  checks already passed elsewhere. The required CI checks are the build/test gate for review.
   The implementer still runs the local verification above before opening the
   PR. The pin job is expected to fail on a FICture2 PR that still pins a
   submodule PR branch commit, which keeps that PR unmergeable until the re-pin
@@ -196,7 +202,8 @@ the latest `master` commit. Never start a release without this command.
    `NexusMods_Mod_Description.bbcode` against the PRs merged since the last
    `v*` tag. If they need changes, open a PR with only those docs, titled
    `Release <version>: <summary>`, and squash-merge it once its required checks
-   pass. Branch protection blocks direct pushes to `master`. Compute
+   pass. Branch protection requires a pull request, so the docs cannot be
+   pushed to `master` directly. Compute
    `<version>` from the commit count that includes the squash commit. The
    squash commit is the release commit. Never force-push `master`.
 4. **Build and publish:** build the installer with the existing scripts
