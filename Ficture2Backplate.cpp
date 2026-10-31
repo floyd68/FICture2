@@ -286,7 +286,12 @@ namespace
         // < / > : rotate left / right (Shift+comma / Shift+period)
         { VK_OEM_COMMA,  false, true, false, BrowserCommandAction::RotateLeft  },
         { VK_OEM_PERIOD, false, true, false, BrowserCommandAction::RotateRight },
-        // Ctrl+[ / Ctrl+] : previous / next DDS mip level
+    };
+
+    // KeyUp: Ctrl+[ / Ctrl+] : previous / next DDS mip level. Matched with the
+    // actual modifiers (the view chords above ignore Ctrl).
+    static const KeyChordMapEntry kKeyMipChordMap[] =
+    {
         { VK_OEM_4, true, false, false, BrowserCommandAction::MipPrevious },
         { VK_OEM_6, true, false, false, BrowserCommandAction::MipNext },
     };
@@ -1819,6 +1824,22 @@ bool Ficture2Backplate::HandleImageBrowserKeyUpCommand(
         shift,
         false,
         kKeyLifecycleChordMap,
+        POINT {},
+        m_window);
+    if (outHandled)
+    {
+        return true;
+    }
+
+    outHandled = TryDispatchMappedKeyAction(
+        this,
+        source,
+        browserOps,
+        keyCode,
+        ctrl,
+        shift,
+        alt,
+        kKeyMipChordMap,
         POINT {},
         m_window);
     if (outHandled)
