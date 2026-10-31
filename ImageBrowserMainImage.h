@@ -5,6 +5,7 @@
 #include "FD2D/Spinner.h"
 #include "ImageAlphaPresentation.h"
 #include "ImageAsyncBinding.h"
+#include "ImageBrowserMainImageLoadSession.h"
 #include "ImageBrowserMainImagePresentation.h"
 #include "ImageBrowserMainImageView.h"
 #include "ImagePresentationRecovery.h"
@@ -187,11 +188,9 @@ private:
     std::shared_ptr<FD2D::Image> m_texture {};
     std::shared_ptr<FD2D::Spinner> m_spinner {};
     ImageAsyncBinding m_binding {};
-    ImageCore::ImageRequest m_request {};
 
-    std::wstring m_filePath {};
+    MainImageLoadSession m_load {};   // what is requested (see RequestImageLoad)
     std::wstring m_loadedFilePath {};
-    std::atomic<bool> m_forceCpuDecode { false };
 
     // Last applied CPU BGRA8 payload (kept across target/device invalidation for re-upload).
     ImageAsyncBinding::Payload m_cpuPayload {};
@@ -204,12 +203,6 @@ private:
 
     MainImagePresentation m_presentation {};   // what is shown (see ApplyPresentation)
     ImageCore::AlphaUsage m_alphaUsageOverride { ImageCore::AlphaUsage::Auto };
-    bool m_selectingMip { false };
-    // Identity of the file when the current decode was requested.
-    ImageSourceIdentity m_requestIdentity {};
-    // Mip to select once a reload of a replaced source has presented mip 0
-    // (0 = none).
-    uint32_t m_mipAfterReload { 0 };
     uint64_t m_lastSeenDeviceGeneration { 0 };
     int m_channelMode { 0 };
 
