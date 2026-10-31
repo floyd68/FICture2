@@ -297,6 +297,7 @@ target_sources(FICture2 PRIVATE
     ImageViewUtil.cpp
     RecentFiles.cpp
     ViewerSettings.cpp
+    BrowserCommandMap.cpp
     ScreenshotUtil.cpp
     ShellThumbnailSource.cpp
     ThumbImageTile.cpp
