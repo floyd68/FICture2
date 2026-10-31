@@ -1,5 +1,6 @@
 #pragma once
 
+#include "AppDialogs.h"
 #include "FD2D/Backplate.h"
 #include "ImageViewTypes.h"
 #include "IpcOpenRequest.h"
@@ -107,11 +108,17 @@ public:
     // INI settings (the defaults stay).
     void SkipImageBrowserIniForTesting() { m_settings.MarkLoaded(); }
 
+    // The dialogs the window's commands open (native unless replaced).
+    AppDialogs& Dialogs() { return *m_dialogs; }
+    // Test seam: commands use `dialogs` instead of the native dialogs.
+    void SetDialogsForTesting(std::shared_ptr<AppDialogs> dialogs) { m_dialogs = std::move(dialogs); }
+
 private:
     std::shared_ptr<EventBus> m_eventBus { std::make_shared<EventBus>() };
     float m_syncedThumbStripHeight { 0.0f };
     bool m_hasSyncedThumbStripHeight { false };
     ViewerSettings m_settings {};   // shared by every image browser of this window
+    std::shared_ptr<AppDialogs> m_dialogs { AppDialogs::Native() };
     std::shared_ptr<IpcOpenQueue> m_ipcQueue {};
     std::unique_ptr<RecentFilesStore> m_recentFiles {};
     // Created with the window, disconnected when it is destroyed.

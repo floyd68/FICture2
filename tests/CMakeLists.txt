@@ -49,6 +49,7 @@ add_executable(FICture2Tests
     ViewerSettingsTests.cpp
     BackplateCommandTests.cpp
     BrowserCommandMapTests.cpp
+    AppDialogsTests.cpp
     ${PROJECT_SOURCE_DIR}/AppLog.cpp
     ${PROJECT_SOURCE_DIR}/ImageGpuResourceCache.cpp
     ${PROJECT_SOURCE_DIR}/ImageAlphaPresentation.cpp
@@ -93,6 +94,7 @@ add_executable(FICture2Tests
     ${PROJECT_SOURCE_DIR}/RecentFiles.cpp
     ${PROJECT_SOURCE_DIR}/ViewerSettings.cpp
     ${PROJECT_SOURCE_DIR}/BrowserCommandMap.cpp
+    ${PROJECT_SOURCE_DIR}/AppDialogs.cpp
     ${PROJECT_SOURCE_DIR}/ScreenshotUtil.cpp
     # The app imports Common Controls v6 entry points, which load only with its manifest.
     ${PROJECT_SOURCE_DIR}/app.manifest
@@ -180,6 +182,7 @@ fic2_add_test_group(RecentFiles RecentFiles_)
 fic2_add_test_group(ViewerSettings ViewerSettings_)
 fic2_add_test_group(BackplateCommands BackplateCommands_)
 fic2_add_test_group(BrowserCommandMap BrowserCommandMap_)
+fic2_add_test_group(AppDialogs AppDialogs_)
 fic2_add_test_group(FolderEnumeration FolderEnumeration_)
 fic2_add_test_group(FolderEnumerationForcedExit FolderEnumerationForcedExit_)
 fic2_add_test_group(ArchiveReadCancel ArchiveReadCancel_)

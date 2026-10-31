@@ -113,36 +113,6 @@ namespace
         return SnapshotBrowsers<IImageBrowserSync>(bus, source);
     }
 
-    void ShowAboutDialog(HWND hwnd)
-    {
-        INITCOMMONCONTROLSEX icc {};
-        icc.dwSize = sizeof(icc);
-        icc.dwICC = ICC_STANDARD_CLASSES;
-        InitCommonControlsEx(&icc);
-
-        const HINSTANCE instance = GetModuleHandleW(nullptr);
-        const HICON appIcon = static_cast<HICON>(
-            LoadImageW(instance, MAKEINTRESOURCEW(IDI_FICTURE2), IMAGE_ICON, 0, 0, LR_DEFAULTSIZE));
-
-        // Plain text version without hyperlinks to avoid network connection attempts
-        const wchar_t* taskDialogContent =
-            L"Version: " FICTURE2_VERSION_STRING_W L" (" FICTURE2_BUILD_FLAVOR_W L")\n"
-            L"Author: floyd Lee (floydles@gmail.com)\n"
-            L"GitHub: https://github.com/floyd68/FICture2";
-
-        TASKDIALOGCONFIG config {};
-        config.cbSize = sizeof(config);
-        config.hwndParent = hwnd;
-        config.dwFlags = TDF_ALLOW_DIALOG_CANCELLATION | TDF_USE_HICON_MAIN;
-        config.pszWindowTitle = L"About FICture2";
-        config.pszMainInstruction = L"FICture2";
-        config.pszContent = taskDialogContent;
-        config.dwCommonButtons = TDCBF_OK_BUTTON;
-        config.hMainIcon = appIcon;
-
-        TaskDialogIndirect(&config, nullptr, nullptr, nullptr);
-    }
-
     struct BrowserOpsActionEntry
     {
         BrowserCommandAction action { BrowserCommandAction::OpenImage };
@@ -175,153 +145,6 @@ namespace
         { BrowserCommandAction::MipNext, &IImageBrowserOps::BrowserCmdMipNext },
         { BrowserCommandAction::ShowImageInformation, &IImageBrowserOps::BrowserCmdShowImageInformation },
     };
-
-    std::wstring BuildSupportedImageDialogFilter()
-    {
-        const std::vector<std::wstring> exts = ImageCore::ImageDecodeDispatcher::GetSupportedExtensions();
-        std::wostringstream patternBuilder {};
-        for (size_t i = 0; i < exts.size(); ++i)
-        {
-            if (i != 0)
-            {
-                patternBuilder << L";";
-            }
-            patternBuilder << L"*" << exts[i];
-        }
-
-        std::wstring wildcardPattern = patternBuilder.str();
-        if (wildcardPattern.empty())
-        {
-            wildcardPattern = L"*.*";
-        }
-
-        std::wstring filter {};
-        filter.reserve(256 + wildcardPattern.size() * 2);
-        filter += L"Supported images (" + wildcardPattern + L")";
-        filter.push_back(L'\0');
-        filter += wildcardPattern;
-        filter.push_back(L'\0');
-        filter += L"All files (*.*)";
-        filter.push_back(L'\0');
-        filter += L"*.*";
-        filter.push_back(L'\0');
-        filter.push_back(L'\0');
-        return filter;
-    }
-
-    bool TryPickSupportedImageFile(
-        HWND ownerWindow,
-        const std::wstring& initialDir,
-        const wchar_t* title,
-        std::wstring& outFilePath)
-    {
-        wchar_t fileName[MAX_PATH] {};
-        const std::wstring filter = BuildSupportedImageDialogFilter();
-
-        OPENFILENAMEW ofn {};
-        ofn.lStructSize = sizeof(ofn);
-        ofn.hwndOwner = ownerWindow;
-        ofn.lpstrFile = fileName;
-        ofn.nMaxFile = static_cast<DWORD>(std::size(fileName));
-        ofn.lpstrFilter = filter.c_str();
-        ofn.nFilterIndex = 1;
-        ofn.Flags = OFN_FILEMUSTEXIST | OFN_PATHMUSTEXIST | OFN_EXPLORER | OFN_HIDEREADONLY;
-        ofn.lpstrTitle = (title != nullptr) ? title : L"Open Image";
-        ofn.lpstrInitialDir = initialDir.empty() ? nullptr : initialDir.c_str();
-
-        if (!GetOpenFileNameW(&ofn))
-        {
-            return false;
-        }
-
-        const std::filesystem::path chosen { fileName };
-        if (!std::filesystem::exists(chosen) || !std::filesystem::is_regular_file(chosen))
-        {
-            return false;
-        }
-
-        if (!ImageCore::DecoderRegistry::Instance().IsSupportedPath(chosen.wstring()))
-        {
-            MessageBoxW(ownerWindow, L"Selected file type is not supported.", L"FICture2", MB_OK | MB_ICONWARNING);
-            return false;
-        }
-
-        outFilePath = chosen.wstring();
-        return true;
-    }
-
-    bool TryPickFolder(HWND ownerWindow, std::wstring& outFolderPath)
-    {
-        BROWSEINFOW bi {};
-        bi.hwndOwner = ownerWindow;
-        bi.lpszTitle = L"Select Folder";
-        bi.ulFlags = BIF_RETURNONLYFSDIRS | BIF_USENEWUI | BIF_NONEWFOLDERBUTTON;
-
-        PIDLIST_ABSOLUTE pidl = SHBrowseForFolderW(&bi);
-        if (pidl == nullptr)
-        {
-            return false;
-        }
-
-        wchar_t selectedPath[MAX_PATH] {};
-        const BOOL ok = SHGetPathFromIDListW(pidl, selectedPath);
-        CoTaskMemFree(pidl);
-        if (!ok)
-        {
-            return false;
-        }
-
-        const std::filesystem::path folder { selectedPath };
-        if (!std::filesystem::exists(folder) || !std::filesystem::is_directory(folder))
-        {
-            return false;
-        }
-
-        outFolderPath = folder.wstring();
-        return true;
-    }
-
-    bool TryPickColor(HWND ownerWindow, const D2D1_COLOR_F& current, D2D1_COLOR_F& outColor)
-    {
-        static COLORREF s_custom[16] {};
-
-        CHOOSECOLORW cc {};
-        cc.lStructSize = sizeof(cc);
-        cc.hwndOwner = ownerWindow;
-        cc.lpCustColors = s_custom;
-        cc.rgbResult = RGB(
-            CommonUtil::ToByte255(current.r),
-            CommonUtil::ToByte255(current.g),
-            CommonUtil::ToByte255(current.b));
-        cc.Flags = CC_FULLOPEN | CC_RGBINIT;
-        if (!ChooseColorW(&cc))
-        {
-            return false;
-        }
-
-        outColor = D2D1::ColorF(
-            static_cast<float>(GetRValue(cc.rgbResult)) / 255.0f,
-            static_cast<float>(GetGValue(cc.rgbResult)) / 255.0f,
-            static_cast<float>(GetBValue(cc.rgbResult)) / 255.0f,
-            1.0f);
-        return true;
-    }
-
-    std::wstring ResolveInitialDialogDir(IImageBrowserOps* browserOps)
-    {
-        if (browserOps == nullptr)
-        {
-            return L"";
-        }
-
-        const std::filesystem::path candidate { browserOps->BrowserGetCurrentFolderPath() };
-        if (!candidate.empty() && std::filesystem::exists(candidate) && std::filesystem::is_directory(candidate))
-        {
-            return candidate.wstring();
-        }
-
-        return L"";
-    }
 
     void ExecuteBrowserCommandAction(
         Ficture2Backplate* backplate,
@@ -373,7 +196,7 @@ namespace
         if (action == BrowserCommandAction::OpenFolder)
         {
             std::wstring selectedFolder {};
-            if (!TryPickFolder(ownerWindow, selectedFolder))
+            if (!backplate->Dialogs().PickFolder(ownerWindow, selectedFolder))
             {
                 return true;
             }
@@ -383,9 +206,9 @@ namespace
         }
 
         std::wstring selectedPath {};
-        const std::wstring initialDir = ResolveInitialDialogDir(browserOps);
+        const std::wstring initialDir = AppDialogs::InitialDir(browserOps->BrowserGetCurrentFolderPath());
         const wchar_t* title = (action == BrowserCommandAction::OpenNewImage) ? L"Open New Image" : L"Open Image";
-        if (!TryPickSupportedImageFile(ownerWindow, initialDir, title, selectedPath))
+        if (!backplate->Dialogs().PickImageFile(ownerWindow, initialDir, title, selectedPath))
         {
             return true;
         }
@@ -439,7 +262,7 @@ namespace
             ? backplate->ClearColor()
             : backplate->FocusedBackgroundColor();
         D2D1_COLOR_F nextColor {};
-        if (!TryPickColor(ownerWindow, current, nextColor))
+        if (!backplate->Dialogs().PickColor(ownerWindow, current, nextColor))
         {
             return true;
         }
@@ -571,11 +394,11 @@ namespace
         return true;
     }
 
-    bool TryExecuteSystemAction(BrowserCommandAction action, HWND ownerWindow)
+    bool TryExecuteSystemAction(Ficture2Backplate& backplate, BrowserCommandAction action, HWND ownerWindow)
     {
         if (action == BrowserCommandAction::ShowAbout)
         {
-            ShowAboutDialog(ownerWindow);
+            backplate.Dialogs().ShowAbout(ownerWindow);
             return true;
         }
 
@@ -648,7 +471,7 @@ namespace
             return;
         }
 
-        (void)TryExecuteSystemAction(action, ownerWindow);
+        (void)TryExecuteSystemAction(*backplate, action, ownerWindow);
     }
 
 }
