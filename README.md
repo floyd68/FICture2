@@ -19,6 +19,7 @@ FICture2 is available on NexusMods: [https://www.nexusmods.com/fallout4/mods/100
 
 ## What's New in v1.7
 
+- **Fixed:** **Ctrl + [** / **Ctrl + ]** step to the previous / next DDS mip level again, as documented: the keys were matched as if Ctrl were not held and never reached the mip commands (right-click **Mip Level** was unaffected)
 - **Fixed:** Thumbnails keep appearing while the window is dragged by its title bar: work that finished during the drag (thumbnails, a compare pane opened from another window) used to be drawn only after the mouse was released. Animations keep running during the drag, and an idle window still draws nothing
 - **Fixed:** Photos taken with the camera turned (an EXIF orientation, as phones and most cameras write it) are shown upright, as in Explorer and Photos, instead of sideways or upside down: the main image, its thumbnail and the size shown in the info bar all follow the photo's orientation. Rotating with the rotate commands starts from the upright photo, and resetting the rotation returns to it
 - **Fixed:** The selected thumbnail's outline no longer runs under the thumbnail strip's scrollbar or shows below it, and is no longer cut off at the top of the strip: the scrollbar now has its own space below the thumbnails, and the thumbnails leave room for the whole outline (including its pop and breathe). Thumbnails are therefore a little smaller at the same strip height, and the strip can be dragged a little taller so the largest thumbnails still fit

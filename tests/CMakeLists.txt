@@ -47,6 +47,7 @@ add_executable(FICture2Tests
     IniStoreTests.cpp
     RecentFilesStoreTests.cpp
     ViewerSettingsTests.cpp
+    BackplateCommandTests.cpp
     ${PROJECT_SOURCE_DIR}/AppLog.cpp
     ${PROJECT_SOURCE_DIR}/ImageGpuResourceCache.cpp
     ${PROJECT_SOURCE_DIR}/ImageAlphaPresentation.cpp
@@ -175,6 +176,7 @@ fic2_add_test_group(RenderScheduling RenderScheduling_)
 fic2_add_test_group(IniStore IniStore_)
 fic2_add_test_group(RecentFiles RecentFiles_)
 fic2_add_test_group(ViewerSettings ViewerSettings_)
+fic2_add_test_group(BackplateCommands BackplateCommands_)
 fic2_add_test_group(FolderEnumeration FolderEnumeration_)
 fic2_add_test_group(FolderEnumerationForcedExit FolderEnumerationForcedExit_)
 fic2_add_test_group(ArchiveReadCancel ArchiveReadCancel_)
