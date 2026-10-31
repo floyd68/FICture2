@@ -31,6 +31,7 @@ add_executable(FICture2Tests
     ThumbStripLayoutTests.cpp
     ThumbStripScrollTests.cpp
     ThumbStripViewportTests.cpp
+    ThumbStripSizingTests.cpp
     ThumbListingSessionTests.cpp
     ImageBrowserSessionPlanTests.cpp
     ThumbPayloadCacheTests.cpp
@@ -68,6 +69,7 @@ add_executable(FICture2Tests
     ${PROJECT_SOURCE_DIR}/ImageBrowserThumbLayout.cpp
     ${PROJECT_SOURCE_DIR}/ImageBrowserThumbScroll.cpp
     ${PROJECT_SOURCE_DIR}/ImageBrowserThumbViewport.cpp
+    ${PROJECT_SOURCE_DIR}/ImageBrowserThumbStripSizing.cpp
     ${PROJECT_SOURCE_DIR}/ImageBrowserAssets.cpp
     ${PROJECT_SOURCE_DIR}/ThumbImageTile.cpp
     ${PROJECT_SOURCE_DIR}/ThumbNavTile.cpp
@@ -178,6 +180,7 @@ fic2_add_test_group(ThumbItemModel ThumbItemModel_)
 fic2_add_test_group(ThumbStripLayout ThumbStripLayout_)
 fic2_add_test_group(ThumbStripScroll ThumbStripScroll_)
 fic2_add_test_group(ThumbStripViewport ThumbStripViewport_)
+fic2_add_test_group(ThumbStripSizing ThumbStripSizing_)
 fic2_add_test_group(ThumbListingSession ThumbListingSession_)
 fic2_add_test_group(ImageBrowserSessionPlan ImageBrowserSessionPlan_)
 fic2_add_test_group(ThumbPayloadCache ThumbPayloadCache_)
