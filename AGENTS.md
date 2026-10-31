@@ -84,11 +84,21 @@
   | `Floar standalone (Debug)` / `(MinSizeRel)` | `cmake -S Floar -B build-floar -A x64 -DFLOAR_BUILD_TESTS=ON`, `cmake --build build-floar --config <cfg>`, `ctest --test-dir build-floar -C <cfg> --output-on-failure` |
   | `Submodule pins on default branches` | for each first-party submodule, `git -C <sm> merge-base --is-ancestor HEAD origin/<default branch>` after a fetch |
 
-  The pin job is expected to fail on a FICture2 PR that still pins a submodule
-  PR branch commit; it turns green after the re-pin in review step 6. Until
-  branch protection requires these checks (once they are stable), the local
-  Debug and MinSizeRel builds above stay required and the reviewer re-runs
-  them; after that, the required CI checks replace this rule.
+  Branch protection on `master` enforces these rules, administrators
+  included:
+  - every change must come through a pull request; no approval is required,
+    because GitHub does not allow approving one's own PR, and review state
+    stays with labels;
+  - all five jobs must pass on the PR's head;
+  - the branch must be up to date with `master`;
+  - force pushes and deletion are blocked.
+
+  Direct pushes to `master` are therefore rejected, even for commits whose
+  checks already passed elsewhere. The required CI checks are the build/test gate for review.
+  The implementer still runs the local verification above before opening the
+  PR. The pin job is expected to fail on a FICture2 PR that still pins a
+  submodule PR branch commit, which keeps that PR unmergeable until the re-pin
+  in review step 6.
 - GUI behaviour (rendering, input, device loss, drag & drop, IPC between
   instances, file associations) is verified by automated checks first:
   - unit tests, including the windowless/software-target fixtures with pixel
@@ -141,11 +151,13 @@
    context (a reviewer without the implementation conversation, e.g. a separate
    agent given only the diff and the issue), checking the diff against the
    issue's acceptance criteria. Include submodule diffs referenced by pin bumps.
-2. Re-run the required checks (local builds, plus the PR's CI run); a failing
-   build, test, or CI job is a review failure (except the pin job before the
-   re-pin in step 6).
-3. Check the branch is up to date with `master` and merges cleanly, and that
-   every bumped submodule commit exists on that submodule's remote.
+2. The PR's required CI checks must pass; a failing build, test, or CI job is
+   a review failure (except the pin job before the re-pin in step 6). Re-run
+   locally only what CI does not cover, such as the scripted app runs or
+   checks that need a GPU.
+3. The branch must be up to date with `master` (branch protection enforces it;
+   update the branch and wait for its new CI run if needed) and merge cleanly,
+   and every bumped submodule commit must exist on that submodule's remote.
 4. **Problems found:** leave review comments on the PR (inline where possible),
    add `changes-requested`, keep the PR open. Problems outside the PR's scope go
    into a new issue (or the relevant existing issue) instead.
@@ -188,9 +200,12 @@ the latest `master` commit. Never start a release without this command.
    never in the release commit.
 3. **Release docs:** check README's `What's New` section and
    `NexusMods_Mod_Description.bbcode` against the PRs merged since the last
-   `v*` tag; if they need changes, commit only those docs on `master` as
-   `Release <version>: <summary>`, computing `<version>` from the commit count
-   that includes this commit. Never force-push `master`.
+   `v*` tag. If they need changes, open a PR with only those docs, titled
+   `Release <version>: <summary>`, and squash-merge it once its required checks
+   pass. Branch protection requires a pull request, so the docs cannot be
+   pushed to `master` directly. Compute
+   `<version>` from the commit count that includes the squash commit. The
+   squash commit is the release commit. Never force-push `master`.
 4. **Build and publish:** build the installer with the existing scripts
    (`build_winget.bat` + `pack_winget.bat` for the Inno Setup installer
    `FICture2-Setup-<MAJOR.MINOR>.exe`), tag `v<version>` on the release commit,
