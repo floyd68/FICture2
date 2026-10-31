@@ -8,6 +8,7 @@
 #include "IniStoreLog.h"
 #include "FD2D/Core.h"
 #include "AppSetup.h"
+#include "BrowserCommandMap.h"
 #include "Resource.h"
 #include "Version.h"
 #include "ImageBrowser.h"
@@ -142,158 +143,10 @@ namespace
         TaskDialogIndirect(&config, nullptr, nullptr, nullptr);
     }
 
-    enum class BrowserCommandAction
-    {
-        OpenImage,
-        OpenFolder,
-        OpenImageSplitNew,
-        OpenNewImage,
-        Close,
-        ActivateSelected,
-        SelectPrevious,
-        SelectNext,
-        SelectFirst,
-        SelectLast,
-        PagePrevious,
-        PageNext,
-        NavigateUp,
-        FitToScreen,
-        BackgroundColor,
-        FocusedBackgroundColor,
-        ToggleDirectories,
-        ToggleAlpha,
-        ToggleSampling,
-        RotateLeft,
-        RotateRight,
-        Rotate180,
-        RotateReset,
-        MipPrevious,
-        MipNext,
-        ShowImageInformation,
-        ShowInExplorerAtPoint,
-        ShowAbout,
-        SaveScreenshot,
-        ClearRecent,
-        RegisterAssociations,
-        UnregisterAssociations,
-        RegisterThumbnailProvider,
-        UnregisterThumbnailProvider
-    };
-
-    struct CommandMapEntry
-    {
-        UINT id { 0 };
-        BrowserCommandAction action { BrowserCommandAction::OpenImage };
-    };
-
-    struct KeyChordMapEntry
-    {
-        UINT key { 0 };
-        bool ctrl { false };
-        bool shift { false };
-        bool alt { false };
-        BrowserCommandAction action { BrowserCommandAction::OpenImage };
-    };
-
     struct BrowserOpsActionEntry
     {
         BrowserCommandAction action { BrowserCommandAction::OpenImage };
         void (IImageBrowserOps::*invoke)() { nullptr };
-    };
-
-    // Centralized command/key policy maps.
-    // Keep this section as the single source of truth for user-facing command routing.
-
-    // Context menu: file/viewer lifecycle commands.
-    static const CommandMapEntry kContextLifecycleMap[] =
-    {
-        { IDM_CTX_OPEN_IMAGE, BrowserCommandAction::OpenImage },
-        { IDM_CTX_OPEN_FOLDER, BrowserCommandAction::OpenFolder },
-        { IDM_CTX_OPEN_NEW_IMAGE, BrowserCommandAction::OpenNewImage },
-        { IDM_CTX_CLOSE, BrowserCommandAction::Close },
-    };
-
-    // Context menu: view/appearance commands.
-    static const CommandMapEntry kContextViewAppearanceMap[] =
-    {
-        { IDM_CTX_FIT_TO_SCREEN, BrowserCommandAction::FitToScreen },
-        { IDM_CTX_BACKGROUND_COLOR, BrowserCommandAction::BackgroundColor },
-        { IDM_CTX_FOCUSED_BACKGROUND_COLOR, BrowserCommandAction::FocusedBackgroundColor },
-        { IDM_CTX_TOGGLE_DIRECTORIES, BrowserCommandAction::ToggleDirectories },
-        { IDM_CTX_TOGGLE_ALPHA, BrowserCommandAction::ToggleAlpha },
-        { IDM_CTX_TOGGLE_SAMPLING, BrowserCommandAction::ToggleSampling },
-        { IDM_CTX_ROTATE_LEFT,  BrowserCommandAction::RotateLeft  },
-        { IDM_CTX_ROTATE_RIGHT, BrowserCommandAction::RotateRight },
-        { IDM_CTX_ROTATE_180,   BrowserCommandAction::Rotate180   },
-        { IDM_CTX_ROTATE_RESET, BrowserCommandAction::RotateReset },
-    };
-
-    // Context menu: integration/system commands.
-    static const CommandMapEntry kContextIntegrationMap[] =
-    {
-        { IDM_CTX_SHOW_IN_EXPLORER, BrowserCommandAction::ShowInExplorerAtPoint },
-        { IDM_CTX_SAVE_SCREENSHOT, BrowserCommandAction::SaveScreenshot },
-        { IDM_CTX_CLEAR_RECENT, BrowserCommandAction::ClearRecent },
-        { IDM_CTX_ABOUT, BrowserCommandAction::ShowAbout },
-    };
-
-#if FICTURE2_ENABLE_REGISTRATION_MENU
-    static const CommandMapEntry kContextRegistrationMap[] =
-    {
-        { IDM_CTX_REGISTER_ASSOCIATIONS, BrowserCommandAction::RegisterAssociations },
-        { IDM_CTX_UNREGISTER_ASSOCIATIONS, BrowserCommandAction::UnregisterAssociations },
-        { IDM_CTX_REGISTER_THUMBNAIL_PROVIDER, BrowserCommandAction::RegisterThumbnailProvider },
-        { IDM_CTX_UNREGISTER_THUMBNAIL_PROVIDER, BrowserCommandAction::UnregisterThumbnailProvider },
-    };
-#endif
-
-    // KeyUp: selection/navigation commands without modifier chords.
-    static const CommandMapEntry kKeySelectionNavigationMap[] =
-    {
-        { VK_RETURN, BrowserCommandAction::ActivateSelected },
-        { VK_HOME, BrowserCommandAction::SelectFirst },
-        { VK_END, BrowserCommandAction::SelectLast },
-        { VK_PRIOR, BrowserCommandAction::PagePrevious },
-        { VK_NEXT, BrowserCommandAction::PageNext },
-        { VK_BACK, BrowserCommandAction::NavigateUp },
-    };
-
-    // KeyDown: immediate left/right selection movement.
-    static const CommandMapEntry kKeyDownSelectionNavigationMap[] =
-    {
-        { VK_LEFT, BrowserCommandAction::SelectPrevious },
-        { VK_RIGHT, BrowserCommandAction::SelectNext },
-    };
-
-    // KeyUp: lifecycle modifier chords (Ctrl/Ctrl+Shift).
-    static const KeyChordMapEntry kKeyLifecycleChordMap[] =
-    {
-        { VK_F4, true, false, false, BrowserCommandAction::Close },
-        { VK_F4, true, true, false, BrowserCommandAction::Close },
-        { 'O', true, false, false, BrowserCommandAction::OpenImage },
-        { 'O', true, true, false, BrowserCommandAction::OpenImageSplitNew },
-    };
-
-    // KeyUp: Alt+* appearance/navigation chords.
-    static const KeyChordMapEntry kKeyViewAppearanceChordMap[] =
-    {
-        { VK_UP, false, false, true, BrowserCommandAction::NavigateUp },
-        { 'N', false, false, true, BrowserCommandAction::ToggleDirectories },
-        { 'A', false, false, true, BrowserCommandAction::ToggleAlpha },
-        { 'X', false, false, true, BrowserCommandAction::FitToScreen },
-        { 'B', false, false, true, BrowserCommandAction::BackgroundColor },
-        { 'Q', false, false, true, BrowserCommandAction::ToggleSampling },
-        // < / > : rotate left / right (Shift+comma / Shift+period)
-        { VK_OEM_COMMA,  false, true, false, BrowserCommandAction::RotateLeft  },
-        { VK_OEM_PERIOD, false, true, false, BrowserCommandAction::RotateRight },
-    };
-
-    // KeyUp: Ctrl+[ / Ctrl+] : previous / next DDS mip level. Matched with the
-    // actual modifiers (the view chords above ignore Ctrl).
-    static const KeyChordMapEntry kKeyMipChordMap[] =
-    {
-        { VK_OEM_4, true, false, false, BrowserCommandAction::MipPrevious },
-        { VK_OEM_6, true, false, false, BrowserCommandAction::MipNext },
     };
 
     // Keep in sync with ImageBrowserDragController's default insert threshold.
@@ -748,66 +601,6 @@ namespace
             return true;
         }
 #endif
-
-        return false;
-    }
-
-    template <size_t N>
-    bool TryDispatchMappedAction(
-        Ficture2Backplate* backplate,
-        FD2D::Wnd* source,
-        IImageBrowserOps* browserOps,
-        UINT id,
-        const CommandMapEntry (&entries)[N],
-        const POINT& ptClient,
-        HWND ownerWindow)
-    {
-        if (browserOps == nullptr)
-        {
-            return false;
-        }
-
-        for (const auto& entry : entries)
-        {
-            if (entry.id == id)
-            {
-                ExecuteBrowserCommandAction(backplate, source, browserOps, entry.action, ptClient, ownerWindow);
-                return true;
-            }
-        }
-
-        return false;
-    }
-
-    template <size_t N>
-    bool TryDispatchMappedKeyAction(
-        Ficture2Backplate* backplate,
-        FD2D::Wnd* source,
-        IImageBrowserOps* browserOps,
-        UINT key,
-        bool ctrl,
-        bool shift,
-        bool alt,
-        const KeyChordMapEntry (&entries)[N],
-        const POINT& ptClient,
-        HWND ownerWindow)
-    {
-        if (browserOps == nullptr)
-        {
-            return false;
-        }
-
-        for (const auto& entry : entries)
-        {
-            if (entry.key == key &&
-                entry.ctrl == ctrl &&
-                entry.shift == shift &&
-                entry.alt == alt)
-            {
-                ExecuteBrowserCommandAction(backplate, source, browserOps, entry.action, ptClient, ownerWindow);
-                return true;
-            }
-        }
 
         return false;
     }
@@ -1763,29 +1556,14 @@ bool Ficture2Backplate::HandleImageBrowserContextMenuCommand(FD2D::Wnd* source, 
         return false;
     }
 
-    if (TryDispatchMappedAction(this, source, browserOps, cmd, kContextLifecycleMap, POINT {}, m_window))
+    // Only Show in Explorer uses the point; the other commands ignore it.
+    const auto action = BrowserCommandMap::ForContextMenu(cmd);
+    if (!action)
     {
-        return true;
+        return false;
     }
-
-    if (TryDispatchMappedAction(this, source, browserOps, cmd, kContextViewAppearanceMap, POINT {}, m_window))
-    {
-        return true;
-    }
-
-    if (TryDispatchMappedAction(this, source, browserOps, cmd, kContextIntegrationMap, ptClient, m_window))
-    {
-        return true;
-    }
-
-#if FICTURE2_ENABLE_REGISTRATION_MENU
-    if (TryDispatchMappedAction(this, source, browserOps, cmd, kContextRegistrationMap, ptClient, m_window))
-    {
-        return true;
-    }
-#endif
-
-    return false;
+    ExecuteBrowserCommandAction(this, source, browserOps, *action, ptClient, m_window);
+    return true;
 }
 
 bool Ficture2Backplate::HandleImageBrowserKeyUpCommand(
@@ -1804,61 +1582,14 @@ bool Ficture2Backplate::HandleImageBrowserKeyUpCommand(
         return false;
     }
 
-    const UINT normalizedKey = (keyCode >= 'a' && keyCode <= 'z')
-        ? (keyCode - 'a' + 'A')
-        : keyCode;
-
-    outHandled = TryDispatchMappedAction(this, source, browserOps, keyCode, kKeySelectionNavigationMap, POINT {}, m_window);
-    if (outHandled)
+    const auto action = BrowserCommandMap::ForKeyUp(keyCode, ctrl, shift, alt);
+    if (!action)
     {
-        return true;
+        return false;
     }
-
-    const UINT keyForLifecycleMatch = (normalizedKey == 'O') ? normalizedKey : keyCode;
-    outHandled = TryDispatchMappedKeyAction(
-        this,
-        source,
-        browserOps,
-        keyForLifecycleMatch,
-        ctrl,
-        shift,
-        false,
-        kKeyLifecycleChordMap,
-        POINT {},
-        m_window);
-    if (outHandled)
-    {
-        return true;
-    }
-
-    outHandled = TryDispatchMappedKeyAction(
-        this,
-        source,
-        browserOps,
-        keyCode,
-        ctrl,
-        shift,
-        alt,
-        kKeyMipChordMap,
-        POINT {},
-        m_window);
-    if (outHandled)
-    {
-        return true;
-    }
-
-    outHandled = TryDispatchMappedKeyAction(
-        this,
-        source,
-        browserOps,
-        normalizedKey,
-        false,
-        shift,  // pass actual shift so Shift+<key> bindings (e.g. < and >) can match
-        alt,
-        kKeyViewAppearanceChordMap,
-        POINT {},
-        m_window);
-    return outHandled;
+    ExecuteBrowserCommandAction(this, source, browserOps, *action, POINT {}, m_window);
+    outHandled = true;
+    return true;
 }
 
 bool Ficture2Backplate::HandleImageBrowserKeyDownCommand(
@@ -1881,8 +1612,14 @@ bool Ficture2Backplate::HandleImageBrowserKeyDownCommand(
         return false;
     }
 
-    outHandled = TryDispatchMappedAction(this, source, browserOps, keyCode, kKeyDownSelectionNavigationMap, POINT {}, m_window);
-    return outHandled;
+    const auto action = BrowserCommandMap::ForKeyDown(keyCode);
+    if (!action)
+    {
+        return false;
+    }
+    ExecuteBrowserCommandAction(this, source, browserOps, *action, POINT {}, m_window);
+    outHandled = true;
+    return true;
 }
 
 std::wstring Ficture2Backplate::GetFocusedSelectedImageFileName() const
