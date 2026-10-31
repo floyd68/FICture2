@@ -879,11 +879,13 @@ namespace
 
         bool HandleTypeToSelectKeyDown(const FD2D::InputEvent& event)
         {
-            return ImageBrowserKeyboardController::HandleTypeToSelectWithStateStorage(
-                event.keyCode,
-                event.scanCode,
-                event.modifiers.control,
-                event.modifiers.alt,
+            ImageBrowserKeyboardController::KeyEvent key {};
+            key.keyCode = event.keyCode;
+            key.scanCode = event.scanCode;
+            key.control = event.modifiers.control;
+            key.alt = event.modifiers.alt;
+            return ImageBrowserKeyboardController::HandleTypeToSelect(
+                key,
                 CommonUtil::NowMs(),
                 ThumbItemCount(),
                 m_selectedIndex,
@@ -895,8 +897,7 @@ namespace
                 {
                     SelectItemByIndex(index);
                 },
-                m_typeSelectQuery,
-                m_typeSelectLastInputMs);
+                m_typeSelect);
         }
 
         std::wstring TypeToSelectItemLabel(size_t index) const
@@ -2639,7 +2640,7 @@ namespace
 
             FIC2_TIMER_START(t_rebuild);
 
-            m_typeSelectQuery.clear();
+            m_typeSelect.query.clear();
             m_selectedIndex = static_cast<size_t>(-1);
 
             // The layout model first (extents and key index), then the tiles of
@@ -3221,9 +3222,7 @@ namespace
         // folder's entries age out instead of being dropped on navigation.
         std::shared_ptr<ThumbPayloadCache> m_thumbPayloads { ThumbPayloadCache::Shared() };
         size_t m_selectedIndex { static_cast<size_t>(-1) };   // model index; its tile (if any) is highlighted
-        std::wstring m_typeSelectQuery {};
-        unsigned long long m_typeSelectLastInputMs { 0 };
-        ULONGLONG m_lastKeyNavMs { 0 };
+        ImageBrowserKeyboardController::TypeToSelectState m_typeSelect {};
 
         Floar::VirtualPath m_currentFolder {};
         Floar::VirtualPath m_listedFolder {};   // of the last listing started (NoteListedFolder)
