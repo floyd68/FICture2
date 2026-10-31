@@ -14,6 +14,7 @@
 #include "ImageBrowser.h"
 #include "ImageBrowserContextMenu.h"
 #include "ImageBrowserSessionPersistence.h"
+#include "ImageBrowserSessionPlan.h"
 #include "ImageBrowserSplitCoordinator.h"
 #include "ImageCore/DecoderRegistry.h"
 #include "ImageCore/ImageDecodeDispatcher.h"
@@ -1474,32 +1475,32 @@ void Ficture2Backplate::SaveImageBrowserSession(const std::wstring& iniFile)
     }
 
     auto* rootOps = browserOps.front();
-    const int count = static_cast<int>((std::min)(
-        ImageBrowserSplitCoordinator::kMaxViewers,
-        browserOps.size()));
-
-    ImageBrowserSessionPersistence::SavePayload payload {};
-    payload.viewerCount = count;
-    payload.hasThumbStripHeight = TryGetSyncedThumbStripHeight(payload.thumbStripHeight);
-    payload.horizontalSplitRatios = rootOps->BrowserCaptureHorizontalSplitRatios();
-    payload.viewers.reserve(static_cast<size_t>(count));
-
-    for (int i = 0; i < count; ++i)
+    std::vector<ImageBrowserSessionPersistence::SavedViewerEntry> viewers;
+    viewers.reserve(browserOps.size());
+    for (auto* ops : browserOps)
     {
-        auto* ops = browserOps[static_cast<size_t>(i)];
         if (ops == nullptr)
         {
-            payload.viewers.push_back({});
+            viewers.push_back({});
             continue;
         }
 
         // The requested image: what the user selected, even if it has not
         // finished loading (restore drops it if it no longer exists).
-        payload.viewers.push_back({
+        viewers.push_back({
             ops->BrowserGetRequestedFilePath(),
             ops->BrowserGetCurrentFolderPath(),
         });
     }
+
+    float thumbStripHeight = 0.0f;
+    const bool hasThumbStripHeight = TryGetSyncedThumbStripHeight(thumbStripHeight);
+    const ImageBrowserSessionPersistence::SavePayload payload = ImageBrowserSessionPlan::BuildSavePayload(
+        std::move(viewers),
+        ImageBrowserSplitCoordinator::kMaxViewers,
+        hasThumbStripHeight,
+        thumbStripHeight,
+        rootOps->BrowserCaptureHorizontalSplitRatios());
 
     LogIniWrite(ImageBrowserSessionPersistence::SaveToIni(iniFile, payload), "Session");
 }
@@ -1531,57 +1532,52 @@ bool Ficture2Backplate::TryRestoreImageBrowserSession(const std::wstring& iniFil
 
     // Keep only paths that still resolve (NIFDiff-style compact restore).
     // ViewerCount alone must not count as success — otherwise dead slots block Pictures fallback.
-    std::vector<ImageBrowserSessionPersistence::RestoredViewerState> valid;
-    valid.reserve(payload.viewers.size());
-    for (const auto& viewer : payload.viewers)
+    const size_t savedViewers = payload.viewers.size();
+    ImageBrowserSessionPlan::PathChecks checks {};
+    checks.fileExists = [](const std::wstring& path)
+    {
+        const auto vp = Floar::VirtualPath::Parse(path);
+        return vp.has_value() && Floar::VirtualFileSystem::Exists(*vp);
+    };
+    checks.folderExists = [](const std::wstring& path)
+    {
+        const auto vp = Floar::VirtualPath::Parse(path);
+        return vp.has_value() && Floar::VirtualFileSystem::IsDirectory(*vp);
+    };
+    const ImageBrowserSessionPlan::Compaction compaction =
+        ImageBrowserSessionPlan::CompactForRestore(payload, ImageBrowserSplitCoordinator::kMaxViewers, checks);
+    for (const auto& viewer : compaction.dropped)
     {
         if (!viewer.filePath.empty())
         {
-            auto vp = Floar::VirtualPath::Parse(viewer.filePath);
-            if (vp && Floar::VirtualFileSystem::Exists(*vp))
-            {
-                valid.push_back(viewer);
-                continue;
-            }
             FIC2_LOG_INFO(
                 "[Session] Dropping missing file from restore: {}",
                 AppLog::ToUtf8(viewer.filePath));
         }
-        else if (!viewer.folderPath.empty())
+        else
         {
-            auto vp = Floar::VirtualPath::Parse(viewer.folderPath);
-            if (vp && Floar::VirtualFileSystem::IsDirectory(*vp))
-            {
-                valid.push_back(viewer);
-                continue;
-            }
             FIC2_LOG_INFO(
                 "[Session] Dropping missing folder from restore: {}",
                 AppLog::ToUtf8(viewer.folderPath));
         }
     }
 
-    if (valid.empty())
+    if (compaction.survivors == 0)
     {
         FIC2_LOG_INFO("[Session] Restore found no surviving viewers — treating as not restored.");
         return false;
     }
 
-    if (valid.size() != payload.viewers.size())
+    if (compaction.survivors != savedViewers)
     {
         FIC2_LOG_INFO(
             "[Session] Compacted restore: {} of {} viewers survived",
-            valid.size(),
-            payload.viewers.size());
+            compaction.survivors,
+            savedViewers);
     }
 
     // Restoring the viewers (and their settings) renders one frame in all.
     const DeferredRenderScope batchRender(this);
-
-    payload.viewers = std::move(valid);
-    payload.clampedViewerCount = static_cast<int>(
-        (std::min)(ImageBrowserSplitCoordinator::kMaxViewers, payload.viewers.size()));
-    payload.viewers.resize(static_cast<size_t>(payload.clampedViewerCount));
 
     if (payload.hasThumbStripHeight)
     {
