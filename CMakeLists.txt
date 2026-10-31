@@ -300,6 +300,7 @@ target_sources(FICture2 PRIVATE
     RecentFiles.cpp
     ViewerSettings.cpp
     BrowserCommandMap.cpp
+    BrowserRegistry.cpp
     AppDialogs.cpp
     ScreenshotUtil.cpp
     ShellThumbnailSource.cpp

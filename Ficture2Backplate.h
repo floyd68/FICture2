@@ -1,6 +1,7 @@
 #pragma once
 
 #include "AppDialogs.h"
+#include "BrowserRegistry.h"
 #include "FD2D/Backplate.h"
 #include "ImageViewTypes.h"
 #include "IpcOpenRequest.h"
@@ -18,27 +19,10 @@ class Ficture2Backplate : public FD2D::Backplate
 public:
     using FD2D::Backplate::Backplate;
 
-    class EventBus
-    {
-    public:
-        void RegisterImageBrowser(FD2D::Wnd* browser);
-        void UnregisterImageBrowser(FD2D::Wnd* browser);
-        std::vector<FD2D::Wnd*> ImageBrowsersSnapshot() const
-        {
-			return m_imageBrowsers;
-        }
-        size_t ImageBrowserCount() const
-		{
-			return m_imageBrowsers.size();
-		}
-
-    private:
-        std::vector<FD2D::Wnd*> m_imageBrowsers {};
-    };
-
-    std::shared_ptr<EventBus> BusPtr() const { return m_eventBus; }
-    EventBus& Bus() { return *m_eventBus; }
-    const EventBus& Bus() const { return *m_eventBus; }
+    // The image browsers open in this window (see BrowserRegistry).
+    std::shared_ptr<BrowserRegistry> RegistryPtr() const { return m_registry; }
+    BrowserRegistry& Registry() { return *m_registry; }
+    const BrowserRegistry& Registry() const { return *m_registry; }
 
     void EnsureImageBrowserIniInitialized();
     bool ShowNavItemsEnabled() const { return m_settings.ShowNavItems(); }
@@ -114,7 +98,7 @@ public:
     void SetDialogsForTesting(std::shared_ptr<AppDialogs> dialogs) { m_dialogs = std::move(dialogs); }
 
 private:
-    std::shared_ptr<EventBus> m_eventBus { std::make_shared<EventBus>() };
+    std::shared_ptr<BrowserRegistry> m_registry { std::make_shared<BrowserRegistry>() };
     float m_syncedThumbStripHeight { 0.0f };
     bool m_hasSyncedThumbStripHeight { false };
     ViewerSettings m_settings {};   // shared by every image browser of this window

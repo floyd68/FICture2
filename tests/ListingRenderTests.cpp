@@ -670,7 +670,7 @@ FIC2_TEST(ListingRender_RestoredViewersGetTheSavedStripHeight)
             backplate.Render();
         }
 
-        const std::vector<FD2D::Wnd*> browsers = backplate.Bus().ImageBrowsersSnapshot();
+        const std::vector<FD2D::Wnd*> browsers = backplate.Registry().ImageBrowsersSnapshot();
         FIC2_CHECK(browsers.size() == static_cast<size_t>(viewers));
         for (FD2D::Wnd* restored : browsers)
         {
@@ -728,7 +728,7 @@ FIC2_TEST(ListingRender_AddedViewersTakeTheExistingStripHeight)
     };
     const auto checkAll = [&](const char* step, float expected)
     {
-        const std::vector<FD2D::Wnd*> browsers = backplate.Bus().ImageBrowsersSnapshot();
+        const std::vector<FD2D::Wnd*> browsers = backplate.Registry().ImageBrowsersSnapshot();
         for (FD2D::Wnd* browser : browsers)
         {
             const float height = stripHeight(*browser);
@@ -931,7 +931,7 @@ FIC2_TEST(ListingRender_AddedViewerFollowsTheStripThroughAClampedResize)
 
     ops->BrowserAddHorizontalViewerForRestoreFolder(b.dir.wstring());
     resize(kTallHeight);
-    const std::vector<FD2D::Wnd*> browsers = backplate.Bus().ImageBrowsersSnapshot();
+    const std::vector<FD2D::Wnd*> browsers = backplate.Registry().ImageBrowsersSnapshot();
     FIC2_REQUIRE(browsers.size() == 2);
     for (FD2D::Wnd* browser : browsers)
     {

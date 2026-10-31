@@ -73,16 +73,16 @@ namespace
 
     template <typename T>
     std::vector<T*> SnapshotBrowsers(
-        const std::shared_ptr<Ficture2Backplate::EventBus>& bus,
+        const std::shared_ptr<BrowserRegistry>& registry,
         FD2D::Wnd* exclude = nullptr)
     {
         std::vector<T*> out;
-        if (!bus)
+        if (!registry)
         {
             return out;
         }
 
-        const auto browsers = bus->ImageBrowsersSnapshot();
+        const auto browsers = registry->ImageBrowsersSnapshot();
         out.reserve(browsers.size());
         for (auto* browser : browsers)
         {
@@ -101,16 +101,16 @@ namespace
         return out;
     }
 
-    std::vector<IImageBrowserOps*> SnapshotBrowserOps(const std::shared_ptr<Ficture2Backplate::EventBus>& bus)
+    std::vector<IImageBrowserOps*> SnapshotBrowserOps(const std::shared_ptr<BrowserRegistry>& registry)
     {
-        return SnapshotBrowsers<IImageBrowserOps>(bus);
+        return SnapshotBrowsers<IImageBrowserOps>(registry);
     }
 
     std::vector<IImageBrowserSync*> SnapshotOtherBrowserSync(
-        const std::shared_ptr<Ficture2Backplate::EventBus>& bus,
+        const std::shared_ptr<BrowserRegistry>& registry,
         FD2D::Wnd* source)
     {
-        return SnapshotBrowsers<IImageBrowserSync>(bus, source);
+        return SnapshotBrowsers<IImageBrowserSync>(registry, source);
     }
 
     struct BrowserOpsActionEntry
@@ -225,8 +225,8 @@ namespace
             return true;
         }
 
-        auto* bus = backplate->BusPtr().get();
-        if (bus == nullptr || bus->ImageBrowserCount() >= ImageBrowserSplitCoordinator::kMaxViewers)
+        auto* registry = backplate->RegistryPtr().get();
+        if (registry == nullptr || registry->ImageBrowserCount() >= ImageBrowserSplitCoordinator::kMaxViewers)
         {
             return true;
         }
@@ -476,28 +476,9 @@ namespace
 
 }
 
-void Ficture2Backplate::EventBus::RegisterImageBrowser(FD2D::Wnd* browser)
-{
-    if (browser == nullptr)
-        return;
-
-    const auto it = std::find(m_imageBrowsers.begin(), m_imageBrowsers.end(), browser);
-    if (it != m_imageBrowsers.end())
-        return;
-
-    m_imageBrowsers.push_back(browser);
-}
-
-void Ficture2Backplate::EventBus::UnregisterImageBrowser(FD2D::Wnd* browser)
-{
-    const auto it = std::find(m_imageBrowsers.begin(), m_imageBrowsers.end(), browser);
-    if (it != m_imageBrowsers.end())
-        m_imageBrowsers.erase(it);
-}
-
 FD2D::Wnd* Ficture2Backplate::FindTargetWnd(const POINT& ptClient)
 {
-    if (!m_eventBus)
+    if (!m_registry)
     {
         return nullptr;
     }
@@ -505,7 +486,7 @@ FD2D::Wnd* Ficture2Backplate::FindTargetWnd(const POINT& ptClient)
     FD2D::Wnd* best = nullptr;
     float bestArea = 0.0f;
 
-    const auto browsers = m_eventBus->ImageBrowsersSnapshot();
+    const auto browsers = m_registry->ImageBrowsersSnapshot();
     for (auto* b : browsers)
     {
         if (b == nullptr)
@@ -775,7 +756,7 @@ bool Ficture2Backplate::TryGetSyncedThumbStripHeight(float& outHeight) const
 
 void Ficture2Backplate::SynchronizeThumbStripHeight(FD2D::Wnd* source, float height)
 {
-    if (!m_eventBus || source == nullptr)
+    if (!m_registry || source == nullptr)
     {
         return;
     }
@@ -788,12 +769,12 @@ void Ficture2Backplate::SynchronizeThumbStripHeight(FD2D::Wnd* source, float hei
     (void)sourceSync;
 
     SetSyncedThumbStripHeight(height);
-    if (m_eventBus->ImageBrowserCount() < 2)
+    if (m_registry->ImageBrowserCount() < 2)
     {
         return;
     }
 
-    const auto targets = SnapshotOtherBrowserSync(m_eventBus, source);
+    const auto targets = SnapshotOtherBrowserSync(m_registry, source);
     for (auto* target : targets)
     {
         if (target != nullptr)
@@ -805,12 +786,12 @@ void Ficture2Backplate::SynchronizeThumbStripHeight(FD2D::Wnd* source, float hei
 
 void Ficture2Backplate::SynchronizeFileSelection(FD2D::Wnd* source, const std::wstring& fileNameLower)
 {
-    if (!m_eventBus || source == nullptr || fileNameLower.empty())
+    if (!m_registry || source == nullptr || fileNameLower.empty())
     {
         return;
     }
 
-    if (m_eventBus->ImageBrowserCount() < 2)
+    if (m_registry->ImageBrowserCount() < 2)
     {
         return;
     }
@@ -823,7 +804,7 @@ void Ficture2Backplate::SynchronizeFileSelection(FD2D::Wnd* source, const std::w
     }
     (void)sourceSync;
 
-    const auto targets = SnapshotOtherBrowserSync(m_eventBus, source);
+    const auto targets = SnapshotOtherBrowserSync(m_registry, source);
     for (auto* target : targets)
     {
         if (target != nullptr)
@@ -838,12 +819,12 @@ void Ficture2Backplate::SynchronizeViewTransform(
     const std::wstring& fileNameLower,
     const ImageViewTransform& viewTransform)
 {
-    if (!m_eventBus || source == nullptr || fileNameLower.empty())
+    if (!m_registry || source == nullptr || fileNameLower.empty())
     {
         return;
     }
 
-    if (m_eventBus->ImageBrowserCount() < 2)
+    if (m_registry->ImageBrowserCount() < 2)
     {
         return;
     }
@@ -856,7 +837,7 @@ void Ficture2Backplate::SynchronizeViewTransform(
     }
     (void)sourceSync;
 
-    const auto targets = SnapshotOtherBrowserSync(m_eventBus, source);
+    const auto targets = SnapshotOtherBrowserSync(m_registry, source);
     for (auto* target : targets)
     {
         if (target == nullptr)
@@ -874,7 +855,7 @@ void Ficture2Backplate::SynchronizeViewTransform(
 
 void Ficture2Backplate::SynchronizeShowNavItems(FD2D::Wnd* source, bool showNavItems)
 {
-    if (!m_eventBus || source == nullptr)
+    if (!m_registry || source == nullptr)
     {
         return;
     }
@@ -891,7 +872,7 @@ void Ficture2Backplate::SynchronizeShowNavItems(FD2D::Wnd* source, bool showNavI
     (void)TryGetIniFilePath(iniFile);
     m_settings.SetShowNavItems(showNavItems, iniFile);
 
-    const auto targets = SnapshotOtherBrowserSync(m_eventBus, source);
+    const auto targets = SnapshotOtherBrowserSync(m_registry, source);
     for (auto* target : targets)
     {
         if (target != nullptr)
@@ -903,7 +884,7 @@ void Ficture2Backplate::SynchronizeShowNavItems(FD2D::Wnd* source, bool showNavI
 
 void Ficture2Backplate::SynchronizeBackgroundColor(FD2D::Wnd* source, const D2D1_COLOR_F& color)
 {
-    if (!m_eventBus || source == nullptr)
+    if (!m_registry || source == nullptr)
     {
         return;
     }
@@ -922,7 +903,7 @@ void Ficture2Backplate::SynchronizeBackgroundColor(FD2D::Wnd* source, const D2D1
     (void)TryGetIniFilePath(iniFile);
     ViewerSettings::SaveBackgroundColor(color, iniFile);
 
-    const auto targets = SnapshotOtherBrowserSync(m_eventBus, source);
+    const auto targets = SnapshotOtherBrowserSync(m_registry, source);
     for (auto* target : targets)
     {
         if (target != nullptr)
@@ -934,7 +915,7 @@ void Ficture2Backplate::SynchronizeBackgroundColor(FD2D::Wnd* source, const D2D1
 
 void Ficture2Backplate::SynchronizeFocusedBackgroundColor(FD2D::Wnd* source, const D2D1_COLOR_F& color)
 {
-    if (!m_eventBus || source == nullptr)
+    if (!m_registry || source == nullptr)
     {
         return;
     }
@@ -951,7 +932,7 @@ void Ficture2Backplate::SynchronizeFocusedBackgroundColor(FD2D::Wnd* source, con
     (void)TryGetIniFilePath(iniFile);
     m_settings.SetFocusedBackgroundColor(color, iniFile);
 
-    const auto targets = SnapshotOtherBrowserSync(m_eventBus, source);
+    const auto targets = SnapshotOtherBrowserSync(m_registry, source);
     for (auto* target : targets)
     {
         if (target != nullptr)
@@ -963,7 +944,7 @@ void Ficture2Backplate::SynchronizeFocusedBackgroundColor(FD2D::Wnd* source, con
 
 void Ficture2Backplate::SynchronizeAlphaCheckerboard(FD2D::Wnd* source, bool checkerEnabled)
 {
-    if (!m_eventBus || source == nullptr)
+    if (!m_registry || source == nullptr)
     {
         return;
     }
@@ -977,7 +958,7 @@ void Ficture2Backplate::SynchronizeAlphaCheckerboard(FD2D::Wnd* source, bool che
 
     m_settings.SetAlphaCheckerboard(checkerEnabled);
 
-    const auto targets = SnapshotOtherBrowserSync(m_eventBus, source);
+    const auto targets = SnapshotOtherBrowserSync(m_registry, source);
     for (auto* target : targets)
     {
         if (target != nullptr)
@@ -989,7 +970,7 @@ void Ficture2Backplate::SynchronizeAlphaCheckerboard(FD2D::Wnd* source, bool che
 
 bool Ficture2Backplate::TryStartCompareWithFileNameMatch(const std::wstring& incomingFilePath)
 {
-    if (!m_eventBus || incomingFilePath.empty())
+    if (!m_registry || incomingFilePath.empty())
     {
         return false;
     }
@@ -1000,7 +981,7 @@ bool Ficture2Backplate::TryStartCompareWithFileNameMatch(const std::wstring& inc
         return false;
     }
 
-    const auto browsers = m_eventBus->ImageBrowsersSnapshot();
+    const auto browsers = m_registry->ImageBrowsersSnapshot();
     for (auto* browser : browsers)
     {
         auto* browserOps = AsImageBrowserOps(browser);
@@ -1078,7 +1059,7 @@ void Ficture2Backplate::FlushRecentFilesBeforeDestroy()
 
 void Ficture2Backplate::RefreshIpcOpenSnapshot()
 {
-    if (!m_ipcQueue || !m_eventBus)
+    if (!m_ipcQueue || !m_registry)
     {
         return;
     }
@@ -1086,7 +1067,7 @@ void Ficture2Backplate::RefreshIpcOpenSnapshot()
     // Requested paths: a pane that just switched images must match the new
     // name immediately, not the previous image that is still on screen.
     std::vector<std::wstring> requested;
-    for (auto* browser : m_eventBus->ImageBrowsersSnapshot())
+    for (auto* browser : m_registry->ImageBrowsersSnapshot())
     {
         if (auto* browserOps = AsImageBrowserOps(browser))
         {
@@ -1122,7 +1103,7 @@ void Ficture2Backplate::DrainIpcOpenQueue()
         }
 
         // Empty viewer (or no matching open name after a race): open in root.
-        const auto browsers = m_eventBus ? m_eventBus->ImageBrowsersSnapshot()
+        const auto browsers = m_registry ? m_registry->ImageBrowsersSnapshot()
                                          : std::vector<FD2D::Wnd*>{};
         bool anyOpen = false;
         for (auto* browser : browsers)
@@ -1154,12 +1135,12 @@ void Ficture2Backplate::DrainIpcOpenQueue()
 
 void Ficture2Backplate::OpenFileInRoot(const std::wstring& filePath)
 {
-    if (!m_eventBus || filePath.empty())
+    if (!m_registry || filePath.empty())
     {
         return;
     }
 
-    const auto browsers = m_eventBus->ImageBrowsersSnapshot();
+    const auto browsers = m_registry->ImageBrowsersSnapshot();
     if (browsers.empty())
     {
         return;
@@ -1176,12 +1157,12 @@ void Ficture2Backplate::OpenFileInRoot(const std::wstring& filePath)
 
 void Ficture2Backplate::OpenAdditionalFilesSideBySide(const std::vector<std::wstring>& filePaths)
 {
-    if (!m_eventBus || filePaths.empty())
+    if (!m_registry || filePaths.empty())
     {
         return;
     }
 
-    const auto browsers = m_eventBus->ImageBrowsersSnapshot();
+    const auto browsers = m_registry->ImageBrowsersSnapshot();
     if (browsers.empty())
     {
         return;
@@ -1207,18 +1188,18 @@ void Ficture2Backplate::OpenAdditionalFilesSideBySide(const std::vector<std::wst
         }
 
         browserOps->BrowserOpenAdditionalFileInHorizontalSplit(path);
-        existing = m_eventBus->ImageBrowsersSnapshot().size();
+        existing = m_registry->ImageBrowsersSnapshot().size();
     }
 }
 
 void Ficture2Backplate::OpenAdditionalFilesSideBySideAfter(const std::vector<std::wstring>& filePaths, const std::wstring& afterName)
 {
-    if (!m_eventBus || filePaths.empty())
+    if (!m_registry || filePaths.empty())
     {
         return;
     }
 
-    const auto browsers = m_eventBus->ImageBrowsersSnapshot();
+    const auto browsers = m_registry->ImageBrowsersSnapshot();
     if (browsers.empty())
     {
         return;
@@ -1236,7 +1217,7 @@ void Ficture2Backplate::OpenAdditionalFilesSideBySideAfter(const std::vector<std
 bool Ficture2Backplate::ShowImageBrowserContextMenu(FD2D::Wnd* source, const POINT& ptClient)
 {
     auto* browserQuery = AsImageBrowserQuery(source);
-    if (browserQuery == nullptr || m_window == nullptr || m_eventBus == nullptr)
+    if (browserQuery == nullptr || m_window == nullptr || m_registry == nullptr)
     {
         return false;
     }
@@ -1259,7 +1240,7 @@ bool Ficture2Backplate::ShowImageBrowserContextMenu(FD2D::Wnd* source, const POI
         const auto snapshot = browserQuery->BrowserContextMenuSnapshotAtPoint(ptClient);
 
         bool canClose = false;
-        const auto browsers = m_eventBus->ImageBrowsersSnapshot();
+        const auto browsers = m_registry->ImageBrowsersSnapshot();
         if (browsers.size() >= 2)
         {
             FD2D::Wnd* rootHost = nullptr;
@@ -1275,7 +1256,7 @@ bool Ficture2Backplate::ShowImageBrowserContextMenu(FD2D::Wnd* source, const POI
         }
 
         ImageBrowserContextMenu::ConfigurePayload payload {};
-        payload.viewerCount = static_cast<int>(m_eventBus->ImageBrowserCount());
+        payload.viewerCount = static_cast<int>(m_registry->ImageBrowserCount());
         payload.canClose = canClose;
         payload.showNavItems = snapshot.showNavItems;
         payload.showAlpha = !m_settings.AlphaCheckerboard();
@@ -1447,12 +1428,12 @@ bool Ficture2Backplate::HandleImageBrowserKeyDownCommand(
 
 std::wstring Ficture2Backplate::GetFocusedSelectedImageFileName() const
 {
-    if (!m_eventBus)
+    if (!m_registry)
     {
         return L"";
     }
 
-    const auto browsers = m_eventBus->ImageBrowsersSnapshot();
+    const auto browsers = m_registry->ImageBrowsersSnapshot();
     if (browsers.empty())
     {
         return L"";
@@ -1486,7 +1467,7 @@ void Ficture2Backplate::SaveImageBrowserSession(const std::wstring& iniFile)
         return;
     }
 
-    const auto browserOps = SnapshotBrowserOps(m_eventBus);
+    const auto browserOps = SnapshotBrowserOps(m_registry);
     if (browserOps.empty())
     {
         return;
@@ -1530,7 +1511,7 @@ bool Ficture2Backplate::TryRestoreImageBrowserSession(const std::wstring& iniFil
         return false;
     }
 
-    const auto browserOps = SnapshotBrowserOps(m_eventBus);
+    const auto browserOps = SnapshotBrowserOps(m_registry);
     if (browserOps.empty())
     {
         return false;
@@ -1636,7 +1617,7 @@ bool Ficture2Backplate::TryRestoreImageBrowserSession(const std::wstring& iniFil
         // browser's arranged root split: arrange the rebuilt host now (no
         // frame).
         (void)LayoutIfPending();
-        const auto refreshedBrowserOps = SnapshotBrowserOps(m_eventBus);
+        const auto refreshedBrowserOps = SnapshotBrowserOps(m_registry);
         for (auto* ops : refreshedBrowserOps)
         {
             if (ops != nullptr)

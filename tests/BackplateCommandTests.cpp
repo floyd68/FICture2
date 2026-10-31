@@ -385,12 +385,12 @@ FIC2_TEST(BackplateCommands_OpenCommandsUseThePickedPath)
     for (int i = 0; i < 8; ++i)
     {
         registered.push_back(std::make_unique<FD2D::Wnd>(L"viewer" + std::to_wstring(i)));
-        backplate.Bus().RegisterImageBrowser(registered.back().get());
+        backplate.Registry().RegisterImageBrowser(registered.back().get());
     }
     FIC2_CHECK(menu(IDM_CTX_OPEN_NEW_IMAGE).empty());
     for (const auto& wnd : registered)
     {
-        backplate.Bus().UnregisterImageBrowser(wnd.get());
+        backplate.Registry().UnregisterImageBrowser(wnd.get());
     }
 
     FIC2_CHECK(menu(IDM_CTX_OPEN_FOLDER) == "RestoreOpenFolder");

@@ -102,7 +102,7 @@ namespace
         {
             // Detaches the folder enumeration without waiting for its worker.
             m_folderLane.Close();
-            UnregisterFromEventBus();
+            UnregisterFromRegistry();
             DeferredWakeupTargets().erase(m_deferredWakeupId);
         }
 
@@ -121,8 +121,8 @@ namespace
             }
             FIC2_LOG_STEP(t_attach, "[OnAttached] Wnd::OnAttached (recursive child attach + layout)");
 
-            RegisterWithEventBus();
-            FIC2_LOG_STEP(t_attach, "[OnAttached] RegisterWithEventBus");
+            RegisterWithRegistry();
+            FIC2_LOG_STEP(t_attach, "[OnAttached] RegisterWithRegistry");
 
             auto* ficBp = FictureBackplateRef();
             if (ficBp != nullptr)
@@ -152,7 +152,7 @@ namespace
 
         void OnDetached() override
         {
-            UnregisterFromEventBus();
+            UnregisterFromRegistry();
             Wnd::OnDetached();
         }
 
@@ -197,7 +197,7 @@ namespace
             ficBp->SetSyncedThumbStripHeight(height);
         }
 
-        std::shared_ptr<Ficture2Backplate::EventBus> EventBusRef() const
+        std::shared_ptr<BrowserRegistry> RegistryRef() const
         {
             auto* ficBp = FictureBackplateRef();
             if (ficBp == nullptr)
@@ -205,60 +205,60 @@ namespace
                 return nullptr;
             }
 
-            return ficBp->BusPtr();
+            return ficBp->RegistryPtr();
         }
 
-        void RegisterWithEventBus()
+        void RegisterWithRegistry()
         {
-            if (!m_eventBus.expired())
+            if (!m_registry.expired())
             {
                 return;
             }
 
-            auto bus = EventBusRef();
-            if (!bus)
+            auto registry = RegistryRef();
+            if (!registry)
             {
                 return;
             }
 
-            m_eventBus = bus;
-            bus->RegisterImageBrowser(this);
+            m_registry = registry;
+            registry->RegisterImageBrowser(this);
         }
 
-        void UnregisterFromEventBus()
+        void UnregisterFromRegistry()
         {
-            auto bus = m_eventBus.lock();
-            if (!bus)
+            auto registry = m_registry.lock();
+            if (!registry)
             {
                 return;
             }
 
-            bus->UnregisterImageBrowser(this);
+            registry->UnregisterImageBrowser(this);
 
-            m_eventBus.reset();
+            m_registry.reset();
         }
 
         size_t ImageBrowserCount() const
         {
-            auto bus = m_eventBus.lock();
-            if (!bus)
+            auto registry = m_registry.lock();
+            if (!registry)
             {
                 return 0;
             }
 
-            return bus->ImageBrowserCount();
+            return registry->ImageBrowserCount();
         }
 
         std::vector<ImageBrowserImpl*> ImageBrowsersSnapshot() const
         {
             std::vector<ImageBrowserImpl*> out;
-            auto bus = m_eventBus.lock();
-            if (!bus)
+            auto registry = m_registry.lock();
+            if (!registry)
             {
                 return out;
             }
 
-            const auto browsers = bus->ImageBrowsersSnapshot();
+            const auto browsers = registry->ImageBrowsersSnapshot();
             out.reserve(browsers.size());
             for (auto* b : browsers)
             {
@@ -2750,7 +2750,7 @@ namespace
 
         int HorizontalViewerCount() const
         {
-            auto* rootHost = RootHostFromEventBus();
+            auto* rootHost = RootHostFromRegistry();
             if (rootHost == nullptr)
             {
                 return 1;
@@ -3013,12 +3013,12 @@ namespace
 
         bool IsRootHorizontalHostBrowser() const
         {
-            return RootHostFromEventBus() == this;
+            return RootHostFromRegistry() == this;
         }
 
         ImageBrowserImpl* DelegatedRootHostBrowser() const
         {
-            auto* rootHost = RootHostFromEventBus();
+            auto* rootHost = RootHostFromRegistry();
             if (rootHost == nullptr || rootHost == this)
             {
                 return nullptr;
@@ -3026,15 +3026,15 @@ namespace
             return rootHost;
         }
 
-        ImageBrowserImpl* RootHostFromEventBus() const
+        ImageBrowserImpl* RootHostFromRegistry() const
         {
-            const auto bus = m_eventBus.lock();
-            if (!bus)
+            const auto registry = m_registry.lock();
+            if (!registry)
             {
                 return nullptr;
             }
 
-            const auto browsers = bus->ImageBrowsersSnapshot();
+            const auto browsers = registry->ImageBrowsersSnapshot();
             if (browsers.empty())
             {
                 return nullptr;
@@ -3259,7 +3259,7 @@ namespace
         // (no focus-background state)
         bool m_syncSuppressBroadcast { false };
         bool m_viewSyncSuppressBroadcast { false };
-        std::weak_ptr<Ficture2Backplate::EventBus> m_eventBus {};
+        std::weak_ptr<BrowserRegistry> m_registry {};
 
         void ClearDragOverlay()
         {
