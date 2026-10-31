@@ -46,6 +46,7 @@ add_executable(FICture2Tests
     RenderSchedulingTests.cpp
     IniStoreTests.cpp
     RecentFilesStoreTests.cpp
+    ViewerSettingsTests.cpp
     ${PROJECT_SOURCE_DIR}/AppLog.cpp
     ${PROJECT_SOURCE_DIR}/ImageGpuResourceCache.cpp
     ${PROJECT_SOURCE_DIR}/ImageAlphaPresentation.cpp
@@ -88,6 +89,7 @@ add_executable(FICture2Tests
     ${PROJECT_SOURCE_DIR}/ImageBrowserThumbStripController.cpp
     ${PROJECT_SOURCE_DIR}/ImageViewUtil.cpp
     ${PROJECT_SOURCE_DIR}/RecentFiles.cpp
+    ${PROJECT_SOURCE_DIR}/ViewerSettings.cpp
     ${PROJECT_SOURCE_DIR}/ScreenshotUtil.cpp
     # The app imports Common Controls v6 entry points, which load only with its manifest.
     ${PROJECT_SOURCE_DIR}/app.manifest
@@ -159,6 +161,7 @@ add_test(NAME FICture2.ListingPixels COMMAND FICture2Tests ListingPixels_)
 add_test(NAME FICture2.RenderScheduling COMMAND FICture2Tests RenderScheduling_)
 add_test(NAME FICture2.IniStore COMMAND FICture2Tests IniStore_)
 add_test(NAME FICture2.RecentFiles COMMAND FICture2Tests RecentFiles_)
+add_test(NAME FICture2.ViewerSettings COMMAND FICture2Tests ViewerSettings_)
 add_test(NAME FICture2.FolderEnumeration COMMAND FICture2Tests FolderEnumeration_)
 add_test(NAME FICture2.FolderEnumerationForcedExit COMMAND FICture2Tests FolderEnumerationForcedExit_)
 add_test(NAME FICture2.ArchiveReadCancel COMMAND FICture2Tests ArchiveReadCancel_)
