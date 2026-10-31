@@ -4,6 +4,7 @@
 #include "ImageViewTypes.h"
 #include "IpcOpenRequest.h"
 #include "RecentFiles.h"
+#include "ViewerSettings.h"
 
 #include <memory>
 #include <string>
@@ -39,10 +40,10 @@ public:
     const EventBus& Bus() const { return *m_eventBus; }
 
     void EnsureImageBrowserIniInitialized();
-    bool ShowNavItemsEnabled() const { return m_showNavItems; }
-    D2D1_COLOR_F FocusedBackgroundColor() const { return m_focusedBackgroundColor; }
-    bool AlphaCheckerboardEnabled() const { return m_alphaCheckerboardEnabled; }
-    float ImageZoomStiffness() const { return m_imageZoomStiffness; }
+    bool ShowNavItemsEnabled() const { return m_settings.ShowNavItems(); }
+    D2D1_COLOR_F FocusedBackgroundColor() const { return m_settings.FocusedBackgroundColor(); }
+    bool AlphaCheckerboardEnabled() const { return m_settings.AlphaCheckerboard(); }
+    float ImageZoomStiffness() const { return m_settings.ZoomStiffness(); }
 
     void SetSyncedThumbStripHeight(float height);
     bool TryGetSyncedThumbStripHeight(float& outHeight) const;
@@ -104,17 +105,13 @@ public:
 
     // Test seam: the browsers attached from now on do not load the user's
     // INI settings (the defaults stay).
-    void SkipImageBrowserIniForTesting() { m_imageBrowserIniInitialized = true; }
+    void SkipImageBrowserIniForTesting() { m_settings.MarkLoaded(); }
 
 private:
     std::shared_ptr<EventBus> m_eventBus { std::make_shared<EventBus>() };
     float m_syncedThumbStripHeight { 0.0f };
     bool m_hasSyncedThumbStripHeight { false };
-    bool m_showNavItems { true };
-    bool m_alphaCheckerboardEnabled { false };
-    D2D1_COLOR_F m_focusedBackgroundColor { 0.18f, 0.16f, 0.03f, 1.0f };
-    float m_imageZoomStiffness { 80.0f };
-    bool m_imageBrowserIniInitialized { false };
+    ViewerSettings m_settings {};   // shared by every image browser of this window
     std::shared_ptr<IpcOpenQueue> m_ipcQueue {};
     std::unique_ptr<RecentFilesStore> m_recentFiles {};
     // Created with the window, disconnected when it is destroyed.

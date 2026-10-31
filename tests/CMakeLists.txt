@@ -46,6 +46,7 @@ add_executable(FICture2Tests
     RenderSchedulingTests.cpp
     IniStoreTests.cpp
     RecentFilesStoreTests.cpp
+    ViewerSettingsTests.cpp
     ${PROJECT_SOURCE_DIR}/AppLog.cpp
     ${PROJECT_SOURCE_DIR}/ImageGpuResourceCache.cpp
     ${PROJECT_SOURCE_DIR}/ImageAlphaPresentation.cpp
@@ -88,6 +89,7 @@ add_executable(FICture2Tests
     ${PROJECT_SOURCE_DIR}/ImageBrowserThumbStripController.cpp
     ${PROJECT_SOURCE_DIR}/ImageViewUtil.cpp
     ${PROJECT_SOURCE_DIR}/RecentFiles.cpp
+    ${PROJECT_SOURCE_DIR}/ViewerSettings.cpp
     ${PROJECT_SOURCE_DIR}/ScreenshotUtil.cpp
     # The app imports Common Controls v6 entry points, which load only with its manifest.
     ${PROJECT_SOURCE_DIR}/app.manifest

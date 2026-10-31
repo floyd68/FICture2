@@ -296,6 +296,7 @@ target_sources(FICture2 PRIVATE
     ImageGpuResourceCache.cpp
     ImageViewUtil.cpp
     RecentFiles.cpp
+    ViewerSettings.cpp
     ScreenshotUtil.cpp
     ShellThumbnailSource.cpp
     ThumbImageTile.cpp

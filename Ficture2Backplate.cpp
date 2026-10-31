@@ -44,47 +44,6 @@ namespace
         return !outIniFile.empty();
     }
 
-    bool TryParseRgb(const wchar_t* text, D2D1_COLOR_F& outColor)
-    {
-        if (text == nullptr || *text == 0)
-        {
-            return false;
-        }
-
-        int r = -1;
-        int g = -1;
-        int b = -1;
-        if (swscanf_s(text, L"%d,%d,%d", &r, &g, &b) != 3)
-        {
-            return false;
-        }
-
-        r = (std::max)(0, (std::min)(255, r));
-        g = (std::max)(0, (std::min)(255, g));
-        b = (std::max)(0, (std::min)(255, b));
-        outColor = D2D1::ColorF(
-            static_cast<float>(r) / 255.0f,
-            static_cast<float>(g) / 255.0f,
-            static_cast<float>(b) / 255.0f,
-            1.0f);
-        return true;
-    }
-
-    void WriteRgbToIni(const std::wstring& iniFile, const wchar_t* section, const wchar_t* key, const D2D1_COLOR_F& color)
-    {
-        if (iniFile.empty() || section == nullptr || key == nullptr)
-        {
-            return;
-        }
-
-        const std::wstring rgb = std::format(
-            L"{},{},{}",
-            CommonUtil::ToByte255(color.r),
-            CommonUtil::ToByte255(color.g),
-            CommonUtil::ToByte255(color.b));
-        LogIniWrite(IniStore::SetString(iniFile, section, key, rgb), "Background color");
-    }
-
     template <typename T>
     T* AsImageBrowser(FD2D::Wnd* wnd)
     {
@@ -1160,55 +1119,19 @@ void Ficture2Backplate::DispatchFolderListingReady()
 
 void Ficture2Backplate::EnsureImageBrowserIniInitialized()
 {
-    if (m_imageBrowserIniInitialized)
+    if (m_settings.Loaded())
     {
         return;
     }
-    m_imageBrowserIniInitialized = true;
 
     std::wstring iniFile {};
-    if (!TryGetIniFilePath(iniFile))
-    {
-        return;
-    }
-
-    // Read the entire INI file once; avoid calling GetPrivateProfile* APIs
-    // which re-open and re-parse the file on every individual call.
+    (void)TryGetIniFilePath(iniFile);
     FIC2_TIMER_START(t_ini);
-    const auto ini = IniStore::Load(iniFile);
-    FIC2_LOG_STEP(t_ini, "[IniInit] IniStore::Load");
-    if (!ini.IsLoaded())
+    const std::optional<D2D1_COLOR_F> background = m_settings.Load(iniFile);
+    FIC2_LOG_STEP(t_ini, "[IniInit] ViewerSettings::Load");
+    if (background)
     {
-        return;
-    }
-
-    m_showNavItems = (ini.GetInt(L"Viewer", L"ShowNavItems", 1) != 0);
-    FIC2_LOG_STEP(t_ini, "[IniInit] key reads + SetClearColor");
-
-    const std::wstring bgColor = ini.GetString(L"Window", L"BackgroundColor");
-    if (!bgColor.empty())
-    {
-        D2D1_COLOR_F color {};
-        if (TryParseRgb(bgColor.c_str(), color))
-        {
-            SetClearColor(color);
-        }
-    }
-
-    const std::wstring focusedColor = ini.GetString(L"Window", L"FocusedBackgroundColor");
-    if (!focusedColor.empty())
-    {
-        D2D1_COLOR_F fc {};
-        if (TryParseRgb(focusedColor.c_str(), fc))
-        {
-            m_focusedBackgroundColor = fc;
-        }
-    }
-
-    const float zoomStiffness = ini.GetFloat(L"Image", L"ZoomStiffness", 80.0f);
-    if (zoomStiffness >= 10.0f && zoomStiffness <= 500.0f)
-    {
-        m_imageZoomStiffness = zoomStiffness;
+        SetClearColor(*background);
     }
 }
 
@@ -1343,13 +1266,9 @@ void Ficture2Backplate::SynchronizeShowNavItems(FD2D::Wnd* source, bool showNavI
     (void)sourceSync;
 
     EnsureImageBrowserIniInitialized();
-    m_showNavItems = showNavItems;
-
     std::wstring iniFile {};
-    if (TryGetIniFilePath(iniFile))
-    {
-        LogIniWrite(IniStore::SetString(iniFile, L"Viewer", L"ShowNavItems", m_showNavItems ? L"1" : L"0"), "ShowNavItems");
-    }
+    (void)TryGetIniFilePath(iniFile);
+    m_settings.SetShowNavItems(showNavItems, iniFile);
 
     const auto targets = SnapshotOtherBrowserSync(m_eventBus, source);
     for (auto* target : targets)
@@ -1379,10 +1298,8 @@ void Ficture2Backplate::SynchronizeBackgroundColor(FD2D::Wnd* source, const D2D1
     SetClearColor(color);
 
     std::wstring iniFile {};
-    if (TryGetIniFilePath(iniFile))
-    {
-        WriteRgbToIni(iniFile, L"Window", L"BackgroundColor", color);
-    }
+    (void)TryGetIniFilePath(iniFile);
+    ViewerSettings::SaveBackgroundColor(color, iniFile);
 
     const auto targets = SnapshotOtherBrowserSync(m_eventBus, source);
     for (auto* target : targets)
@@ -1409,13 +1326,9 @@ void Ficture2Backplate::SynchronizeFocusedBackgroundColor(FD2D::Wnd* source, con
     (void)sourceSync;
 
     EnsureImageBrowserIniInitialized();
-    m_focusedBackgroundColor = color;
-
     std::wstring iniFile {};
-    if (TryGetIniFilePath(iniFile))
-    {
-        WriteRgbToIni(iniFile, L"Window", L"FocusedBackgroundColor", color);
-    }
+    (void)TryGetIniFilePath(iniFile);
+    m_settings.SetFocusedBackgroundColor(color, iniFile);
 
     const auto targets = SnapshotOtherBrowserSync(m_eventBus, source);
     for (auto* target : targets)
@@ -1441,7 +1354,7 @@ void Ficture2Backplate::SynchronizeAlphaCheckerboard(FD2D::Wnd* source, bool che
     }
     (void)sourceSync;
 
-    m_alphaCheckerboardEnabled = checkerEnabled;
+    m_settings.SetAlphaCheckerboard(checkerEnabled);
 
     const auto targets = SnapshotOtherBrowserSync(m_eventBus, source);
     for (auto* target : targets)
@@ -1744,7 +1657,7 @@ bool Ficture2Backplate::ShowImageBrowserContextMenu(FD2D::Wnd* source, const POI
         payload.viewerCount = static_cast<int>(m_eventBus->ImageBrowserCount());
         payload.canClose = canClose;
         payload.showNavItems = snapshot.showNavItems;
-        payload.showAlpha = !m_alphaCheckerboardEnabled;
+        payload.showAlpha = !m_settings.AlphaCheckerboard();
         payload.samplingLabel = SamplingLabelForRenderer(snapshot.highQualitySampling);
         payload.hasExplorerTarget = snapshot.hasExplorerTarget;
         payload.hasImage = snapshot.hasImage;
