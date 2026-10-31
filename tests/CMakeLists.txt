@@ -32,6 +32,7 @@ add_executable(FICture2Tests
     ThumbStripScrollTests.cpp
     ThumbStripViewportTests.cpp
     ThumbListingSessionTests.cpp
+    ImageBrowserSessionPlanTests.cpp
     ThumbPayloadCacheTests.cpp
     ThumbTestSupport.h
     ThumbStripTilesTests.cpp
@@ -91,6 +92,7 @@ add_executable(FICture2Tests
     ${PROJECT_SOURCE_DIR}/ImageBrowserKeyboardController.cpp
     ${PROJECT_SOURCE_DIR}/ImageBrowserMainPane.cpp
     ${PROJECT_SOURCE_DIR}/ImageBrowserSessionPersistence.cpp
+    ${PROJECT_SOURCE_DIR}/ImageBrowserSessionPlan.cpp
     ${PROJECT_SOURCE_DIR}/ImageBrowserSplitCoordinator.cpp
     ${PROJECT_SOURCE_DIR}/ImageBrowserThumbnailPane.cpp
     ${PROJECT_SOURCE_DIR}/ImageBrowserThumbLayoutCoordinator.cpp
@@ -177,6 +179,7 @@ fic2_add_test_group(ThumbStripLayout ThumbStripLayout_)
 fic2_add_test_group(ThumbStripScroll ThumbStripScroll_)
 fic2_add_test_group(ThumbStripViewport ThumbStripViewport_)
 fic2_add_test_group(ThumbListingSession ThumbListingSession_)
+fic2_add_test_group(ImageBrowserSessionPlan ImageBrowserSessionPlan_)
 fic2_add_test_group(ThumbPayloadCache ThumbPayloadCache_)
 fic2_add_test_group(ThumbStripTiles ThumbStripTiles_)
 fic2_add_test_group(ThumbSizePolicy ThumbSizePolicy_)

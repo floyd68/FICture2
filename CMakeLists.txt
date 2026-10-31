@@ -284,6 +284,7 @@ target_sources(FICture2 PRIVATE
     ImageBrowserMainImageLoadSession.cpp
     ImageBrowserMainPane.cpp
     ImageBrowserSessionPersistence.cpp
+    ImageBrowserSessionPlan.cpp
     ImageBrowserSplitCoordinator.cpp
     ImageBrowserThumbImage.cpp
     ImageBrowserThumbLayout.cpp
