@@ -10,6 +10,7 @@
 #include "ImageBrowserThumbnailPane.h"
 #include "ImageBrowserThumbLayout.h"
 #include "ImageBrowserThumbViewport.h"
+#include "ImageBrowserThumbStripSizing.h"
 #include "ImageBrowserThumbPayloadCache.h"
 #include "ImageBrowserAsyncThumbLoader.h"
 #include "FolderEnumeration.h"
@@ -499,9 +500,9 @@ namespace
             if (item.kind == ThumbItemKind::Image)
             {
                 const float aspect = m_thumbModel.AspectOf(item.lookupKey);
-                return ThumbStripLayout::ImageExtent(m_thumbH, aspect, kThumbTileMargin);
+                return ThumbStripLayout::ImageExtent(m_sizing.Side(), aspect, kThumbTileMargin);
             }
-            return m_thumbW + 2.0f * kThumbTileMargin;   // nav tiles are square
+            return m_sizing.Side() + 2.0f * kThumbTileMargin;   // nav tiles are square
         }
 
         // Extents of every item (after a rebuild or a row-height change): the
@@ -533,7 +534,7 @@ namespace
             }
             const auto index = m_thumbModel.IndexOf(key);
             if (!index || !m_thumbViewport.SetExtent(m_thumbModel, *index,
-                    ThumbStripLayout::ImageExtent(m_thumbH, aspect, kThumbTileMargin), ThumbViewport(), m_selectedIndex))
+                    ThumbStripLayout::ImageExtent(m_sizing.Side(), aspect, kThumbTileMargin), ThumbViewport(), m_selectedIndex))
             {
                 return;
             }
@@ -600,10 +601,12 @@ namespace
             // Tile materialization and load priorities run when the strip
             // panel renders (OnBeforeRenderStripTiles), after the scroll view
             // advanced this frame's smooth scroll.
-            if (m_pendingThumbStripBroadcast && m_rootSplit != nullptr && !m_rootSplit->IsSplitterDragging())
+            if (m_rootSplit != nullptr)
             {
-                m_pendingThumbStripBroadcast = false;
-                NotifyThumbStripHeightChanged(m_pendingThumbStripHeight);
+                if (const auto height = m_sizing.TakeBroadcast(m_rootSplit->IsSplitterDragging()))
+                {
+                    NotifyThumbStripHeightChanged(*height);
+                }
             }
             // D2D-only backend: fill per-ImageBrowser background before drawing children.
             // (On the D3D swapchain backend, D2D runs after the GPU image pass, so we must NOT fill here.)
@@ -967,7 +970,7 @@ namespace
             {
                 return 1;
             }
-            const float itemExtent = (std::max)(1.0f, m_thumbW + m_thumbOuterSpacing);
+            const float itemExtent = (std::max)(1.0f, m_sizing.Side() + ThumbStripSizing::kOuterSpacing);
             return m_thumbPane->PagingStep(itemExtent);
         }
 
@@ -1355,10 +1358,10 @@ namespace
             const ImageBrowserThumbLayoutCoordinator::ThumbSizeInput sizingInput
             {
                 paneH - FD2D::ScrollView::kScrollBarGutter,
-                m_thumbH,
+                m_sizing.Side(),
                 (m_rootSplit != nullptr && m_rootSplit->IsSplitterDragging()),
                 CommonUtil::NowMs(),
-                m_lastThumbSizingApplyMs,
+                m_sizing.LastApplyMs(),
                 kThumbMinSide,
                 kThumbMaxSide,
                 ImageBrowserThumbnailPane::kSelectionRoom
@@ -1373,8 +1376,7 @@ namespace
             // Resizing the attached tiles renders one frame (none inside a render).
             const DeferredRenderScope batchRender(BackplateRef());
             CaptureThumbAnchor();   // the visible anchor stays put while widths scale
-            m_thumbW = newHeight; // Keep this for navigation tiles
-            m_thumbH = newHeight;
+            m_sizing.SetSide(newHeight);   // also the navigation tiles' (square) size
             ApplyThumbRowHeightToStrip();
 
             if (m_thumbPane)
@@ -1392,12 +1394,12 @@ namespace
                 if (tile.imageTile)
                 {
                     // Use variable width based on aspect ratio
-                    tile.imageTile->SetFixedHeight(m_thumbH);
+                    tile.imageTile->SetFixedHeight(m_sizing.Side());
                 }
                 if (tile.navTile)
                 {
                     // Navigation tiles remain square (invalidates on a change)
-                    tile.navTile->SetFixedSize({ m_thumbW, m_thumbH });
+                    tile.navTile->SetFixedSize({ m_sizing.Side(), m_sizing.Side() });
                 }
             }
             RebuildThumbLayout();
@@ -1406,7 +1408,7 @@ namespace
             {
                 DeferredRenderScope::RequestLayout(BackplateRef());
             }
-            m_lastThumbSizingApplyMs = sizing.updatedApplyMs;
+            m_sizing.MarkApplied(sizing.updatedApplyMs);
             return true;
         }
 
@@ -1417,11 +1419,10 @@ namespace
         void UpdateThumbSizeUpgradeDeferral()
         {
             const bool deferred = (m_rootSplit != nullptr && m_rootSplit->IsSplitterDragging());
-            if (deferred == m_thumbSizeUpgradesDeferred)
+            if (!m_sizing.SetUpgradesDeferred(deferred))
             {
                 return;
             }
-            m_thumbSizeUpgradesDeferred = deferred;
             for (const ThumbTile& tile : m_thumbTiles.Tiles())
             {
                 if (tile.imageTile)
@@ -1437,7 +1438,7 @@ namespace
         {
             if (auto strip = m_thumbPane ? m_thumbPane->StripPanel() : nullptr)
             {
-                strip->SetRowHeight(m_thumbH);
+                strip->SetRowHeight(m_sizing.Side());
             }
         }
 
@@ -1871,22 +1872,15 @@ namespace
                 const bool splitterDragging = (m_rootSplit != nullptr && m_rootSplit->IsSplitterDragging());
                 if (splitterDragging)
                 {
-                    m_pendingThumbStripBroadcast = true;
-                    m_pendingThumbStripHeight = clampedHeight;
+                    m_sizing.DeferBroadcast(clampedHeight);
                     return;
                 }
 
                 NotifyThumbStripHeightChanged(clampedHeight);
             });
 
-            constexpr float thumbW = 128.0f;
-            constexpr float thumbH = 128.0f;
-            m_thumbW = thumbW;
-            m_thumbH = thumbH;
+            m_sizing.ResetSide();
             ApplyThumbRowHeightToStrip();
-            m_thumbLabelDip = 0.0f;
-            m_thumbItemSpacing = 0.0f;
-            m_thumbOuterSpacing = 8.0f;
 
             if (!m_initialFile.empty())
             {
@@ -2713,8 +2707,8 @@ namespace
             context.panel = (m_thumbPane != nullptr) ? m_thumbPane->Panel() : nullptr;
             context.backplate = BackplateRef();
             context.tiles = &m_thumbTiles;
-            context.thumbW = m_thumbW;
-            context.thumbH = m_thumbH;
+            context.thumbW = m_sizing.Side();
+            context.thumbH = m_sizing.Side();
             context.model = &m_thumbModel;
             const ThumbRanges ranges = MaterializedThumbRange(selectedIndex, basis);
             context.range = ranges.materialized;
@@ -2740,7 +2734,7 @@ namespace
             {
                 (void)m_thumbModel.SetSourceLimited(key, height);
             };
-            context.deferSizeUpgrades = m_thumbSizeUpgradesDeferred;
+            context.deferSizeUpgrades = m_sizing.UpgradesDeferred();
             context.makeStableName = [this](const wchar_t* prefix, const Floar::VirtualPath& p)
             {
                 return MakeStableThumbName(prefix, p);
@@ -3239,15 +3233,7 @@ namespace
         ThumbStripViewport m_thumbViewport {};  // geometry of m_thumbModel's items and the next layout pass's scroll adjustment
         bool m_thumbKeepScrollOnSelect { false };   // see RebuildThumbListImmediate
         FolderLoadLane m_folderLane {};
-        float m_thumbW { 128.0f };
-        float m_thumbH { 128.0f };
-        unsigned long long m_lastThumbSizingApplyMs { 0 };
-        bool m_thumbSizeUpgradesDeferred { false };   // splitter drag in progress
-        bool m_pendingThumbStripBroadcast { false };
-        float m_pendingThumbStripHeight { 0.0f };
-        float m_thumbLabelDip { 0.0f };
-        float m_thumbItemSpacing { 0.0f };
-        float m_thumbOuterSpacing { 8.0f }; // spacing between thumbnail "items" in the horizontal strip
+        ThumbStripSizing m_sizing {};   // tile side, upgrade deferral and the broadcast held during a drag
 
         ImageBrowserDeferredActions::DeferredQueue m_deferredActions {};
         // Never reused, so a wakeup that outlives its browser matches no one.
