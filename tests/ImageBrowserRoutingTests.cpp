@@ -161,10 +161,10 @@ FIC2_TEST(ImageBrowserRouting_QueuedPaneInsertsAndClosesAllRun)
         PumpMessages(backplate, window);
         layout();
         FIC2_CHECK(ImageBrowserQueuedDeferredActions(*host) == 0);
-        FIC2_REQUIRE(backplate.Bus().ImageBrowserCount() == 3);
+        FIC2_REQUIRE(backplate.Registry().ImageBrowserCount() == 3);
 
         std::vector<FD2D::Wnd*> added;
-        for (FD2D::Wnd* browser : backplate.Bus().ImageBrowsersSnapshot())
+        for (FD2D::Wnd* browser : backplate.Registry().ImageBrowsersSnapshot())
         {
             if (browser != host.get())
             {
@@ -181,7 +181,7 @@ FIC2_TEST(ImageBrowserRouting_QueuedPaneInsertsAndClosesAllRun)
 
         PumpMessages(backplate, window);
         layout();
-        FIC2_CHECK(backplate.Bus().ImageBrowserCount() == 1);
+        FIC2_CHECK(backplate.Registry().ImageBrowserCount() == 1);
         FIC2_CHECK(ImageBrowserQueuedDeferredActions(*host) == 0);
 
         FD2D::BackplateTestAccess::SetWindow(backplate, nullptr);
