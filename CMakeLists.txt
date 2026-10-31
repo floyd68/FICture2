@@ -280,6 +280,7 @@ target_sources(FICture2 PRIVATE
     ImageBrowserKeyboardController.cpp
     ImageBrowserMainImage.cpp
     ImageBrowserMainImageView.cpp
+    ImageBrowserMainImagePresentation.cpp
     ImageBrowserMainPane.cpp
     ImageBrowserSessionPersistence.cpp
     ImageBrowserSplitCoordinator.cpp

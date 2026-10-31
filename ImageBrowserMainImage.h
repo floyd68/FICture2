@@ -5,6 +5,7 @@
 #include "FD2D/Spinner.h"
 #include "ImageAlphaPresentation.h"
 #include "ImageAsyncBinding.h"
+#include "ImageBrowserMainImagePresentation.h"
 #include "ImageBrowserMainImageView.h"
 #include "ImagePresentationRecovery.h"
 #include "ImageSourceIdentity.h"
@@ -105,7 +106,7 @@ public:
     bool HighQualitySampling() const { return m_highQualitySampling; }
     void ToggleSamplingQuality();
 
-    bool GpuPresentation() const { return m_gpuPresentation; }
+    bool GpuPresentation() const { return m_presentation.Gpu(); }
     std::wstring InformationText() const;
 
     void OnAttached(FD2D::Backplate& backplate) override;
@@ -201,20 +202,9 @@ private:
     std::optional<CachedPresentation> m_stagedCacheHit {};
     bool m_presentedInD3DPass { false };
 
-    uint32_t m_loadedW { 0 };
-    uint32_t m_loadedH { 0 };
-    DXGI_FORMAT m_loadedFormat { DXGI_FORMAT_UNKNOWN };
-    ImageAlphaInfo m_alpha {};
+    MainImagePresentation m_presentation {};   // what is shown (see ApplyPresentation)
     ImageCore::AlphaUsage m_alphaUsageOverride { ImageCore::AlphaUsage::Auto };
-    uint32_t m_sourceMipLevels { 1 };
-    uint32_t m_sourceMipIndex { 0 };
-    uint32_t m_sourceWidth { 0 };
-    uint32_t m_sourceHeight { 0 };
     bool m_selectingMip { false };
-    bool m_gpuPresentation { false };
-    PresentationKind m_presentationKind { PresentationKind::None };
-    FD2D::GraphicsResourceStamp m_presentationStamp {};
-    ImageSourceIdentity m_presentationIdentity {};
     // Identity of the file when the current decode was requested.
     ImageSourceIdentity m_requestIdentity {};
     // Mip to select once a reload of a replaced source has presented mip 0

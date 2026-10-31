@@ -10,6 +10,7 @@ add_executable(FICture2Tests
     IdleRenderingTests.cpp
     MainImagePresentationTests.cpp
     MainImageViewTests.cpp
+    MainImagePresentationStateTests.cpp
     MainImageTestSupport.h
     MainImageHandoffTests.cpp
     CompressedPassthroughTests.cpp
@@ -55,6 +56,7 @@ add_executable(FICture2Tests
     ${PROJECT_SOURCE_DIR}/ImageAlphaPresentation.cpp
     ${PROJECT_SOURCE_DIR}/ImageBrowserMainImage.cpp
     ${PROJECT_SOURCE_DIR}/ImageBrowserMainImageView.cpp
+    ${PROJECT_SOURCE_DIR}/ImageBrowserMainImagePresentation.cpp
     ${PROJECT_SOURCE_DIR}/ImageBrowserThumbImage.cpp
     ${PROJECT_SOURCE_DIR}/ImageBrowserThumbModel.cpp
     ${PROJECT_SOURCE_DIR}/ImageBrowserThumbPayloadCache.cpp
@@ -159,6 +161,7 @@ fic2_add_test_group(GpuPresentation GpuPresentation_)
 fic2_add_test_group(MainImage MainImage_)
 fic2_add_test_group(MainImageHandoff MainImageHandoff_)
 fic2_add_test_group(MainImageView MainImageView_)
+fic2_add_test_group(MainImagePresentationState MainImagePresentationState_)
 fic2_add_test_group(CompressedPassthrough CompressedPassthrough_)
 fic2_add_test_group(SrgbReadback SrgbReadback_)
 fic2_add_test_group(IdleRendering IdleRendering_)

@@ -313,22 +313,8 @@ void ImageBrowserMainImage::ApplyPresentation(
     uint32_t sourceMipIndex,
     const ImageSourceIdentity& identity)
 {
-    m_loadedW = width;
-    m_loadedH = height;
-    m_loadedFormat = format;
-    m_alpha = alpha;
-    m_sourceMipLevels = (std::max)(1u, sourceMipLevels);
-    m_sourceMipIndex = sourceMipIndex;
-    if (sourceMipIndex == 0)
-    {
-        m_sourceWidth = width;
-        m_sourceHeight = height;
-    }
-    m_presentationKind = kind;
-    m_gpuPresentation = (kind == PresentationKind::ShaderResource);
-    // An SRV belongs to the device, a D2D bitmap to the render target.
-    m_presentationStamp = (kind == PresentationKind::ShaderResource) ? CurrentDeviceStamp() : CurrentTargetStamp();
-    m_presentationIdentity = identity;
+    m_presentation.Apply(kind, width, height, format, alpha, sourceMipLevels, sourceMipIndex, identity,
+        CurrentDeviceStamp(), CurrentTargetStamp());
     m_needsCpuReupload = false;
     m_selectingMip = false;
     // Owners are told about the new path once its metadata is in place.
@@ -338,18 +324,7 @@ void ImageBrowserMainImage::ApplyPresentation(
 
 void ImageBrowserMainImage::ResetPresentation()
 {
-    m_loadedW = 0;
-    m_loadedH = 0;
-    m_loadedFormat = DXGI_FORMAT_UNKNOWN;
-    m_alpha = {};
-    m_sourceMipLevels = 1;
-    m_sourceMipIndex = 0;
-    m_sourceWidth = 0;
-    m_sourceHeight = 0;
-    m_gpuPresentation = false;
-    m_presentationKind = PresentationKind::None;
-    m_presentationStamp = {};
-    m_presentationIdentity = {};
+    m_presentation.Reset();
 }
 
 HRESULT ImageBrowserMainImage::CreateBgraShaderResource(
@@ -446,9 +421,9 @@ void ImageBrowserMainImage::SyncTextureDrawState()
     ds.alphaCheckerboardEnabled = m_alphaCheckerboardEnabled;
     ds.channelMode = m_channelMode;
     ds.sourceAlphaEncoding =
-        m_alpha.encoding == ImageCore::AlphaEncoding::Premultiplied ? 1 : 0;
+        m_presentation.alpha.encoding == ImageCore::AlphaEncoding::Premultiplied ? 1 : 0;
     ds.sourceAlphaUsage =
-        ResolveAlphaUsage(m_alpha, m_alphaUsageOverride) == ImageCore::AlphaUsage::Data
+        ResolveAlphaUsage(m_presentation.alpha, m_alphaUsageOverride) == ImageCore::AlphaUsage::Data
             ? 1
             : 0;
     m_texture->SetDrawState(ds);
@@ -459,9 +434,9 @@ void ImageBrowserMainImage::SyncTextureDrawState()
 
 bool ImageBrowserMainImage::TryGetContentSize(D2D1_SIZE_F& outSize) const
 {
-    if (m_loadedW > 0 && m_loadedH > 0)
+    if (m_presentation.width > 0 && m_presentation.height > 0)
     {
-        outSize = { static_cast<float>(m_loadedW), static_cast<float>(m_loadedH) };
+        outSize = { static_cast<float>(m_presentation.width), static_cast<float>(m_presentation.height) };
         return true;
     }
 
@@ -485,7 +460,7 @@ bool ImageBrowserMainImage::HasDisplayedContentForCurrentPath() const
         return false;
     }
 
-    if (m_sourceMipIndex != m_request.mipLevel)
+    if (m_presentation.mipIndex != m_request.mipLevel)
     {
         return false;
     }
@@ -536,26 +511,26 @@ ImageViewTransform ImageBrowserMainImage::GetViewTransform() const
     vt.panY = m_view.PanY();
     vt.rotationQuarters = m_view.RotationQuarters();
     vt.channelMode = m_channelMode;
-    vt.mipLevel = m_sourceMipIndex;
+    vt.mipLevel = m_presentation.mipIndex;
     return vt;
 }
 
 ImageLoadedInfo ImageBrowserMainImage::GetLoadedInfo() const
 {
     ImageLoadedInfo info {};
-    info.width = m_loadedW;
-    info.height = m_loadedH;
-    info.format = m_loadedFormat;
-    info.sourceMipLevels = (std::max)(1u, m_sourceMipLevels);
-    info.sourceMipIndex = m_sourceMipIndex;
-    info.sourceWidth = m_sourceWidth;
-    info.sourceHeight = m_sourceHeight;
-    info.alphaEncoding = m_alpha.encoding;
-    info.alphaUsageHint = m_alpha.usageHint;
+    info.width = m_presentation.width;
+    info.height = m_presentation.height;
+    info.format = m_presentation.format;
+    info.sourceMipLevels = (std::max)(1u, m_presentation.mipLevels);
+    info.sourceMipIndex = m_presentation.mipIndex;
+    info.sourceWidth = m_presentation.sourceWidth;
+    info.sourceHeight = m_presentation.sourceHeight;
+    info.alphaEncoding = m_presentation.alpha.encoding;
+    info.alphaUsageHint = m_presentation.alpha.usageHint;
     info.alphaUsageOverride = m_alphaUsageOverride;
     info.effectiveAlphaUsage = EffectiveAlphaUsage();
-    info.sourceWasBlockCompressed = m_alpha.sourceWasBlockCompressed;
-    info.gpuPresentation = m_gpuPresentation;
+    info.sourceWasBlockCompressed = m_presentation.alpha.sourceWasBlockCompressed;
+    info.gpuPresentation = m_presentation.Gpu();
     info.channelMode = m_channelMode;
     info.alphaCheckerboardEnabled = m_alphaCheckerboardEnabled;
     info.highQualitySampling = m_highQualitySampling;
@@ -573,9 +548,9 @@ void ImageBrowserMainImage::SetViewTransform(const ImageViewTransform& vt, bool 
         CommonUtil::NowMs());
     m_channelMode = (std::max)(0, (std::min)(4, vt.channelMode));
 
-    const uint32_t maxMip = (std::max)(1u, m_sourceMipLevels) - 1u;
+    const uint32_t maxMip = (std::max)(1u, m_presentation.mipLevels) - 1u;
     const uint32_t desiredMip = (std::min)(vt.mipLevel, maxMip);
-    if (desiredMip != m_sourceMipIndex || desiredMip != m_request.mipLevel)
+    if (desiredMip != m_presentation.mipIndex || desiredMip != m_request.mipLevel)
     {
         const bool prevSuppress = m_suppressViewNotify;
         m_suppressViewNotify = true;
@@ -697,7 +672,7 @@ void ImageBrowserMainImage::SetAlphaUsageOverride(ImageCore::AlphaUsage usage)
 
     m_alphaUsageOverride = usage;
     SyncTextureDrawState();
-    if (!m_gpuPresentation && m_cpuPayload.blocks && !m_cpuPayload.sourcePath.empty())
+    if (!m_presentation.Gpu() && m_cpuPayload.blocks && !m_cpuPayload.sourcePath.empty())
     {
         m_needsCpuReupload = true;
     }
@@ -710,36 +685,36 @@ void ImageBrowserMainImage::SetAlphaUsageOverride(ImageCore::AlphaUsage usage)
 
 ImageCore::AlphaUsage ImageBrowserMainImage::EffectiveAlphaUsage() const
 {
-    return ResolveAlphaUsage(m_alpha, m_alphaUsageOverride);
+    return ResolveAlphaUsage(m_presentation.alpha, m_alphaUsageOverride);
 }
 
 std::wstring ImageBrowserMainImage::InformationText() const
 {
-    if (m_loadedFilePath.empty() || m_loadedW == 0 || m_loadedH == 0)
+    if (m_loadedFilePath.empty() || m_presentation.width == 0 || m_presentation.height == 0)
     {
         return L"No image is loaded.";
     }
 
-    const int bpp = BitsPerPixel(m_loadedFormat);
+    const int bpp = BitsPerPixel(m_presentation.format);
     std::wstring text =
         L"Path: " + m_loadedFilePath +
         L"\n\nCurrent dimensions: " +
-        std::to_wstring(m_loadedW) + L" \u00d7 " + std::to_wstring(m_loadedH) +
+        std::to_wstring(m_presentation.width) + L" \u00d7 " + std::to_wstring(m_presentation.height) +
         L"\nSource dimensions: " +
-        std::to_wstring(m_sourceWidth) + L" \u00d7 " + std::to_wstring(m_sourceHeight) +
-        L"\nPixel format: DXGI " + std::to_wstring(static_cast<unsigned>(m_loadedFormat)) +
+        std::to_wstring(m_presentation.sourceWidth) + L" \u00d7 " + std::to_wstring(m_presentation.sourceHeight) +
+        L"\nPixel format: DXGI " + std::to_wstring(static_cast<unsigned>(m_presentation.format)) +
         L"\nEffective bits per pixel: " +
         (bpp > 0 ? std::to_wstring(bpp) : L"Unknown") +
         L"\nMip level: " +
-        std::to_wstring(m_sourceMipIndex) + L" / " +
-        std::to_wstring((std::max)(1u, m_sourceMipLevels) - 1u) +
-        L" (" + std::to_wstring((std::max)(1u, m_sourceMipLevels)) + L" levels)" +
+        std::to_wstring(m_presentation.mipIndex) + L" / " +
+        std::to_wstring((std::max)(1u, m_presentation.mipLevels) - 1u) +
+        L" (" + std::to_wstring((std::max)(1u, m_presentation.mipLevels)) + L" levels)" +
         L"\nSource compression: " +
-        (m_alpha.sourceWasBlockCompressed ? L"Block compressed" : L"Uncompressed") +
+        (m_presentation.alpha.sourceWasBlockCompressed ? L"Block compressed" : L"Uncompressed") +
         L"\nPresentation: " +
-        (m_gpuPresentation ? L"D3D11 texture" : L"D2D bitmap") +
-        L"\n\nAlpha encoding: " + AlphaEncodingName(m_alpha.encoding) +
-        L"\nAlpha decoder hint: " + AlphaUsageName(m_alpha.usageHint) +
+        (m_presentation.Gpu() ? L"D3D11 texture" : L"D2D bitmap") +
+        L"\n\nAlpha encoding: " + AlphaEncodingName(m_presentation.alpha.encoding) +
+        L"\nAlpha decoder hint: " + AlphaUsageName(m_presentation.alpha.usageHint) +
         L"\nAlpha override: " + AlphaUsageName(m_alphaUsageOverride) +
         L"\nEffective alpha usage: " + AlphaUsageName(EffectiveAlphaUsage()) +
         L"\n\nChannel: " + ChannelName(m_channelMode) +
@@ -753,8 +728,8 @@ std::wstring ImageBrowserMainImage::InformationText() const
         std::to_wstring(static_cast<int>(std::lround(m_view.PanY()))) +
         L" px\nSampling: " +
         (m_highQualitySampling
-            ? (m_gpuPresentation ? L"D3D11 anisotropic" : L"D2D smooth")
-            : (m_gpuPresentation ? L"D3D11 point" : L"D2D nearest"));
+            ? (m_presentation.Gpu() ? L"D3D11 anisotropic" : L"D2D smooth")
+            : (m_presentation.Gpu() ? L"D3D11 point" : L"D2D nearest"));
     return text;
 }
 
@@ -767,12 +742,12 @@ bool ImageBrowserMainImage::SelectMip(uint32_t mipLevel)
 
     // The previous source is still shown while the requested one loads: its
     // mips are not the requested source's.
-    if (m_presentationKind != PresentationKind::None && m_loadedFilePath != m_filePath)
+    if (m_presentation.Shown() && m_loadedFilePath != m_filePath)
     {
         return false;
     }
 
-    const uint32_t levels = (std::max)(1u, m_sourceMipLevels);
+    const uint32_t levels = (std::max)(1u, m_presentation.mipLevels);
     if (mipLevel >= levels)
     {
         return false;
@@ -785,7 +760,7 @@ bool ImageBrowserMainImage::SelectMip(uint32_t mipLevel)
     // mip is recorded before ReloadSource(), whose Invalidate() requests the
     // render that dispatches the reload.
     const ImageSourceIdentity current = ImageSourceIdentity::ForPath(m_filePath);
-    if (m_presentationKind != PresentationKind::None && current != m_presentationIdentity)
+    if (m_presentation.StaleFor(current))
     {
         m_mipAfterReload = mipLevel;
         ReloadSource();
@@ -793,7 +768,7 @@ bool ImageBrowserMainImage::SelectMip(uint32_t mipLevel)
     }
     m_mipAfterReload = 0;
 
-    if (mipLevel == m_sourceMipIndex && HasDisplayedContentForCurrentPath())
+    if (mipLevel == m_presentation.mipIndex && HasDisplayedContentForCurrentPath())
     {
         return true;
     }
@@ -830,12 +805,12 @@ bool ImageBrowserMainImage::SelectMip(uint32_t mipLevel)
 
 uint32_t ImageBrowserMainImage::MipLevel() const
 {
-    return m_sourceMipIndex;
+    return m_presentation.mipIndex;
 }
 
 uint32_t ImageBrowserMainImage::MipLevels() const
 {
-    return (std::max)(1u, m_sourceMipLevels);
+    return (std::max)(1u, m_presentation.mipLevels);
 }
 
 HRESULT ImageBrowserMainImage::SetSourceFile(const std::wstring& filePath)
@@ -864,9 +839,9 @@ HRESULT ImageBrowserMainImage::SetSourceFile(const std::wstring& filePath)
         // reload instead of keeping the stale presentation. Only the shown
         // presentation of this path is checked: a previous source may still be
         // shown while this one loads.
-        if (m_presentationKind != PresentationKind::None &&
+        if (m_presentation.Shown() &&
             m_loadedFilePath == normalized &&
-            m_presentationIdentity != current)
+            m_presentation.identity != current)
         {
             ReloadSource();
             return S_OK;
@@ -940,9 +915,9 @@ HRESULT ImageBrowserMainImage::SetSourceFile(const std::wstring& filePath)
 
     // Back to the source that is still on screen, but its file changed since
     // it was decoded: it no longer counts as presented, so it is decoded again.
-    if (m_presentationKind != PresentationKind::None &&
+    if (m_presentation.Shown() &&
         m_loadedFilePath == normalized &&
-        m_presentationIdentity != identity)
+        m_presentation.identity != identity)
     {
         SetLoadedFilePath({});
         ResetPresentation();
@@ -1115,10 +1090,10 @@ void ImageBrowserMainImage::TryReuploadCpuPayload(ID2D1RenderTarget* target)
             m_texture->SetShaderResource(srv);
             ApplyPresentation(PresentationKind::ShaderResource, m_cpuPayload.sourcePath, m_cpuPayload.width,
                 m_cpuPayload.height, m_cpuPayload.format, alpha, m_cpuPayload.sourceMipLevels,
-                m_cpuPayload.sourceMipIndex, m_presentationIdentity);
+                m_cpuPayload.sourceMipIndex, m_presentation.identity);
             ImageGpuResourceCache::Instance().Put(m_cpuPayload.sourcePath, m_cpuPayload.sourceMipIndex, srv,
-                m_cpuPayload.width, m_cpuPayload.height, DXGI_FORMAT_B8G8R8A8_UNORM, m_alpha,
-                m_sourceMipLevels, m_sourceMipIndex, m_presentationIdentity, DeviceGeneration());
+                m_cpuPayload.width, m_cpuPayload.height, DXGI_FORMAT_B8G8R8A8_UNORM, m_presentation.alpha,
+                m_presentation.mipLevels, m_presentation.mipIndex, m_presentation.identity, DeviceGeneration());
             return;
         }
     }
@@ -1131,7 +1106,7 @@ void ImageBrowserMainImage::TryReuploadCpuPayload(ID2D1RenderTarget* target)
         m_texture->SetBitmap(d2dBitmap);
         ApplyPresentation(PresentationKind::Bitmap, m_cpuPayload.sourcePath, m_cpuPayload.width,
             m_cpuPayload.height, m_cpuPayload.format, alpha, m_cpuPayload.sourceMipLevels,
-            m_cpuPayload.sourceMipIndex, m_presentationIdentity);
+            m_cpuPayload.sourceMipIndex, m_presentation.identity);
     }
     else
     {
@@ -1185,9 +1160,9 @@ void ImageBrowserMainImage::ApplyPendingPayload(ID2D1RenderTarget* target)
                     pending.width,
                     pending.height,
                     pending.format,
-                    m_alpha,
-                    m_sourceMipLevels,
-                    m_sourceMipIndex,
+                    m_presentation.alpha,
+                    m_presentation.mipLevels,
+                    m_presentation.mipIndex,
                     m_requestIdentity,
                     DeviceGeneration());
 
@@ -1237,9 +1212,9 @@ void ImageBrowserMainImage::ApplyPendingPayload(ID2D1RenderTarget* target)
                 pending.width,
                 pending.height,
                 DXGI_FORMAT_B8G8R8A8_UNORM,
-                m_alpha,
-                m_sourceMipLevels,
-                m_sourceMipIndex,
+                m_presentation.alpha,
+                m_presentation.mipLevels,
+                m_presentation.mipIndex,
                 m_requestIdentity,
                 DeviceGeneration());
 
@@ -1284,7 +1259,7 @@ void ImageBrowserMainImage::ApplyPendingPayload(ID2D1RenderTarget* target)
 
         // A replaced source was reloaded at mip 0 on behalf of a mip selection:
         // now that its size and mip count are known, continue to that mip.
-        if (m_mipAfterReload != 0 && m_sourceMipIndex == 0)
+        if (m_mipAfterReload != 0 && m_presentation.mipIndex == 0)
         {
             const uint32_t mip = m_mipAfterReload;
             m_mipAfterReload = 0;
@@ -1444,18 +1419,10 @@ void ImageBrowserMainImage::OnGraphicsInvalidated(
 
     // The generations of the presentation's own domain decide; FD2D::Image has
     // already dropped content from a changed domain.
-    bool domainChanged = false;
-    if (m_presentationKind == PresentationKind::ShaderResource)
-    {
-        domainChanged = !(m_presentationStamp == CurrentDeviceStamp());
-    }
-    else if (m_presentationKind == PresentationKind::Bitmap)
-    {
-        domainChanged = !(m_presentationStamp == CurrentTargetStamp());
-    }
+    const bool domainChanged = m_presentation.DomainChanged(CurrentDeviceStamp(), CurrentTargetStamp());
 
     const bool hasCpuPayload = m_cpuPayload.blocks && !m_cpuPayload.sourcePath.empty();
-    switch (DecidePresentationRecovery(m_presentationKind, domainChanged, hasCpuPayload))
+    switch (DecidePresentationRecovery(m_presentation.kind, domainChanged, hasCpuPayload))
     {
     case PresentationRecovery::Keep:
         // Includes an SRV across a target-only recreation: no downgrade to D2D.
@@ -1474,16 +1441,14 @@ void ImageBrowserMainImage::OnGraphicsInvalidated(
         // unless the lost content was a previous source still shown while the
         // requested one loads.
         const bool sameSource = (m_loadedFilePath == m_filePath);
-        const uint32_t sourceWidth = m_sourceWidth;
-        const uint32_t sourceHeight = m_sourceHeight;
-        const uint32_t sourceMipLevels = m_sourceMipLevels;
         SetLoadedFilePath({});
-        ResetPresentation();
         if (sameSource)
         {
-            m_sourceWidth = sourceWidth;
-            m_sourceHeight = sourceHeight;
-            m_sourceMipLevels = sourceMipLevels;
+            m_presentation.ResetKeepingSource();
+        }
+        else
+        {
+            ResetPresentation();
         }
         Invalidate();
         break;
@@ -1520,7 +1485,7 @@ void ImageBrowserMainImage::OnRender(ID2D1RenderTarget* target)
             {
                 // Keep the previously displayed mip and allow future attempts.
                 m_selectingMip = false;
-                m_request.mipLevel = m_sourceMipIndex;
+                m_request.mipLevel = m_presentation.mipIndex;
                 m_binding.ClearFailure();
                 m_binding.MarkSettled();
             }
