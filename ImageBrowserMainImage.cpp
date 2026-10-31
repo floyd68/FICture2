@@ -146,17 +146,6 @@ namespace
         OutputDebugStringW(msg.c_str());
     }
 
-    void RotateVectorByQuarters(float dx, float dy, int quarters, float& outX, float& outY)
-    {
-        switch (((quarters % 4) + 4) % 4)
-        {
-        case 1: outX = -dy; outY = dx;  break;
-        case 2: outX = -dx; outY = -dy; break;
-        case 3: outX = dy;  outY = -dx; break;
-        default: outX = dx; outY = dy;  break;
-        }
-    }
-
     bool IsCompressedDxgiFormat(DXGI_FORMAT fmt)
     {
         switch (fmt)
@@ -449,10 +438,10 @@ void ImageBrowserMainImage::SyncTextureDrawState()
     }
 
     FD2D::Image::DrawState ds {};
-    ds.zoomScale = m_zoomScale;
-    ds.panX = m_panX;
-    ds.panY = m_panY;
-    ds.rotationQuarters = m_rotationQuarters;
+    ds.zoomScale = m_view.Zoom();
+    ds.panX = m_view.PanX();
+    ds.panY = m_view.PanY();
+    ds.rotationQuarters = m_view.RotationQuarters();
     ds.highQualitySampling = m_highQualitySampling;
     ds.alphaCheckerboardEnabled = m_alphaCheckerboardEnabled;
     ds.channelMode = m_channelMode;
@@ -510,12 +499,12 @@ bool ImageBrowserMainImage::HasDisplayedContentForCurrentPath() const
     return px.width > 0 && px.height > 0;
 }
 
-void ImageBrowserMainImage::ClampPanToVisible()
+std::optional<MainImageView::PanBounds> ImageBrowserMainImage::PanBounds() const
 {
     D2D1_SIZE_F contentSize {};
     if (!TryGetContentSize(contentSize))
     {
-        return;
+        return std::nullopt;
     }
 
     const D2D1_RECT_F layoutRect = LayoutRect();
@@ -523,58 +512,29 @@ void ImageBrowserMainImage::ClampPanToVisible()
     const float layoutHeight = layoutRect.bottom - layoutRect.top;
     if (!(layoutWidth > 0.0f && layoutHeight > 0.0f && contentSize.width > 0.0f && contentSize.height > 0.0f))
     {
-        return;
+        return std::nullopt;
     }
 
-    const D2D1_RECT_F baseRect = FD2D::Util::ComputeAspectFitRect(layoutRect, contentSize);
-    const float width = baseRect.right - baseRect.left;
-    const float height = baseRect.bottom - baseRect.top;
-    if (width <= 0.0f || height <= 0.0f)
+    return MainImageView::PanBounds { layoutRect, FD2D::Util::ComputeAspectFitRect(layoutRect, contentSize) };
+}
+
+void ImageBrowserMainImage::ClampPanToVisible()
+{
+    if (const auto bounds = PanBounds())
     {
-        return;
+        m_view.ClampPan(*bounds);
     }
-
-    const float scaledWidth = width * m_zoomScale;
-    const float scaledHeight = height * m_zoomScale;
-    if (scaledWidth <= 0.0f || scaledHeight <= 0.0f)
-    {
-        return;
-    }
-
-    const float centerX = (baseRect.left + baseRect.right) * 0.5f;
-    const float centerY = (baseRect.top + baseRect.bottom) * 0.5f;
-    constexpr float kMinVisible = 1.0f;
-
-    float minPanX = (layoutRect.left + kMinVisible) - (centerX + scaledWidth * 0.5f);
-    float maxPanX = (layoutRect.right - kMinVisible) - (centerX - scaledWidth * 0.5f);
-    if (minPanX > maxPanX)
-    {
-        const float mid = (minPanX + maxPanX) * 0.5f;
-        minPanX = mid;
-        maxPanX = mid;
-    }
-    m_panX = (std::max)(minPanX, (std::min)(maxPanX, m_panX));
-
-    float minPanY = (layoutRect.top + kMinVisible) - (centerY + scaledHeight * 0.5f);
-    float maxPanY = (layoutRect.bottom - kMinVisible) - (centerY - scaledHeight * 0.5f);
-    if (minPanY > maxPanY)
-    {
-        const float mid = (minPanY + maxPanY) * 0.5f;
-        minPanY = mid;
-        maxPanY = mid;
-    }
-    m_panY = (std::max)(minPanY, (std::min)(maxPanY, m_panY));
 }
 
 ImageViewTransform ImageBrowserMainImage::GetViewTransform() const
 {
     ImageViewTransform vt {};
-    vt.zoomScale = m_zoomScale;
-    vt.targetZoomScale = m_targetZoomScale;
-    vt.zoomVelocity = m_zoomVelocity;
-    vt.panX = m_panX;
-    vt.panY = m_panY;
-    vt.rotationQuarters = m_rotationQuarters;
+    vt.zoomScale = m_view.Zoom();
+    vt.targetZoomScale = m_view.TargetZoom();
+    vt.zoomVelocity = m_view.ZoomVelocity();
+    vt.panX = m_view.PanX();
+    vt.panY = m_view.PanY();
+    vt.rotationQuarters = m_view.RotationQuarters();
     vt.channelMode = m_channelMode;
     vt.mipLevel = m_sourceMipIndex;
     return vt;
@@ -599,28 +559,19 @@ ImageLoadedInfo ImageBrowserMainImage::GetLoadedInfo() const
     info.channelMode = m_channelMode;
     info.alphaCheckerboardEnabled = m_alphaCheckerboardEnabled;
     info.highQualitySampling = m_highQualitySampling;
-    info.zoomScale = m_zoomScale;
-    info.panX = m_panX;
-    info.panY = m_panY;
-    info.rotationQuarters = m_rotationQuarters;
+    info.zoomScale = m_view.Zoom();
+    info.panX = m_view.PanX();
+    info.panY = m_view.PanY();
+    info.rotationQuarters = m_view.RotationQuarters();
     info.sourcePath = m_loadedFilePath;
     return info;
 }
 
 void ImageBrowserMainImage::SetViewTransform(const ImageViewTransform& vt, bool notify)
 {
-    m_zoomScale = vt.zoomScale;
-    m_targetZoomScale = vt.targetZoomScale;
-    m_zoomVelocity = vt.zoomVelocity;
-    m_panX = vt.panX;
-    m_panY = vt.panY;
-    m_rotationQuarters = ((vt.rotationQuarters % 4) + 4) % 4;
+    m_view.Set(vt.zoomScale, vt.targetZoomScale, vt.zoomVelocity, vt.panX, vt.panY, vt.rotationQuarters,
+        CommonUtil::NowMs());
     m_channelMode = (std::max)(0, (std::min)(4, vt.channelMode));
-
-    m_panning = false;
-    m_panArmed = false;
-    m_pointerZoomActive = false;
-    m_lastZoomAnimMs = CommonUtil::NowMs();
 
     const uint32_t maxMip = (std::max)(1u, m_sourceMipLevels) - 1u;
     const uint32_t desiredMip = (std::min)(vt.mipLevel, maxMip);
@@ -794,12 +745,12 @@ std::wstring ImageBrowserMainImage::InformationText() const
         L"\n\nChannel: " + ChannelName(m_channelMode) +
         L"\nCheckerboard: " + (m_alphaCheckerboardEnabled ? L"On" : L"Off") +
         L"\nZoom: " +
-        std::to_wstring(static_cast<int>(std::lround(m_zoomScale * 100.0f))) +
+        std::to_wstring(static_cast<int>(std::lround(m_view.Zoom() * 100.0f))) +
         L"%\nRotation: " +
-        std::to_wstring((((m_rotationQuarters % 4) + 4) % 4) * 90) +
+        std::to_wstring(m_view.RotationQuarters() * 90) +
         L"\u00b0\nPan: " +
-        std::to_wstring(static_cast<int>(std::lround(m_panX))) + L", " +
-        std::to_wstring(static_cast<int>(std::lround(m_panY))) +
+        std::to_wstring(static_cast<int>(std::lround(m_view.PanX()))) + L", " +
+        std::to_wstring(static_cast<int>(std::lround(m_view.PanY()))) +
         L" px\nSampling: " +
         (m_highQualitySampling
             ? (m_gpuPresentation ? L"D3D11 anisotropic" : L"D2D smooth")
@@ -893,9 +844,8 @@ HRESULT ImageBrowserMainImage::SetSourceFile(const std::wstring& filePath)
 
     if (!normalized.empty() && normalized != m_filePath)
     {
-        if (m_panning)
+        if (m_view.ResetForNewSource(CommonUtil::NowMs()))
         {
-            m_panning = false;
             if (BackplateRef() != nullptr && BackplateRef()->Window() != nullptr)
             {
                 if (GetCapture() == BackplateRef()->Window())
@@ -904,11 +854,6 @@ HRESULT ImageBrowserMainImage::SetSourceFile(const std::wstring& filePath)
                 }
             }
         }
-
-        m_rotationQuarters = 0;
-        m_pointerZoomActive = false;
-        m_zoomVelocity = 0.0f;
-        m_lastZoomAnimMs = CommonUtil::NowMs();
     }
 
     if (!normalized.empty() && normalized == m_filePath)
@@ -1053,9 +998,7 @@ void ImageBrowserMainImage::SetInteractionEnabled(bool enabled)
     m_interactionEnabled = enabled;
     if (!m_interactionEnabled)
     {
-        m_panArmed = false;
-        m_panning = false;
-        m_pointerZoomActive = false;
+        m_view.EndGestures();
         if (BackplateRef() != nullptr && BackplateRef()->Window() != nullptr)
         {
             if (GetCapture() == BackplateRef()->Window())
@@ -1626,10 +1569,7 @@ void ImageBrowserMainImage::OnRenderD3D(ID3D11DeviceContext* context)
 
 void ImageBrowserMainImage::SetZoomScale(float scale)
 {
-    constexpr float kMinZoom = 0.1f;
-    constexpr float kMaxZoom = 50.0f;
-    m_targetZoomScale = std::max(kMinZoom, std::min(kMaxZoom, scale));
-    m_lastZoomAnimMs = CommonUtil::NowMs();
+    m_view.SetTargetZoom(scale, CommonUtil::NowMs());
     if (BackplateRef() != nullptr)
     {
         BackplateRef()->RequestAnimationFrame();
@@ -1639,13 +1579,7 @@ void ImageBrowserMainImage::SetZoomScale(float scale)
 
 void ImageBrowserMainImage::ResetZoom()
 {
-    m_targetZoomScale = 1.0f;
-    m_zoomVelocity = 0.0f;
-    m_panX = 0.0f;
-    m_panY = 0.0f;
-    m_panning = false;
-    m_pointerZoomActive = false;
-    m_lastZoomAnimMs = CommonUtil::NowMs();
+    m_view.ResetZoom(CommonUtil::NowMs());
     if (BackplateRef() != nullptr)
     {
         BackplateRef()->RequestAnimationFrame();
@@ -1656,60 +1590,23 @@ void ImageBrowserMainImage::ResetZoom()
 
 void ImageBrowserMainImage::SetZoomStiffness(float stiffness)
 {
-    m_zoomStiffness = std::max(10.0f, std::min(500.0f, stiffness));
+    m_view.SetStiffness(stiffness);
 }
 
 void ImageBrowserMainImage::AdvanceZoomAnimation(unsigned long long nowMs)
 {
-    const float zoomBefore = m_zoomScale;
-    const float panXBefore = m_panX;
-    const float panYBefore = m_panY;
+    const float zoomBefore = m_view.Zoom();
+    const float panXBefore = m_view.PanX();
+    const float panYBefore = m_view.PanY();
 
-    if (m_lastZoomAnimMs == 0)
-    {
-        m_lastZoomAnimMs = nowMs;
-    }
-
-    const unsigned long long elapsed = nowMs - m_lastZoomAnimMs;
-    m_lastZoomAnimMs = nowMs;
-
-    if (elapsed == 0)
+    const D2D1_RECT_F r = LayoutRect();
+    const MainImageView::Step step = m_view.Advance(
+        nowMs, (r.left + r.right) * 0.5f, (r.top + r.bottom) * 0.5f, PanBounds());
+    if (step == MainImageView::Step::Idle)
     {
         return;
     }
-
-    const float dt = static_cast<float>(elapsed) / 1000.0f;
-    const float stiffness = m_zoomStiffness;
-    const float damping = 2.0f * std::sqrt(stiffness);
-    const float diff = m_targetZoomScale - m_zoomScale;
-
-    m_zoomVelocity += (diff * stiffness - m_zoomVelocity * damping) * dt;
-    m_zoomScale += m_zoomVelocity * dt;
-
-    if (m_pointerZoomActive && !m_panning)
-    {
-        const float startZoom = (m_pointerZoomStartZoom > 0.0001f) ? m_pointerZoomStartZoom : 0.0001f;
-        const float ratio = m_zoomScale / startZoom;
-
-        const D2D1_RECT_F r = LayoutRect();
-        const float centerX = (r.left + r.right) * 0.5f;
-        const float centerY = (r.top + r.bottom) * 0.5f;
-        const float dx = m_pointerZoomMouseX - centerX;
-        const float dy = m_pointerZoomMouseY - centerY;
-
-        m_panX = dx - ((dx - m_pointerZoomStartPanX) * ratio);
-        m_panY = dy - ((dy - m_pointerZoomStartPanY) * ratio);
-    }
-
-    ClampPanToVisible();
-
-    if (std::abs(diff) < 0.001f && std::abs(m_zoomVelocity) < 0.001f)
-    {
-        m_zoomScale = m_targetZoomScale;
-        m_zoomVelocity = 0.0f;
-        m_pointerZoomActive = false;
-    }
-    else if (BackplateRef() != nullptr)
+    if (step == MainImageView::Step::Animating && BackplateRef() != nullptr)
     {
         BackplateRef()->RequestAnimationFrame();
     }
@@ -1717,7 +1614,7 @@ void ImageBrowserMainImage::AdvanceZoomAnimation(unsigned long long nowMs)
     // Synchronized panes follow only real changes of the effective transform;
     // a settled animation called from every render pass must not keep
     // re-broadcasting (and invalidating the other pane).
-    const bool changed = m_zoomScale != zoomBefore || m_panX != panXBefore || m_panY != panYBefore;
+    const bool changed = m_view.Zoom() != zoomBefore || m_view.PanX() != panXBefore || m_view.PanY() != panYBefore;
     if (changed && !m_suppressViewNotify && m_onViewChanged)
     {
         m_onViewChanged(GetViewTransform());
@@ -1775,13 +1672,7 @@ bool ImageBrowserMainImage::OnInputEvent(const FD2D::InputEvent& event)
             static_cast<float>(pt.y) >= r.top &&
             static_cast<float>(pt.y) <= r.bottom)
         {
-            m_panArmed = true;
-            m_panning = false;
-            m_pointerZoomActive = false;
-            m_panStartX = static_cast<float>(pt.x);
-            m_panStartY = static_cast<float>(pt.y);
-            m_panStartOffsetX = m_panX;
-            m_panStartOffsetY = m_panY;
+            m_view.Press(static_cast<float>(pt.x), static_cast<float>(pt.y));
 
             if (BackplateRef() != nullptr && BackplateRef()->Window() != nullptr)
             {
@@ -1797,36 +1688,12 @@ bool ImageBrowserMainImage::OnInputEvent(const FD2D::InputEvent& event)
         {
             break;
         }
-        if (m_panArmed || m_panning)
+        const MainImageView::Move move = m_view.MoveTo(
+            static_cast<float>(event.point.x), static_cast<float>(event.point.y), PanBounds());
+        if (move != MainImageView::Move::NotPressed)
         {
-            POINT pt = event.point;
-            const float screenDeltaX = static_cast<float>(pt.x) - m_panStartX;
-            const float screenDeltaY = static_cast<float>(pt.y) - m_panStartY;
-
-            if (!m_panning)
+            if (move == MainImageView::Move::Panned)
             {
-                constexpr float kStartThresholdPx = 3.0f;
-                if (std::abs(screenDeltaX) >= kStartThresholdPx ||
-                    std::abs(screenDeltaY) >= kStartThresholdPx)
-                {
-                    m_panning = true;
-                }
-            }
-
-            if (m_panning)
-            {
-                float deltaX = screenDeltaX;
-                float deltaY = screenDeltaY;
-                if (m_rotationQuarters != 0)
-                {
-                    const int inverseQuarters = (4 - m_rotationQuarters) % 4;
-                    RotateVectorByQuarters(screenDeltaX, screenDeltaY, inverseQuarters, deltaX, deltaY);
-                }
-
-                m_panX = m_panStartOffsetX + deltaX;
-                m_panY = m_panStartOffsetY + deltaY;
-                ClampPanToVisible();
-                m_pointerZoomActive = false;
                 SyncTextureDrawState();
                 Invalidate();
                 if (!m_suppressViewNotify && m_onViewChanged)
@@ -1846,18 +1713,15 @@ bool ImageBrowserMainImage::OnInputEvent(const FD2D::InputEvent& event)
         {
             break;
         }
-        if (m_panArmed || m_panning)
+        const MainImageView::Release release = m_view.ReleasePointer();
+        if (release != MainImageView::Release::NotPressed)
         {
-            const bool wasPanning = m_panning;
-            m_panning = false;
-            m_panArmed = false;
-
             if (BackplateRef() != nullptr && BackplateRef()->Window() != nullptr)
             {
                 ReleaseCapture();
             }
 
-            if (!wasPanning && m_onClick)
+            if (release == MainImageView::Release::Click && m_onClick)
             {
                 m_onClick();
             }
@@ -1867,12 +1731,11 @@ bool ImageBrowserMainImage::OnInputEvent(const FD2D::InputEvent& event)
     }
     case FD2D::InputEventType::CaptureChanged:
     {
-        if ((m_panArmed || m_panning) &&
+        if (m_view.PointerDown() &&
             BackplateRef() != nullptr &&
             GetCapture() != BackplateRef()->Window())
         {
-            m_panning = false;
-            m_panArmed = false;
+            m_view.CancelPointer();
         }
         break;
     }
@@ -1890,20 +1753,13 @@ bool ImageBrowserMainImage::OnInputEvent(const FD2D::InputEvent& event)
             static_cast<float>(pt.y) >= r.top &&
             static_cast<float>(pt.y) <= r.bottom)
         {
-            const short delta = event.wheelDelta;
-            const bool shiftPressed = event.modifiers.shift;
-            const float zoomStep = shiftPressed ? 0.1f : 0.5f;
-            const float zoomFactor = (delta > 0) ? (1.0f + zoomStep) : (1.0f / (1.0f + zoomStep));
-            const float newZoom = m_targetZoomScale * zoomFactor;
-
-            m_pointerZoomActive = true;
-            m_pointerZoomStartZoom = m_zoomScale;
-            m_pointerZoomStartPanX = m_panX;
-            m_pointerZoomStartPanY = m_panY;
-            m_pointerZoomMouseX = static_cast<float>(pt.x);
-            m_pointerZoomMouseY = static_cast<float>(pt.y);
-
-            SetZoomScale(newZoom);
+            m_view.WheelZoom(event.wheelDelta > 0, event.modifiers.shift,
+                static_cast<float>(pt.x), static_cast<float>(pt.y), CommonUtil::NowMs());
+            if (BackplateRef() != nullptr)
+            {
+                BackplateRef()->RequestAnimationFrame();
+            }
+            Invalidate();
 
             if (!m_suppressViewNotify && m_onViewChanged)
             {

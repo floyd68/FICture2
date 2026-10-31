@@ -9,6 +9,7 @@ add_executable(FICture2Tests
     GpuPresentationTests.cpp
     IdleRenderingTests.cpp
     MainImagePresentationTests.cpp
+    MainImageViewTests.cpp
     MainImageTestSupport.h
     MainImageHandoffTests.cpp
     CompressedPassthroughTests.cpp
@@ -49,6 +50,7 @@ add_executable(FICture2Tests
     ${PROJECT_SOURCE_DIR}/ImageGpuResourceCache.cpp
     ${PROJECT_SOURCE_DIR}/ImageAlphaPresentation.cpp
     ${PROJECT_SOURCE_DIR}/ImageBrowserMainImage.cpp
+    ${PROJECT_SOURCE_DIR}/ImageBrowserMainImageView.cpp
     ${PROJECT_SOURCE_DIR}/ImageBrowserThumbImage.cpp
     ${PROJECT_SOURCE_DIR}/ImageBrowserThumbModel.cpp
     ${PROJECT_SOURCE_DIR}/ImageBrowserThumbPayloadCache.cpp
