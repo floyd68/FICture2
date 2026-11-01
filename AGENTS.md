@@ -206,24 +206,36 @@ the latest `master` commit. Never start a release without this command.
    pushed to `master` directly. Compute
    `<version>` from the commit count that includes the squash commit. The
    squash commit is the release commit. Never force-push `master`.
-4. **Build and publish:** build the installer with the existing scripts
-   (`build_winget.bat` + `pack_winget.bat` for the Inno Setup installer
-   `FICture2-Setup-<MAJOR.MINOR>.exe`), tag `v<version>` on the release commit,
-   push the tag, and create the GitHub Release with `gh release create`
-   (title `FICture2 v<version>`, installer attached, notes from that version's
-   README `What's New` items).
+4. **Build and publish (CI):** tag `v<version>` on the release commit and push
+   the tag. That starts the `Release` workflow (`.github/workflows/release.yml`),
+   which does the following and stops before publishing if the tag differs
+   from the built version:
+   - builds the winget-channel installer `FICture2-Setup-<MAJOR.MINOR>.exe`
+     with Visual Studio 2026;
+   - creates the GitHub Release `FICture2 v<version>` with the installer
+     attached. Its notes are the README `What's New` items added since the
+     previous `v*` tag;
+   - attaches the winget manifests;
+   - submits the winget update when the `WINGET_TOKEN` secret is set.
+
+   Watch the run to the end (`gh run watch`) and report the release URL. The
+   local scripts (`build_winget.bat` + `pack_winget.bat`) are a fallback only.
 5. **On failure:** act on the actual remote state, not the error message.
    Check `gh release view v<version>`:
-   - no release: fix the cause (code goes through the normal issue → PR flow),
-     then re-tag and retry; delete only a local tag created by this attempt
-     that does not exist remotely;
-   - leftover draft or partial assets: delete the draft, keep the tag if it
-     still points at the release commit, retry;
-   - already published: never delete or overwrite it automatically; report
-     and let the maintainer decide.
-6. Winget submission (`release_winget.bat`, `submit_winget.bat`), the Microsoft
-   Store package (`build_store.bat`) and the Nexus upload stay manual
-   (maintainer) unless explicitly requested. Report the installer to use.
+   - no release: fix the cause (code goes through the normal issue → PR flow).
+     If the tag still points at the release commit, re-run the workflow
+     (`gh run rerun`); otherwise re-tag and push again. Delete only a tag
+     created by this attempt;
+   - a draft (the run failed before publishing): re-run the workflow, which
+     resumes the draft (`packaging/ci/Publish-Release.ps1`);
+   - already published: never delete or overwrite it automatically. A re-run
+     only adds a missing manifests zip and repeats the winget submission.
+     Report anything else and let the maintainer decide.
+6. Without `WINGET_TOKEN`, winget submission stays manual: submit the
+   manifests attached to the release, or use `submit_winget.bat`. The
+   Microsoft Store package (`build_store.bat`) and the Nexus upload also stay
+   manual (maintainer) unless explicitly requested. Report the release and
+   its installer.
 
 ## Commits
 

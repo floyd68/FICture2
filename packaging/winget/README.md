@@ -2,10 +2,19 @@
 
 This guide describes the process for packaging and submitting FICture2 to the Windows Package Manager (winget).
 
+Releases are built and published by CI: pushing a `v*` tag runs `.github/workflows/release.yml`. The workflow:
+
+1. builds the winget-channel installer with Visual Studio 2026;
+2. creates the GitHub Release with the installer;
+3. attaches `winget-manifests-<version>.zip`, built from the release asset URL and SHA256;
+4. submits the winget update when the `WINGET_TOKEN` repository secret is set. The secret is a GitHub token that can fork `microsoft/winget-pkgs` and open a pull request there.
+
+The local scripts below are the manual fallback.
+
 ## Prerequisites
 
 ### Required Software
-- **Visual Studio 2022** with C++ desktop development
+- **Visual Studio 2026** with C++ desktop development
 - **CMake** 3.21 or later
 - **Inno Setup 6** - [Download](https://jrsoftware.org/isdl.php)
 - **Git** for version control
@@ -31,8 +40,8 @@ This guide describes the process for packaging and submitting FICture2 to the Wi
          │
          ▼
 ┌─────────────────┐
-│ 3. Release      │  release_winget.bat
-│    to GitHub    │  → Creates tag & release
+│ 3. Fetch        │  release_winget.bat
+│    manifests    │  → From the CI release
 └────────┬────────┘
          │
          ▼
@@ -87,27 +96,25 @@ pack_winget.bat
 - If Inno Setup Compiler not found, install from [jrsoftware.org](https://jrsoftware.org/isdl.php)
 - Check that all required DLLs are included
 
-### Step 3: Release to GitHub
+### Step 3: Fetch the manifests of the CI release
 
 ```cmd
-release_winget.bat
+release_winget.bat [v{VERSION}]
 ```
 
+The GitHub Release itself is created only by CI when the `v{VERSION}` tag is pushed (`.github/workflows/release.yml`); this script never pushes a tag or creates a release, so a tag has a single publisher.
+
 **What it does:**
-- Extracts version from CMake cache
-- Checks for uncommitted changes
-- Creates git tag `v{VERSION}`
-- Pushes code and tag to GitHub
-- Creates GitHub release with installer
-- Updates CMake configuration with release URL and SHA256
-- Generates winget manifest files
+- Takes the tag from its argument, or `v` + the version in `build_winget\CMakeCache.txt`
+- Checks that the release is published
+- Downloads its `winget-manifests-{VERSION}.zip` (built by CI from the published installer's URL and SHA256)
+- Extracts it into `build_winget\winget_manifests\`
 
 **Prerequisites:**
 - GitHub CLI authenticated: `gh auth login`
-- Clean git working directory (or accept warning)
+- `build_winget` configured for the same version (`build_winget.bat`), because `submit_winget.bat` reads the version from its CMake cache
 
 **Output:**
-- GitHub release with installer attached
 - Three manifest files in `build_winget\winget_manifests\`:
   - `floyd68.FICture2.yaml` (version manifest)
   - `floyd68.FICture2.installer.yaml` (installer details)
@@ -223,13 +230,9 @@ Common reasons:
    - Increases user trust
    - Required by some organizations
 
-## Automation Options
+## Automation
 
-For future automation, consider:
-- GitHub Actions workflow for building
-- Automated smoke tests
-- Automatic PR creation
-- Integration with CI/CD pipeline
+`.github/workflows/release.yml` builds, packages and publishes each `v*` tag, as described at the top of this guide. A pull request that changes that workflow or the packaging files runs the same build and pack, and uploads the installer as an artifact without publishing anything.
 
 ## References
 
