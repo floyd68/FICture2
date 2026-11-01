@@ -2,7 +2,7 @@
 
 **FICture2** is an ultra-lightweight, high-performance image viewer and comparison tool built **specifically for game modders and texture artists**.
 
-It aims for a **sub-1MB executable** with **near-instant startup** — no splash screen, no heavy frameworks, no delay.
+It ships as a **single, self-contained executable of about 2 MB** with **near-instant startup** — no splash screen, no runtime to install, no heavy frameworks, no delay.
 Double-click a texture and you're already comparing it.
 
 > **FICture2** is an acronym for **Floyd's Image Compare miniaTURE 2**.
@@ -133,7 +133,7 @@ FICture2 is a **natural companion tool for Vortex**.
 
 ## Ultra-light, zero bloat
 
-- Executable size target: **< 1 MB** (size-first release builds)
+- Single self-contained executable (**about 2 MB**, size-first release builds) — no VC++ redistributable or other runtime to install
 - Near-instant cold start
 - No runtime frameworks
 - No background services
@@ -150,7 +150,7 @@ FICture2 is a **natural companion tool for Vortex**.
 - Performance-first design
 - Feedback welcome
 
-> **A sub-1MB, ultra-fast image viewer that finally handles DDS BCn textures correctly — built for modders.**
+> **A lightweight, ultra-fast image viewer in a single small executable that finally handles DDS BCn textures correctly — built for modders.**
 
 ## Tech overview
 
