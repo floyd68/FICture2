@@ -226,10 +226,11 @@ the latest `master` commit. Never start a release without this command.
      If the tag still points at the release commit, re-run the workflow
      (`gh run rerun`); otherwise re-tag and push again. Delete only a tag
      created by this attempt;
-   - leftover draft or partial assets: delete the draft, keep the tag if it
-     still points at the release commit, retry;
-   - already published: never delete or overwrite it automatically; report
-     and let the maintainer decide.
+   - a draft (the run failed before publishing): re-run the workflow, which
+     resumes the draft (`packaging/ci/Publish-Release.ps1`);
+   - already published: never delete or overwrite it automatically. A re-run
+     only adds a missing manifests zip and repeats the winget submission.
+     Report anything else and let the maintainer decide.
 6. Without `WINGET_TOKEN`, winget submission stays manual: submit the
    manifests attached to the release, or use `submit_winget.bat`. The
    Microsoft Store package (`build_store.bat`) and the Nexus upload also stay
