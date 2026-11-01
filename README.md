@@ -7,6 +7,10 @@ Double-click a texture and you're already comparing it.
 
 > **FICture2** is an acronym for **Floyd's Image Compare miniaTURE 2**.
 
+## Development Resources
+
+A selection of FICture2 development work is shared on [Corpus Hub](https://github.com/xerj-org/xerj). Explore it on the [floyd68 contributor page](https://hub.xerj.org/contributors/floyd68).
+
 ## Demo Video
 
 [![FICture2 Demo](https://img.youtube.com/vi/2eowYOEa5dw/0.jpg)](https://youtu.be/2eowYOEa5dw)
