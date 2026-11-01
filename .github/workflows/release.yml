@@ -4,7 +4,7 @@
 # - checks that the tag matches the built version;
 # - publishes the GitHub Release with the installer, README notes and winget
 #   manifests: a draft first, published once complete. A re-run resumes it;
-#   see packaging/release/Publish-Release.ps1;
+#   see packaging/ci/Publish-Release.ps1;
 # - submits the winget update when the WINGET_TOKEN secret is set.
 # This is the only publisher of a tag; the local scripts do not create
 # releases.
@@ -90,7 +90,7 @@ jobs:
 
       - name: Test the publish logic (mocked gh)
         shell: pwsh
-        run: ./packaging/release/Publish-Release.Tests.ps1
+        run: ./packaging/ci/Publish-Release.Tests.ps1
 
       - name: Upload installer artifact
         uses: actions/upload-artifact@v4
@@ -125,7 +125,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          . ./packaging/release/Publish-Release.ps1
+          . ./packaging/ci/Publish-Release.ps1
           $zipName = 'winget-manifests-${{ steps.version.outputs.version }}.zip'
           $manifests = {
             param([string]$Url, [string]$Sha256)
