@@ -1,8 +1,13 @@
 # Release installer, built and published by CI (AGENTS.md "배포" step 4).
-# A v* tag push builds the winget-channel installer with Visual Studio 2026,
-# checks that the tag matches the built version, creates the GitHub Release
-# with the installer and README notes, attaches the winget manifests and,
-# when the WINGET_TOKEN secret is set, submits the winget update.
+# A v* tag push does the following:
+# - builds the winget-channel installer with Visual Studio 2026;
+# - checks that the tag matches the built version;
+# - publishes the GitHub Release with the installer, README notes and winget
+#   manifests: a draft first, published once complete. A re-run resumes it;
+#   see packaging/release/Publish-Release.ps1;
+# - submits the winget update when the WINGET_TOKEN secret is set.
+# This is the only publisher of a tag; the local scripts do not create
+# releases.
 # A pull request that changes this workflow or the packaging files runs the
 # same build and pack and only uploads the installer as an artifact.
 name: Release
@@ -83,6 +88,10 @@ jobs:
           "name=$($installer.Name)" >> $env:GITHUB_OUTPUT
           "sha256=$sha" >> $env:GITHUB_OUTPUT
 
+      - name: Test the publish logic (mocked gh)
+        shell: pwsh
+        run: ./packaging/release/Publish-Release.Tests.ps1
+
       - name: Upload installer artifact
         uses: actions/upload-artifact@v4
         with:
@@ -108,28 +117,27 @@ jobs:
           Set-Content -Path release-notes.md -Value $notes -Encoding utf8
           Write-Host "$($added.Count) items since $previous"
 
-      - name: Create GitHub Release
+      # Draft first, manifests attached, then published; a re-run resumes a
+      # draft and never overwrites a published release (Publish-Release.ps1).
+      - name: Publish GitHub Release
         if: github.ref_type == 'tag'
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release create '${{ github.ref_name }}' '${{ steps.package.outputs.path }}' --verify-tag --title 'FICture2 ${{ github.ref_name }}' --notes-file release-notes.md
-          if ($LASTEXITCODE) { exit $LASTEXITCODE }
-
-      - name: Attach winget manifests
-        if: github.ref_type == 'tag'
-        shell: pwsh
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          $url = 'https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/${{ steps.package.outputs.name }}'
-          cmake -S . -B build_winget "-DFICTURE2_WINGET_INSTALLER_URL=$url" '-DFICTURE2_WINGET_INSTALLER_SHA256=${{ steps.package.outputs.sha256 }}'
-          if ($LASTEXITCODE) { exit $LASTEXITCODE }
-          $zip = 'winget-manifests-${{ steps.version.outputs.version }}.zip'
-          Compress-Archive -Path build_winget/winget_manifests/*.yaml -DestinationPath $zip -Force
-          gh release upload '${{ github.ref_name }}' $zip
-          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          . ./packaging/release/Publish-Release.ps1
+          $zipName = 'winget-manifests-${{ steps.version.outputs.version }}.zip'
+          $manifests = {
+            param([string]$Url, [string]$Sha256)
+            cmake -S . -B build_winget "-DFICTURE2_WINGET_INSTALLER_URL=$Url" "-DFICTURE2_WINGET_INSTALLER_SHA256=$Sha256" | Out-Host
+            if ($LASTEXITCODE) { throw 'Generating the winget manifests failed' }
+            Compress-Archive -Path build_winget/winget_manifests/*.yaml -DestinationPath $zipName -Force
+            (Resolve-Path $zipName).Path
+          }
+          $result = Publish-Release -Tag '${{ github.ref_name }}' -Repository '${{ github.repository }}' `
+            -Installer '${{ steps.package.outputs.path }}' -NotesFile release-notes.md `
+            -ManifestsZipName $zipName -NewManifests $manifests
+          $result | Format-List | Out-Host
 
       - name: Submit winget update
         if: github.ref_type == 'tag'
@@ -138,7 +146,7 @@ jobs:
           WINGET_TOKEN: ${{ secrets.WINGET_TOKEN }}
         run: |
           if (-not $env:WINGET_TOKEN) {
-            Write-Host '::notice::WINGET_TOKEN is not set; the winget update is not submitted (manifests are attached to the release).'
+            Write-Host '::notice::WINGET_TOKEN is not set; the winget update is not submitted (the manifests are attached to the release).'
             exit 0
           }
           Invoke-WebRequest -Uri 'https://aka.ms/wingetcreate/latest' -OutFile wingetcreate.exe
