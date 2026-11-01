@@ -1,6 +1,6 @@
 [center][size=5][b]FICture2 – Ultra-Fast Image Compare & DDS Texture Viewer for Modders[/b][/size][/center]
 
-[center][size=6][url=https://github.com/floyd68/FICture2/releases/tag/1.7]v1.7 Release[/url][/size][/center]
+[center][size=6][url=https://github.com/floyd68/FICture2/releases/tag/v1.7.224.0]v1.7.224 Release[/url][/size][/center]
 
 [b]FICture2[/b] is an ultra-lightweight, high-performance image viewer and comparison tool built specifically for game modders and texture artists.
 
@@ -10,7 +10,23 @@ Double-click a texture and you're already comparing it.
 [center][size=4][b]📺 Demo Video[/b][/size]
 [youtube]2eowYOEa5dw[/youtube][/center]
 
-[size=4][b]🆕 What's New in v1.7[/b][/size]
+[size=4][b]🆕 What's New in v1.7.224[/b][/size]
+[list]
+[*][b]Fixed:[/b] Photos with an EXIF orientation (phones, most cameras) are shown upright in the main view, thumbnails and the info bar, as in Explorer and Photos[/*]
+[*][b]Fixed:[/b] [b]Ctrl + [[/b] / [b]Ctrl + ][/b] step DDS mip levels again[/*]
+[*][b]Fixed:[/b] sRGB DDS textures (BC1/BC3/BC7 or RGBA8 _SRGB) are no longer too dark in the main view, thumbnails or Explorer thumbnails; the info bar names their format (for example [b]BC7 sRGB[/b], [b]BC5 SNORM[/b])[/*]
+[*][b]Fixed:[/b] Thumbnails stay sharp after making the row taller and for wide images; small mipmapped DDS no longer show as a flat colour block[/*]
+[*][b]Fixed:[/b] Paths with characters outside the system code page (emoji, Japanese, Thai…) no longer crash, open in ZIP / 7Z / RAR, and survive session restore and Open Recent (the INI is now saved as Unicode)[/*]
+[*][b]Fixed:[/b] Exit no longer hangs on a stuck image or archive read; fast image switching no longer leaves images stuck loading; a replaced file no longer shows the old picture from the GPU cache[/*]
+[*][b]Fixed:[/b] Smaller UI fixes: thumbnails keep appearing while the window is dragged, the selection outline no longer runs under the strip scrollbar, added panes get the same strip height, quick strip actions no longer cancel each other, and no background flash when switching images[/*]
+[*][b]Improved:[/b] Thumbnails of large solid 7z / RAR archives load many times faster (about 11 s instead of about 110 s in a 240 MB test archive); slow archive, network and OneDrive reads no longer hold up local thumbnails[/*]
+[*][b]Improved:[/b] Online-only OneDrive files show Windows' thumbnail instead of being downloaded[/*]
+[*][b]Improved:[/b] Large folders stay light: only on-screen thumbnails plus a short margin are created, thumbnail memory is capped at 256 MB, and on-screen thumbnails load first[/*]
+[*][b]Improved:[/b] An idle window no longer redraws (idle CPU from about 7–12% of a core to about 0%); panning and splitter drags draw one frame per mouse move; entering a large folder no longer freezes the window[/*]
+[*][b]Improved:[/b] Explorer DDS thumbnails are more reliable, and Open Recent no longer rewrites the INI on every selection[/*]
+[/list]
+
+[size=4][b]What's New in v1.7[/b][/size]
 [list]
 [*][b]New:[/b] DDS mip inspection — [b]Ctrl + [[/b] / [b]Ctrl + ][/b] step mip levels; right-click [b]Mip Level[/b] picks a level. Current mip and source dimensions show in the info bar[/*]
 [*][b]New:[/b] Channel isolation — [b]R[/b] / [b]G[/b] / [b]B[/b] / [b]A[/b] show one channel as grayscale; [b]N[/b] restores RGBA (D3D path)[/*]
