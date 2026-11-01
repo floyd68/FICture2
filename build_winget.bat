@@ -7,7 +7,9 @@ if not exist "%BUILD_DIR%" (
     mkdir "%BUILD_DIR%"
 )
 
-cmake -S . -B "%BUILD_DIR%" -G "Visual Studio 17 2022" -A x64 -DFICTURE2_DISTRIBUTION_CHANNEL=winget -DBUILD_DX12=OFF
+REM Releases are built by .github/workflows/release.yml; this is the local fallback.
+REM --fresh: a build directory configured with another Visual Studio is reconfigured.
+cmake --fresh -S . -B "%BUILD_DIR%" -G "Visual Studio 18 2026" -A x64 -DFICTURE2_DISTRIBUTION_CHANNEL=winget -DBUILD_DX12=OFF
 if errorlevel 1 exit /b 1
 
 cmake --build "%BUILD_DIR%" --config MinSizeRel

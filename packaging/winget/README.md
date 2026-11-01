@@ -2,10 +2,19 @@
 
 This guide describes the process for packaging and submitting FICture2 to the Windows Package Manager (winget).
 
+Releases are built and published by CI: pushing a `v*` tag runs `.github/workflows/release.yml`. The workflow:
+
+1. builds the winget-channel installer with Visual Studio 2026;
+2. creates the GitHub Release with the installer;
+3. attaches `winget-manifests-<version>.zip`, built from the release asset URL and SHA256;
+4. submits the winget update when the `WINGET_TOKEN` repository secret is set. The secret is a GitHub token that can fork `microsoft/winget-pkgs` and open a pull request there.
+
+The local scripts below are the manual fallback.
+
 ## Prerequisites
 
 ### Required Software
-- **Visual Studio 2022** with C++ desktop development
+- **Visual Studio 2026** with C++ desktop development
 - **CMake** 3.21 or later
 - **Inno Setup 6** - [Download](https://jrsoftware.org/isdl.php)
 - **Git** for version control
@@ -223,13 +232,9 @@ Common reasons:
    - Increases user trust
    - Required by some organizations
 
-## Automation Options
+## Automation
 
-For future automation, consider:
-- GitHub Actions workflow for building
-- Automated smoke tests
-- Automatic PR creation
-- Integration with CI/CD pipeline
+`.github/workflows/release.yml` builds, packages and publishes each `v*` tag, as described at the top of this guide. A pull request that changes that workflow or the packaging files runs the same build and pack, and uploads the installer as an artifact without publishing anything.
 
 ## References
 

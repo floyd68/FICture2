@@ -1,0 +1,146 @@
+# Release installer, built and published by CI (AGENTS.md "배포" step 4).
+# A v* tag push builds the winget-channel installer with Visual Studio 2026,
+# checks that the tag matches the built version, creates the GitHub Release
+# with the installer and README notes, attaches the winget manifests and,
+# when the WINGET_TOKEN secret is set, submits the winget update.
+# A pull request that changes this workflow or the packaging files runs the
+# same build and pack and only uploads the installer as an artifact.
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+  pull_request:
+    paths:
+      - '.github/workflows/release.yml'
+      - 'packaging/**'
+      - 'build_winget.bat'
+      - 'pack_winget.bat'
+
+permissions:
+  contents: read
+
+jobs:
+  installer:
+    name: Release installer
+    runs-on: windows-2025
+    timeout-minutes: 60
+    permissions:
+      contents: write
+    env:
+      # CMake uses GITHUB_RUN_NUMBER as the build number otherwise; releases end in .0.
+      BUILD_NUMBER: '0'
+    steps:
+      # Full history: the commit count is the third version component.
+      - name: Check out (full history, recursive submodules)
+        uses: actions/checkout@v5
+        with:
+          submodules: recursive
+          fetch-depth: 0
+
+      - name: Configure (Visual Studio 2026, winget channel)
+        run: >
+          cmake -S . -B build_winget -G "Visual Studio 18 2026" -A x64
+          -DFICTURE2_DISTRIBUTION_CHANNEL=winget
+          -DBUILD_DX12=OFF
+
+      - name: Build
+        run: cmake --build build_winget --config MinSizeRel --parallel
+
+      - name: Read version
+        id: version
+        shell: pwsh
+        run: |
+          $m = Select-String -Path build_winget/CMakeCache.txt -Pattern '^FICTURE2_VERSION_STRING:STRING=(.+)$'
+          $version = $m.Matches[0].Groups[1].Value
+          $generator = (Select-String -Path build_winget/CMakeCache.txt -Pattern '^CMAKE_GENERATOR:INTERNAL=(.+)$').Matches[0].Groups[1].Value
+          Write-Host "Version: $version (generator: $generator)"
+          if ('${{ github.ref_type }}' -eq 'tag' -and '${{ github.ref_name }}' -ne "v$version") {
+            Write-Error "Tag ${{ github.ref_name }} does not match the built version v$version"
+            exit 1
+          }
+          "version=$version" >> $env:GITHUB_OUTPUT
+
+      - name: Package installer (Inno Setup)
+        id: package
+        shell: pwsh
+        run: |
+          $candidates = @("${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe", "$env:ProgramFiles\Inno Setup 6\ISCC.exe")
+          $iscc = $candidates | Where-Object { Test-Path $_ } | Select-Object -First 1
+          if (-not $iscc) {
+            choco install innosetup -y --no-progress
+            if ($LASTEXITCODE) { exit $LASTEXITCODE }
+            $iscc = $candidates | Where-Object { Test-Path $_ } | Select-Object -First 1
+          }
+          if (-not $iscc) { Write-Error 'Inno Setup compiler not found'; exit 1 }
+          & $iscc build_winget/FICture2.iss
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          $installer = Get-ChildItem build_winget/Output -Filter 'FICture2-Setup-*.exe' | Select-Object -First 1
+          if (-not $installer) { Write-Error 'Installer not found'; exit 1 }
+          $sha = (Get-FileHash $installer.FullName -Algorithm SHA256).Hash
+          Write-Host "Installer: $($installer.Name) SHA256: $sha"
+          "path=$($installer.FullName)" >> $env:GITHUB_OUTPUT
+          "name=$($installer.Name)" >> $env:GITHUB_OUTPUT
+          "sha256=$sha" >> $env:GITHUB_OUTPUT
+
+      - name: Upload installer artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: FICture2-Setup-${{ steps.version.outputs.version }}
+          path: ${{ steps.package.outputs.path }}
+          if-no-files-found: error
+
+      # Everything below runs for a tag push only.
+      - name: Release notes from README
+        if: github.ref_type == 'tag'
+        shell: pwsh
+        run: |
+          $previous = git describe --tags --abbrev=0 --match 'v*' '${{ github.ref_name }}^'
+          if ($LASTEXITCODE) { Write-Error 'No previous v* tag'; exit 1 }
+          function Get-Items([string]$text) {
+            ($text -split "`n") | ForEach-Object { $_.TrimEnd("`r") } | Where-Object { $_ -match '^- \*\*(New|Fixed|Improved|Changed):\*\*' }
+          }
+          $old = Get-Items (git show "${previous}:README.md" | Out-String)
+          $new = Get-Items (Get-Content README.md -Raw)
+          $added = @($new | Where-Object { $old -notcontains $_ })
+          if ($added.Count -eq 0) { Write-Error "README lists no new What's New items since $previous"; exit 1 }
+          $notes = @("## What's New since $previous", '') + $added
+          Set-Content -Path release-notes.md -Value $notes -Encoding utf8
+          Write-Host "$($added.Count) items since $previous"
+
+      - name: Create GitHub Release
+        if: github.ref_type == 'tag'
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create '${{ github.ref_name }}' '${{ steps.package.outputs.path }}' --verify-tag --title 'FICture2 ${{ github.ref_name }}' --notes-file release-notes.md
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+
+      - name: Attach winget manifests
+        if: github.ref_type == 'tag'
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $url = 'https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/${{ steps.package.outputs.name }}'
+          cmake -S . -B build_winget "-DFICTURE2_WINGET_INSTALLER_URL=$url" '-DFICTURE2_WINGET_INSTALLER_SHA256=${{ steps.package.outputs.sha256 }}'
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          $zip = 'winget-manifests-${{ steps.version.outputs.version }}.zip'
+          Compress-Archive -Path build_winget/winget_manifests/*.yaml -DestinationPath $zip -Force
+          gh release upload '${{ github.ref_name }}' $zip
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+
+      - name: Submit winget update
+        if: github.ref_type == 'tag'
+        shell: pwsh
+        env:
+          WINGET_TOKEN: ${{ secrets.WINGET_TOKEN }}
+        run: |
+          if (-not $env:WINGET_TOKEN) {
+            Write-Host '::notice::WINGET_TOKEN is not set; the winget update is not submitted (manifests are attached to the release).'
+            exit 0
+          }
+          Invoke-WebRequest -Uri 'https://aka.ms/wingetcreate/latest' -OutFile wingetcreate.exe
+          ./wingetcreate.exe submit --token $env:WINGET_TOKEN build_winget/winget_manifests
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }

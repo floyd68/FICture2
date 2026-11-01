@@ -166,7 +166,7 @@ This repository is the “app shell” that wires the UI and decode pipeline tog
 ### Requirements
 
 - Windows 10/11 (x64)
-- Visual Studio 2022 with **Desktop development with C++**
+- Visual Studio 2026 with **Desktop development with C++**
 - Windows 10/11 SDK
 
 ### Build
@@ -439,7 +439,7 @@ The file is saved as Unicode (UTF-16 LE with a BOM); an older ANSI file is conve
 ## Prerequisites
 
 - Windows 10/11
-- Visual Studio 2022 (C++ workload)
+- Visual Studio 2026 (C++ workload)
 - Windows SDK installed (VS installer)
 - `git` if you want to work with submodules
 
