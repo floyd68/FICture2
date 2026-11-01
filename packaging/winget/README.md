@@ -105,14 +105,13 @@ release_winget.bat [v{VERSION}]
 The GitHub Release itself is created only by CI when the `v{VERSION}` tag is pushed (`.github/workflows/release.yml`); this script never pushes a tag or creates a release, so a tag has a single publisher.
 
 **What it does:**
-- Takes the tag from its argument, or `v` + the version in `build_winget\CMakeCache.txt`
+- Takes the tag from its argument, or the latest published release
 - Checks that the release is published
 - Downloads its `winget-manifests-{VERSION}.zip` (built by CI from the published installer's URL and SHA256)
 - Extracts it into `build_winget\winget_manifests\`
 
 **Prerequisites:**
 - GitHub CLI authenticated: `gh auth login`
-- `build_winget` configured for the same version (`build_winget.bat`), because `submit_winget.bat` reads the version from its CMake cache
 
 **Output:**
 - Three manifest files in `build_winget\winget_manifests\`:
@@ -127,6 +126,7 @@ submit_winget.bat
 ```
 
 **What it does:**
+- Takes the version from the manifests' `PackageVersion`, not from a local build, and stops if the three manifests disagree
 - Validates manifest files using `winget validate`
 - Clones your winget-pkgs fork (if needed)
 - Syncs with upstream microsoft/winget-pkgs

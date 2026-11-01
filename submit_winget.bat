@@ -34,8 +34,22 @@ echo Found manifest files:
 dir /b "%MANIFEST_DIR%\*.yaml"
 echo.
 
-REM Extract version
-for /f "tokens=2 delims==" %%V in ('findstr "FICTURE2_VERSION_STRING:STRING" "%BUILD_DIR%\CMakeCache.txt"') do set VERSION=%%V
+REM Version: from the manifests' own PackageVersion. The local CMake cache may
+REM belong to another build (releases are built by CI).
+set VERSION=
+for %%F in ("%MANIFEST_DIR%\*.yaml") do (
+    set FILE_VERSION=
+    for /f "tokens=2" %%V in ('findstr /b /c:"PackageVersion:" "%%F"') do set FILE_VERSION=%%V
+    if not defined FILE_VERSION (
+        echo Error: %%~nxF has no PackageVersion
+        exit /b 1
+    )
+    if not defined VERSION set VERSION=!FILE_VERSION!
+    if not "!FILE_VERSION!"=="!VERSION!" (
+        echo Error: the manifests disagree on PackageVersion: !VERSION! and !FILE_VERSION! in %%~nxF
+        exit /b 1
+    )
+)
 
 if not defined VERSION (
     echo Error: Could not determine version
